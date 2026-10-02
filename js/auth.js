@@ -105,7 +105,7 @@ ERP.auth = (function () {
         return;
       }
       d.remove();
-      iniciarComSessao(r.sessao);
+      montarTudo(r.sessao);
     };
     ERP.util.el('login-entrar').addEventListener('click', tentar);
     d.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') tentar(); });
@@ -151,6 +151,51 @@ ERP.auth = (function () {
     }
   }
 
+  /* CAMINHO ÚNICO de montagem. Existem duas formas de entrar — com
+     a sessão já salva no navegador, ou digitando e-mail e senha — e
+     as duas passam por aqui.
+
+     Ter dois caminhos foi o defeito da primeira versão: quem
+     acabava de fazer login entrava sem carregar nada do banco, e o
+     lançamento sumia ao recarregar. Um caminho só, para não haver
+     o que esquecer de repetir. */
+  async function montarTudo(s) {
+    /* 1. cadastros antes de montar: o sistema tem de subir com os
+       centros e credores que existem de verdade. */
+    if (ERP.dadosRemoto) {
+      const r = await ERP.dadosRemoto.carregar();
+      if (r && r.erro) {
+        telaLogin('Entrou, mas não foi possível carregar os cadastros: ' + r.erro);
+        return;
+      }
+    }
+
+    // 2. a tela
+    iniciarComSessao(s);
+
+    // 3. o movimento, que é o que leva mais tempo
+    if (!ERP.persistencia) return;
+    let r;
+    try {
+      r = await ERP.persistencia.iniciar();
+    } catch (e) {
+      r = { erro: e.message };
+    }
+    if (r && r.erro) {
+      if (ERP.app && ERP.app.aviso) {
+        ERP.app.aviso('Conectado, mas SEM GRAVAR no banco: ' + r.erro +
+          ' Os lançamentos ficarão só nesta tela.', 'erro');
+      }
+      const tag = ERP.util.el('tag-modo');
+      if (tag) tag.textContent = 'conectado — mas NÃO está gravando';
+      return;
+    }
+    if (ERP.app && ERP.app.atualizar) ERP.app.atualizar();
+    if (ERP.app && ERP.app.renderHome) ERP.app.renderHome();
+    const tag = ERP.util.el('tag-modo');
+    if (tag) tag.textContent = 'conectado ao banco';
+  }
+
   /* Ponto de entrada: decide entre modo local e modo com login. */
   async function iniciar() {
     if (!configurado()) return false;      // segue no modo local
@@ -159,14 +204,7 @@ ERP.auth = (function () {
       /* Os cadastros vêm do banco ANTES de montar: o sistema tem de
          subir já com os centros, credores e contas que existem de
          verdade, não com os de exemplo. */
-      if (ERP.dadosRemoto) {
-        const r = await ERP.dadosRemoto.carregar();
-        if (r && r.erro) {
-          telaLogin('Entrou, mas não foi possível carregar os cadastros: ' + r.erro);
-          return true;
-        }
-      }
-      iniciarComSessao(s);
+      await montarTudo(s);
       return true;
     }
     telaLogin(s && s.erro);

@@ -23,12 +23,17 @@ ERP.dadosRemoto = (function () {
      a coluna é `cod` e no sistema é `cod`, mas em outros casos o
      nome mudou — e porque o banco devolve `null` onde o sistema
      espera ausência. */
+  /* `essencial` marca o que o sistema não consegue funcionar sem:
+     sem empresa, perfil, usuário, centro de custo ou plano de
+     contas, qualquer lançamento sai errado. Os demais podem estar
+     legitimamente vazios — uma empresa que ainda não cadastrou
+     produto não deveria ficar impedida de abrir o financeiro. */
   const MAPA = [
-    { tabela: 'empresas', destino: 'empresas', ordem: 'id' },
-    { tabela: 'perfis', destino: 'perfis', ordem: 'id' },
-    { tabela: 'usuarios', destino: 'usuarios', ordem: 'id' },
-    { tabela: 'centros', destino: 'centros', ordem: 'id' },
-    { tabela: 'plano_contas', destino: 'plano', ordem: 'cod' },
+    { tabela: 'empresas', destino: 'empresas', ordem: 'id', essencial: true },
+    { tabela: 'perfis', destino: 'perfis', ordem: 'id', essencial: true },
+    { tabela: 'usuarios', destino: 'usuarios', ordem: 'id', essencial: true },
+    { tabela: 'centros', destino: 'centros', ordem: 'id', essencial: true },
+    { tabela: 'plano_contas', destino: 'plano', ordem: 'cod', essencial: true },
     { tabela: 'clientes', destino: 'clientes', ordem: 'id' },
     { tabela: 'produtos', destino: 'produtos', ordem: 'id' },
     { tabela: 'armazens', destino: 'armazens', ordem: 'id' },
@@ -70,7 +75,15 @@ ERP.dadosRemoto = (function () {
       if (error) {
         return { erro: 'Não foi possível ler ' + item.tabela + ': ' + error.message };
       }
-      if (!data.length) { vazias.push(item.tabela); continue; }
+      if (!data.length) {
+        if (item.essencial) vazias.push(item.tabela);
+        /* Tabela não essencial vazia: esvazia a lista local também.
+           Deixar o cadastro de exemplo seria pior — a pessoa
+           escolheria um produto que não existe no banco. */
+        const a = D[item.destino];
+        if (Array.isArray(a)) a.length = 0;
+        continue;
+      }
       const alvo = D[item.destino];
       if (!Array.isArray(alvo)) continue;
       alvo.length = 0;
@@ -81,7 +94,7 @@ ERP.dadosRemoto = (function () {
        inexistente: o seed preenche todas. Parar aqui é melhor que
        deixar o sistema subir sem centros de custo. */
     if (vazias.length) {
-      return { erro: 'Cadastro incompleto no banco: ' + vazias.join(', ') +
+      return { erro: 'Cadastro essencial faltando no banco: ' + vazias.join(', ') +
         ' sem nenhuma linha. Rode o 03-seed.sql.' };
     }
 
