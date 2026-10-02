@@ -846,6 +846,42 @@ ERP.contas = (function () {
     });
   }
 
+  /* Confirmação do pagamento entre empresas do grupo. Mostra quem
+     paga, quem deve, e deixa registrar — ou voltar atrás e escolher
+     outra conta. */
+  function confirmarCruzamento(id, dados, r, depois) {
+    const cz = r.cruzamento || {};
+    ERP.app.modal({
+      titulo: 'Pagamento entre empresas do grupo',
+      fecharTxt: 'Voltar e trocar a conta',
+      corpo:
+        '<div class="destaque">' +
+          '<div class="resumo-linha"><span>Nota em nome de</span><span class="v">' +
+            U.esc(cz.tomadora_nome || '—') + '</span></div>' +
+          '<div class="resumo-linha"><span>Pagamento sai da conta de</span><span class="v">' +
+            U.esc(cz.pagadora_nome || '—') + '</span></div>' +
+          '<div class="resumo-linha"><span>Valor</span><span class="v">' +
+            U.brl(dados.valor + dados.juros + dados.multa) + '</span></div>' +
+        '</div>' +
+        '<div class="ajuda">Confirmando, o sistema registra uma <b>conta corrente</b> entre as ' +
+        'duas empresas: a ' + U.esc(cz.pagadora_nome || '') + ' passa a ter a receber da ' +
+        U.esc(cz.tomadora_nome || '') + '. Isso não é classificação de custo, e não substitui ' +
+        'o acerto entre elas.</div>' +
+        '<label>Observação (opcional)</label>' +
+        '<input id="cz-obs" placeholder="Ex.: acerto na transferência do dia 30">',
+      acoes: [{ txt: 'Confirmar e registrar o mútuo', cls: 'btn-pagar', fn: function () {
+        const obs = U.val('cz-obs');
+        const d2 = Object.assign({}, dados, { confirmar_cruzamento: true });
+        if (obs) d2.obs = obs;
+        const r2 = S.registrarPagamento(id, d2);
+        if (r2.erro) return ERP.app.aviso(r2.erro, 'erro');
+        ERP.app.fecharModal();
+        ERP.app.aviso('Pagamento solicitado, com a conta corrente entre as empresas registrada.', 'ok');
+        if (depois) depois();
+      } }]
+    });
+  }
+
   /* ── baixa ─────────────────────────────────────────────*/
   function abrirBaixa(id) {
     const p = S.parcela(id);
@@ -869,12 +905,24 @@ ERP.contas = (function () {
         '<label>Comprovante / autenticação</label><input id="pg-doc" placeholder="opcional">' +
         '<div class="destaque" id="pg-resumo"></div>',
       acoes: [{ txt: 'Enviar para autorização', cls: 'btn-pagar', fn: () => {
-        const r = S.registrarPagamento(id, {
+        /* Lê os campos ANTES de abrir qualquer outro modal: o
+           modal de confirmação substitui este, e aí os campos já
+           não existem mais no DOM. */
+        const dados = {
           data: U.val('pg-data'), valor: U.parseValor(U.val('pg-valor')),
           juros: U.parseValor(U.val('pg-juros')), multa: U.parseValor(U.val('pg-multa')),
           desconto: U.parseValor(U.val('pg-desc')), banco: U.val('pg-banco'),
           doc: U.val('pg-doc')
-        });
+        };
+        const r = S.registrarPagamento(id, dados);
+
+        /* Conta corrente entre empresas: o store recusa e devolve o
+           vínculo. Antes disto o aviso aparecia e NÃO havia como
+           confirmar — clicar de novo só repetia o aviso, e o
+           pagamento nunca entrava. Regra pela metade trava o
+           trabalho sem proteger nada. */
+        if (r.erro && r.cruzamento) return confirmarCruzamento(id, dados, r, depois);
+
         if (r.erro) return ERP.app.aviso(r.erro, 'erro');
         ERP.app.fecharModal();
         ERP.app.aviso('Pagamento solicitado. Aguardando aprovação da diretoria ou do sócio.', 'ok');

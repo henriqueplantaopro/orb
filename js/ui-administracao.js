@@ -192,7 +192,10 @@ ERP.administracao = (function () {
         return '<tr' + (u.ativo === false ? ' class="cancelada"' : '') + '>' +
           '<td class="desc">' + U.esc(u.nome) + '</td>' +
           '<td>' + U.esc(perfilNome(u.perfil)) +
-            '<div class="sub">' + ((D.perfil(u.perfil) || {}).modulos || []).length + ' módulo(s)</div></td>' +
+            /* Conta pela matriz, não pela lista `modulos` do perfil:
+               é a matriz que decide, e é ela que vem do banco. */
+            '<div class="sub">' + D.MODULOS.filter(function (mo) {
+              return S.acessoDoPerfil(u.perfil, mo.id).ver; }).length + ' módulo(s)</div></td>' +
           '<td class="sub">' + U.esc(u.email || '—') + '</td>' +
           '<td class="num">' + (['diretoria', 'socio', 'admin'].indexOf(u.perfil) < 0 ? '—'
             : lim ? U.brl(lim) : 'sem limite') + '</td>' +
@@ -475,7 +478,10 @@ ERP.administracao = (function () {
           'placeholder="Ex.: Controle de estoque"' + (p && p.sistema ? '' : '') + '>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Módulos que este perfil vê</h2>' +
         '<div class="row3">' + D.MODULOS.map(function (m) {
-          const tem = p ? p.modulos.indexOf(m.id) > -1 : false;
+          /* `p.modulos` não existe nos perfis vindos do banco, e
+             `p.modulos.indexOf` quebrava a tela inteira. A matriz é
+             a fonte. */
+          const tem = p ? S.acessoDoPerfil(p.id, m.id).ver : false;
           return '<label style="display:flex;gap:6px;align-items:center;font-weight:400">' +
             '<input type="checkbox" data-pf-mod="' + m.id + '" style="width:auto"' +
             (tem ? ' checked' : '') + '> ' + U.esc(m.nome) + '</label>';

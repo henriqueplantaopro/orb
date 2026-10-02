@@ -116,7 +116,15 @@ ERP.lancamento = (function () {
       }
       regerar();
     });
-    U.el('l-valor').addEventListener('blur', regerar);
+    /* Ao sair do campo, o valor aparece no formato da casa:
+       1.234.567,00. Antes ficava como foi digitado — e a tabela de
+       parcelas logo abaixo já formatava, então os dois jeitos
+       apareciam lado a lado na mesma tela. */
+    U.el('l-valor').addEventListener('blur', function () {
+      const v = U.parseValor(this.value);
+      if (v) this.value = U.num(v);
+      regerar();
+    });
     U.el('l-credor').addEventListener('change', function () {
       const c = D.credor(idCredorPorNome(this.value));
       if (c && c.conta_padrao && !U.val('l-conta')) U.setVal('l-conta', c.conta_padrao);

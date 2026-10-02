@@ -372,17 +372,18 @@ insert into produtos (id,codigo,descricao,unidade,ncm,minimo,ideal,custo,conta,a
 insert into produtos (id,codigo,descricao,unidade,ncm,minimo,ideal,custo,conta,ativo) values ('pr27','CIR-008','Campo cirúrgico estéril descartável','PCT','63079090',15,80,64,'8.04',true);
 insert into produtos (id,codigo,descricao,unidade,ncm,minimo,ideal,custo,conta,ativo) values ('pr28','CIR-009','Avental cirúrgico estéril','UN','62101000',20,100,22.5,'8.04',true);
 insert into produtos (id,codigo,descricao,unidade,ncm,minimo,ideal,custo,conta,ativo) values ('pr29','CIR-010','Lâmina de bisturi 15','CX','82121020',5,25,46,'8.04',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am01','ALM-SEDE','Almoxarifado central — Barueri','cc100','sede',null,'',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am02','FARM-SCBM','Farmácia SCBM — Barra Mansa','pj23','externo',null,'Farmacêutica do projeto',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am03','FARM-HMMQ','Farmácia HMMQ — Queimados','pj34','externo',null,'Farmacêutica do projeto',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am04','FARM-CETHID','Farmácia CETHID — Queimados','pj33','externo',null,'',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am05','ALM-HGB','Almoxarifado HGB — Bonsucesso','pj11','externo',null,'',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am06','HGB-CC-OFTALMO','HGB · CC Oftalmologia','pj50','setor','am05','',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am07','HGB-CC-GERAL','HGB · CC Cirurgia geral','pj50','setor','am05','',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am08','HGB-AMBULATORIO','HGB · Ambulatório','pj50','setor','am05','',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am09','HGB-CC-URO','HGB · CC Urologia','pj50','setor','am05','',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am10','HGB-CC-OTORRINO','HGB · CC Otorrinolaringologia','pj50','setor','am05','',true);
-insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,ativo) values ('am11','HGB-CC-GINECO','HGB · CC Ginecologia','pj50','setor','am05','',true);
+
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am01','ALM-SEDE','Almoxarifado central — Barueri','cc100','sede',null,'',null,true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am02','FARM-SCBM','Farmácia SCBM — Barra Mansa','pj23','externo',null,'Farmacêutica do projeto',null,true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am03','FARM-HMMQ','Farmácia HMMQ — Queimados','pj34','externo',null,'Farmacêutica do projeto',null,true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am04','FARM-CETHID','Farmácia CETHID — Queimados','pj33','externo',null,'',null,true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am05','ALM-HGB','Almoxarifado HGB — Bonsucesso','pj11','externo',null,'',null,true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am06','HGB-CC-OFTALMO','HGB · CC Oftalmologia','pj50','setor','am05','','OFTALMO',true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am07','HGB-CC-GERAL','HGB · CC Cirurgia geral','pj50','setor','am05','','CIRURGIA GERAL',true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am08','HGB-AMBULATORIO','HGB · Ambulatório','pj50','setor','am05','','RISCO CX',true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am09','HGB-CC-URO','HGB · CC Urologia','pj50','setor','am05','','UROLOGIA',true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am10','HGB-CC-OTORRINO','HGB · CC Otorrinolaringologia','pj50','setor','am05','','OTORRINO',true);
+insert into armazens (id,codigo,nome,centro,tipo,pai,responsavel,especialidade,ativo) values ('am11','HGB-CC-GINECO','HGB · CC Ginecologia','pj50','setor','am05','','GINECO',true);
 
 -- cargos
 insert into cargos (id,nome,cbo,salario_piso) values ('cg01','Assistente administrativo','4110-05',1800);

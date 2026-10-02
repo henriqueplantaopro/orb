@@ -48,7 +48,23 @@ ERP.persistencia = (function () {
     extratos: { tabela: 'extratos', colunas: ['id', 'banco', 'arquivo', 'de', 'ate', 'importado_em', 'usuario_id'] },
     linhas: { tabela: 'linhas_extrato', colunas: ['id', 'extrato_id', 'banco', 'data', 'valor', 'memo', 'fitid', 'saida', 'situacao', 'alvo_tipo', 'alvo_id', 'alvo_ids', 'observacao'] },
     saldosInformados: { tabela: 'saldos_informados', colunas: ['id', 'banco', 'data', 'valor', 'divergencia', 'usuario_id', 'criado_em'] },
-    regras: { tabela: 'regras_conciliacao', colunas: ['id', 'padrao', 'conta', 'centro', 'credor', 'ativo'] }
+    regras: { tabela: 'regras_conciliacao', colunas: ['id', 'padrao', 'conta', 'centro', 'credor', 'ativo'] },
+
+    /* Estoque, procedimentos, compras, ativos e pessoal. Entraram
+       depois do financeiro, na mesma mecânica: quem observa o
+       estado não precisa saber de que módulo veio a mudança. */
+    estoque: { tabela: 'estoque_camadas', colunas: ['id', 'produto', 'armazem', 'qtd', 'custo', 'data', 'data_nf', 'lote', 'validade', 'origem', 'documento', 'nota_chave', 'pedido_id', 'grupo', 'lancado_em'] },
+    estoqueMov: { tabela: 'estoque_movimentos', colunas: ['id', 'tipo', 'produto', 'armazem', 'qtd', 'qtd_nota', 'unidades_por_embalagem', 'custo', 'custo_nota', 'valor', 'medio_depois', 'data', 'data_nf', 'motivo', 'documento', 'lote', 'validade', 'origem', 'grupo', 'pedido_id', 'paciente', 'estornado', 'usuario', 'usuario_id', 'lancado_em'] },
+    procedimentos: { tabela: 'procedimentos', colunas: ['id', 'data', 'competencia', 'centro', 'especialidade', 'procedimento', 'procedimento_nome', 'medico', 'paciente', 'qtd', 'faturamento', 'repasse', 'custo_material', 'imposto', 'imposto_pct', 'resultado', 'armazem', 'materiais', 'transferencias', 'grupo', 'financeiro', 'cancelado', 'motivo_cancelamento', 'editado_por', 'usuario_id', 'criado_em'] },
+    fechamentosProcedimentos: { tabela: 'fechamentos_procedimentos', colunas: ['id', 'competencia', 'centro', 'faturamento', 'repasse', 'procedimento_ids', 'titulo_ids', 'cancelado', 'criado_por', 'criado_em'] },
+    compras: { tabela: 'compras', colunas: ['id', 'numero', 'armazem', 'centro', 'status', 'credor', 'itens', 'historico', 'compra_aprovada_por', 'criado_em'] },
+    ativos: { tabela: 'ativos', colunas: ['id', 'tag', 'categoria', 'descricao', 'qtd', 'valor', 'aquisicao', 'status', 'condicao', 'local', 'projeto', 'projeto_nome', 'fornecedor_nome', 'nf', 'custodiante', 'contrato', 'valor_locacao', 'vida_util_meses', 'desmembrado', 'lote_origem', 'baixa', 'observacao'] },
+    ativoMov: { tabela: 'ativo_movimentos', colunas: ['id', 'ativo', 'data', 'status', 'origem', 'destino', 'motivo', 'usuario_id', 'criado_em'] },
+    ordensServico: { tabela: 'ordens_servico', colunas: ['id', 'ativo', 'tipo', 'descricao', 'abertura', 'fechamento', 'custo', 'custo_peca', 'custo_servico', 'fornecedor', 'laudo', 'status'] },
+    lotesProdutividade: { tabela: 'lotes_produtividade', colunas: ['id', 'centro', 'competencia', 'arquivo', 'titulo_ids', 'medicos', 'valor', 'confirmado', 'confirmado_por', 'confirmado_em', 'cancelado', 'cancelado_parcial', 'criado_por', 'criado_em'] },
+    lotesRPS: { tabela: 'lotes_rps', colunas: ['id', 'remessa', 'competencia', 'rps', 'status', 'protocolo', 'cancelado', 'criado_em'] },
+    folhas: { tabela: 'folhas', colunas: ['id', 'competencia', 'complementar', 'holerites', 'total_proventos', 'total_descontos', 'total_liquido', 'guias', 'cancelada', 'fechada_por', 'fechada_em'] },
+    decimos: { tabela: 'decimos', colunas: ['id', 'funcionario', 'ano', 'parcela', 'valor', 'pago_em', 'cancelado'] }
   };
 
   /* `usuarios` não entra no MAPA acima de propósito: ele é cadastro,
@@ -62,6 +78,54 @@ ERP.persistencia = (function () {
       senha_provisoria: !!u.senha_provisoria };
     const { error } = await c.from('usuarios').upsert([linha], { onConflict: 'id' });
     return error ? { erro: error.message } : { ok: true };
+  }
+
+  /* O saldo de estoque não é uma lista com id: é um objeto indexado
+     por "produto|armazém". Vai separado porque a chave é composta —
+     e porque ele é a posição ATUAL, não um histórico: cada linha é
+     substituída, nunca acumulada. */
+  const POSICOES = { estado: 'posicoes', tabela: 'posicoes_estoque',
+                     colunas: ['produto', 'armazem', 'saldo', 'valor'] };
+  const MINIMOS = { estado: 'minimos', tabela: 'minimos_estoque',
+                    colunas: ['produto', 'armazem', 'minimo', 'ideal'] };
+
+  function chaveComposta(k) {
+    const p = String(k).split('|');
+    return { produto: p[0], armazem: p[1] };
+  }
+
+  async function gravarIndexado(def) {
+    const c = cliente();
+    const obj = ERP.store.st[def.estado] || {};
+    const linhas = Object.keys(obj).map(function (k) {
+      const base = chaveComposta(k);
+      const v = obj[k] || {};
+      const linha = { produto: base.produto, armazem: base.armazem };
+      def.colunas.forEach(function (col) {
+        if (col !== 'produto' && col !== 'armazem') linha[col] = v[col] === undefined ? 0 : v[col];
+      });
+      return linha;
+    }).filter(function (l) { return l.produto && l.armazem; });
+    if (!linhas.length) return null;
+    const { error } = await c.from(def.tabela)
+      .upsert(linhas, { onConflict: 'produto,armazem' });
+    return error ? def.tabela + ': ' + error.message : null;
+  }
+
+  async function lerIndexado(def) {
+    const c = cliente();
+    const { data, error } = await c.from(def.tabela).select('*');
+    if (error) return;
+    const obj = ERP.store.st[def.estado];
+    if (!obj) return;
+    Object.keys(obj).forEach(function (k) { delete obj[k]; });
+    (data || []).forEach(function (l) {
+      const o = {};
+      def.colunas.forEach(function (col) {
+        if (col !== 'produto' && col !== 'armazem') o[col] = Number(l[col]) || 0;
+      });
+      obj[l.produto + '|' + l.armazem] = o;
+    });
   }
 
   let sombra = {};        // coleção → { id: json }
@@ -116,6 +180,9 @@ ERP.persistencia = (function () {
       alvo.length = 0;
       (data || []).forEach(function (l) { alvo.push(doBanco(l)); });
     }
+
+    await lerIndexado(POSICOES);
+    await lerIndexado(MINIMOS);
 
     /* A sequência de ids vive no banco: dois navegadores gerando
        `p12` ao mesmo tempo criariam dois registros com a mesma
@@ -210,6 +277,13 @@ ERP.persistencia = (function () {
         if (error) falhas.push(m.def.tabela + ' (remover ' + id + '): ' + error.message);
       }
     }
+    /* Saldo e mínimos vão sempre: são poucos e sempre pequenos, e
+       comparar objeto indexado custaria mais do que regravar. */
+    const f1 = await gravarIndexado(POSICOES);
+    if (f1) falhas.push(f1);
+    const f2 = await gravarIndexado(MINIMOS);
+    if (f2) falhas.push(f2);
+
     salvando = false;
 
     if (falhas.length) {

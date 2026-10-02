@@ -37,8 +37,12 @@ ERP.ativos = (function () {
   function render() {
     /* Permissão conferida no RENDER, não só no menu: abrir o módulo por
        outro caminho não deve mostrar o inventário. */
-    const perfilAtual = D.perfis.find(function (p) { return p.id === (S.usuario() || {}).perfil; });
-    if (perfilAtual && (perfilAtual.modulos || []).indexOf('ativos') < 0) {
+    /* A fonte da permissão é a MATRIZ, não uma lista `modulos` no
+       perfil. A lista existia no cadastro embutido e não existe na
+       tabela do banco — então, depois da migração, este módulo se
+       bloqueava sozinho para todo mundo, inclusive para quem tinha
+       V M $ A na matriz. */
+    if (!S.veModulo('ativos')) {
       U.el('av-saida').innerHTML = '<div class="vazio"><strong>Seu perfil não tem acesso a Ativos.</strong>' +
         'Fale com a administração se precisar deste módulo.</div>';
       return;

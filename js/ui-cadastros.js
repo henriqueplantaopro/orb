@@ -432,7 +432,7 @@ ERP.cadastros = (function () {
           D.empresas.map(function (e) {
             return '<option value="' + e.id + '"' +
               ((c ? c.empresa : null) === e.id ? ' selected' : '') + '>' +
-              U.esc(e.apelido || e.nome) + ' · ' + U.esc(e.cnpj || '') + '</option>';
+              U.esc(e.apelido || e.nome) + ' · ' + U.esc(e.cnpj ? U.cnpj(e.cnpj) : '') + '</option>';
           }).join('') + '</select></div></div>' +
         '<div class="row2"><div></div>' +
         '<div><label>Unidade</label><input id="pj-uni" list="dl-unidades" value="' + U.esc(c ? (c.unidade || '') : '') + '">' +
@@ -602,7 +602,10 @@ ERP.cadastros = (function () {
           '<td class="mono">' + U.esc(c.codigo || '') + '</td>' +
           '<td class="desc">' + U.esc(c.nome) + '<div class="sub">' + U.esc(c.curto || '') + '</div></td>' +
           '<td>' + U.esc(c.tipo) + '</td>' +
-          '<td class="mono">' + U.esc(c.cnpj || '—') + '</td>' +
+          /* CNPJ com máscara, como na lista de fornecedores. Guardado
+             sem pontuação (é o que o XML da nota exige), exibido com
+             ela. */
+          '<td class="mono">' + U.esc(c.cnpj ? U.cnpj(c.cnpj) : '—') + '</td>' +
           '<td>' + U.esc(c.cidade ? c.cidade + '/' + (c.uf || '') : '—') + '</td>' +
           '<td>' + (c.ativo ? '<span class="badge b-aprovado">ativa</span>'
                             : '<span class="badge b-cancelado">inativa</span>') + '</td>' +

@@ -343,7 +343,10 @@ ERP.relatorios = (function () {
     { titulo: 'Forma PG', largura: 16, valor: l => l.forma },
     { titulo: 'Fornecedor', largura: 30, valor: l => l.contraparte },
     { titulo: 'Descrição', largura: 38, valor: l => l.descricao },
-    { titulo: 'Competência', largura: 12, valor: l => l.competencia },
+    /* Competência é data: sai 10/2026, não 2026-10. O banco guarda
+       AAAA-MM porque ordena certo; a tela e o arquivo mostram no
+       formato de quem lê. */
+    { titulo: 'Competência', largura: 12, valor: l => U.fComp(l.competencia) },
     { titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => l.emissao ? U.fData(l.emissao) : '' },
     { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => U.fData(l.vencimento) },
     { titulo: 'Parcela', largura: 9, valor: l => l.parcela },
@@ -357,7 +360,7 @@ ERP.relatorios = (function () {
     { titulo: 'Forma', largura: 16, valor: l => l.forma },
     { titulo: 'Fornecedor', largura: 30, valor: l => l.contraparte },
     { titulo: 'Descrição', largura: 38, valor: l => l.descricao },
-    { titulo: 'Competência', largura: 12, valor: l => l.competencia },
+    { titulo: 'Competência', largura: 12, valor: l => U.fComp(l.competencia) },
     { titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => l.emissao ? U.fData(l.emissao) : '' },
     { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => l.vencimento ? U.fData(l.vencimento) : '' },
     { titulo: 'Data baixa', largura: 12, tipo: 'data', valor: l => U.fData(l.baixa) },

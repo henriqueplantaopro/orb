@@ -126,6 +126,23 @@ ERP.dadosRemoto = (function () {
         ' sem nenhuma linha. Rode o 03-seed.sql.' };
     }
 
+    /* Cada sala de centro cirúrgico é ligada a uma especialidade —
+       é o que faz o sistema saber de qual estoque baixar o material
+       da cirurgia. Sem isso, Procedimentos calcula o repasse e não
+       deixa lançar material. Se o banco ainda não tiver a coluna
+       (10-modulos não rodado), deduz pelo código da sala. */
+    const PELO_CODIGO = [
+      ['OFTALMO', /OFTALMO/i], ['CIRURGIA GERAL', /CIRURGIA.?GERAL|CIR.?GERAL/i],
+      ['UROLOGIA', /UROLOG/i], ['OTORRINO', /OTORRINO/i],
+      ['GINECO', /GINECO/i], ['RISCO CX', /RISCO/i]
+    ];
+    D.armazens.forEach(function (a) {
+      if (a.especialidade || a.tipo !== 'setor') return;
+      const alvo = (a.codigo || '') + ' ' + (a.nome || '');
+      const achou = PELO_CODIGO.find(function (p) { return p[1].test(alvo); });
+      if (achou) a.especialidade = achou[0];
+    });
+
     /* O plano de contas é hierárquico, e o sistema agrupa pelo
        campo `pai`. Se o banco ainda não tiver a coluna (08-plano-pai
        não rodado), deriva do próprio código: 6.07 pertence ao 6.
