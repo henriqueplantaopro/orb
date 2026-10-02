@@ -119,10 +119,17 @@ ERP.persistencia = (function () {
         if (col !== 'produto' && col !== 'armazem') linha[col] = v[col] === undefined ? 0 : v[col];
       });
       return linha;
-    }).filter(function (l) { return l.produto && l.armazem; });
+    }).filter(function (l) {
+      if (!l.produto || !l.armazem) return false;
+      /* Linha zerada é combinação que alguma tela encostou e nunca
+         teve saldo: 159 linhas para 5 com estoque. Não vai. */
+      return Object.keys(l).some(function (k) {
+        return k !== 'produto' && k !== 'armazem' && Number(l[k]) !== 0;
+      });
+    });
     if (!linhas.length) return null;
     const { error } = await c.from(def.tabela)
-      .upsert(linhas, { onConflict: 'produto,armazem' });
+      .upsert(linhas, { onConflict: 'produto,armazem', returning: 'minimal' });
     return error ? def.tabela + ': ' + error.message : null;
   }
 
@@ -142,6 +149,8 @@ ERP.persistencia = (function () {
     });
   }
 
+  const LIMITE_TENTATIVAS = 5;
+  let tentativas = 0;
   let degradadas = [];    // coleções que não carregaram
   let sombra = {};        // coleção → { id: json }
   let agendado = null;
@@ -151,13 +160,53 @@ ERP.persistencia = (function () {
 
   const cliente = () => ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
 
+  /* Campos de data e número que o Postgres não aceita vazios. O
+     sistema guarda "" para "não preenchido" (é o que um input
+     devolve), e o banco responde 22007 invalid input syntax for
+     type date: "". Vazio quer dizer ausente, e ausente é nulo. */
+  const DATA_OU_NUMERO = /^(data|emissao|venc|vencimento|validade|aquisicao|abertura|fechamento|desligamento|admissao|nascimento|pago_em|recebido_em|autorizado_em|liberado_em|de|ate|data_nf|baixa_em|cancelado_em|aprovado_em|confirmado_em|fechada_em|criado_em|lancado_em|atualizado_em|importado_em|reajuste_mes|vigencia_ini|vigencia_fim|saldo_inicial_em)$/;
+
+  /* Colunas que o banco exige preenchidas e que algum caminho da
+     aplicação deixa em branco. Em vez de recusar a gravação (e
+     perder o lançamento), entra o valor que o próprio sistema usa
+     como padrão naquele campo.
+
+     Isto é rede, não desenho: se um `status` chega vazio, há um
+     caminho no store que deveria preenchê-lo. O aviso no console
+     serve para esse caminho ser achado depois. */
+  const OBRIGATORIAS = {
+    previsoes: { status: 'estimada' },
+    receber: { origem: 'avulso', status: 'aberto' },
+    parcelas: { status: 'aberto' },
+    compras: { status: 'rascunho' },
+    linhas_extrato: { situacao: 'pendente' },
+    ordens_servico: { status: 'aberta' }
+  };
+
+  function completarObrigatorias(linha, tabela) {
+    const regras = OBRIGATORIAS[tabela];
+    if (!regras) return linha;
+    Object.keys(regras).forEach(function (col) {
+      if (linha[col] === null || linha[col] === undefined || linha[col] === '') {
+        console.warn('Campo obrigatório vazio em ' + tabela + '.' + col +
+          ' — gravando como "' + regras[col] + '". Vale achar o caminho que deixou em branco.');
+        linha[col] = regras[col];
+      }
+    });
+    return linha;
+  }
+
   /* Separa o registro entre colunas conhecidas e `extra`. */
   function paraBanco(item, colunas) {
     const linha = {};
     const extra = {};
     Object.keys(item).forEach(function (k) {
       if (colunas.indexOf(k) >= 0) {
-        linha[k] = item[k] === undefined ? null : item[k];
+        let v = item[k];
+        if (v === undefined) v = null;
+        /* "" em coluna de data ou número é ausência, não valor. */
+        if (v === '' && DATA_OU_NUMERO.test(k)) v = null;
+        linha[k] = v;
       } else if (item[k] !== undefined) {
         extra[k] = item[k];
       }
@@ -300,8 +349,16 @@ ERP.persistencia = (function () {
     const falhas = [];
     for (const m of mudou) {
       if (m.novos.length) {
-        const linhas = m.novos.map(function (it) { return paraBanco(it, m.def.colunas); });
-        const { error } = await c.from(m.def.tabela).upsert(linhas, { onConflict: 'id' });
+        const linhas = m.novos.map(function (it) {
+          return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+        });
+        /* `returning: 'minimal'` — sem isto, o supabase-js manda
+           `Prefer: return=representation`, o Postgres faz RETURNING *,
+           e o * inclui a coluna `paciente`, que está revogada: a
+           gravação inteira volta 42501. Não precisamos da linha de
+           volta — ela já está na memória, foi de lá que saiu. */
+        const { error } = await c.from(m.def.tabela)
+          .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
         if (error) falhas.push(m.def.tabela + ': ' + error.message);
       }
       /* Registro que saiu do estado. O sistema cancela e estorna em
@@ -312,26 +369,51 @@ ERP.persistencia = (function () {
         if (error) falhas.push(m.def.tabela + ' (remover ' + id + '): ' + error.message);
       }
     }
-    /* Saldo e mínimos vão sempre: são poucos e sempre pequenos, e
-       comparar objeto indexado custaria mais do que regravar. */
-    const f1 = await gravarIndexado(POSICOES);
-    if (f1) falhas.push(f1);
-    const f2 = await gravarIndexado(MINIMOS);
-    if (f2) falhas.push(f2);
+    /* O SALDO só vai se as CAMADAS e os MOVIMENTOS foram. Gravar a
+       posição sozinha produz saldo sem lastro: o número existe no
+       banco e a origem dele não, e no próximo acesso isso parece
+       íntegro. É pior que não gravar — um número que ninguém
+       consegue auditar.
+
+       Esta é a mesma ideia da conservação de valor que a bateria
+       confere no estoque, aplicada à gravação. */
+    const estoqueFalhou = falhas.some(function (f) {
+      return f.indexOf('estoque_camadas') === 0 || f.indexOf('estoque_movimentos') === 0;
+    });
+    if (estoqueFalhou) {
+      falhas.push('saldo do estoque NÃO gravado de propósito: as camadas e os movimentos ' +
+        'falharam, e saldo sem a origem dele é pior que saldo nenhum');
+    } else {
+      const f1 = await gravarIndexado(POSICOES);
+      if (f1) falhas.push(f1);
+      const f2 = await gravarIndexado(MINIMOS);
+      if (f2) falhas.push(f2);
+    }
 
     salvando = false;
 
     if (falhas.length) {
-      /* Não atualiza a sombra: na próxima tentativa, o que falhou
-         vai de novo. E o usuário precisa saber agora, não no
-         fechamento. */
+      /* Não atualiza a sombra: o que falhou vai de novo. Mas com
+         LIMITE — sem ele, um erro permanente (coluna faltando,
+         permissão) vira retentativa a cada operação, para sempre.
+         Depois do limite, para de tentar e deixa o aviso de pé. */
+      tentativas++;
+      console.error('Falhas ao gravar (tentativa ' + tentativas + '):', falhas);
       if (ERP.app && ERP.app.aviso) {
-        ERP.app.aviso('Não foi possível salvar no banco: ' + falhas[0] +
-          '. O lançamento está na tela, mas ainda não foi gravado.', 'erro');
+        /* Quando parte grava e parte não, o aviso no singular faz
+           parecer que nada foi. */
+        const quantas = falhas.length;
+        ERP.app.aviso(
+          (quantas > 1 ? quantas + ' partes não foram salvas no banco. Primeira: ' : 'Não foi possível salvar no banco: ') +
+          falhas[0] +
+          (tentativas >= LIMITE_TENTATIVAS
+            ? ' — PAREI DE TENTAR. Anote o que lançou e avise quem cuida do sistema.'
+            : '. O lançamento está na tela, mas ainda não foi gravado.'), 'erro');
       }
-      console.error('Falhas ao gravar:', falhas);
+      if (tentativas >= LIMITE_TENTATIVAS) { ligado = false; pendente = false; }
       return;
     }
+    tentativas = 0;
 
     tirarFoto();
     if (pendente) { pendente = false; agendar(); }

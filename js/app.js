@@ -214,6 +214,27 @@ ERP.app = (function () {
     });
   }
 
+  /* Quais modulos ficaram sem gravar nesta sessao. A persistencia
+     fala em colecoes (`estoqueMov`); a tela fala em modulos. */
+  const COLECAO_DO_MODULO = {
+    financeiro: ['titulos', 'parcelas', 'pagamentos', 'retencoesRegistradas', 'guiasRetencao',
+                 'extratos', 'linhas', 'saldosInformados', 'transferenciasBanco', 'regras'],
+    faturamento: ['receber', 'previsoes', 'lotesRPS'],
+    contratos: ['contratos'],
+    estoque: ['estoque', 'estoqueMov'],
+    compras: ['compras'],
+    procedimentos: ['procedimentos', 'fechamentosProcedimentos'],
+    produtividade: ['lotesProdutividade'],
+    ativos: ['ativos', 'ativoMov', 'ordensServico'],
+    dp: ['folhas', 'decimos']
+  };
+  function moduloDegradado(id) {
+    if (!ERP.persistencia || !ERP.persistencia.degradadas) return false;
+    const fora = ERP.persistencia.degradadas().map(function (d) { return d.nome; });
+    if (!fora.length) return false;
+    return (COLECAO_DO_MODULO[id] || []).some(function (c) { return fora.indexOf(c) >= 0; });
+  }
+
   function renderHome() {
     /* A home mostra só o que o perfil vê: o estoquista entra e encontra
        Estoque, Compras e Cadastros — nada financeiro. */
@@ -224,6 +245,11 @@ ERP.app = (function () {
         '<div class="nome">' + U.esc(m.nome) + '</div>' +
         '<div class="txt">' + U.esc(m.txt) + '</div>' +
         '<span class="est' + (livre ? ' ativo' : '') + '">' + rotEstado[m.estado] + '</span>' +
+        /* Modulo cujo dado nao carregou do banco: o cartao avisa.
+           Sem isto ele abria vazio, indistinguivel de "nao ha nada
+           cadastrado" -- e a pessoa recadastraria tudo. */
+        (moduloDegradado(m.id)
+          ? '<span class="est" style="background:var(--red);color:#fff">sem gravar</span>' : '') +
       '</button>';
     }).join('');
     U.el('grade-modulos').querySelectorAll('[data-mod]').forEach(function (b) {
