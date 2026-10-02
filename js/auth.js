@@ -173,6 +173,12 @@ ERP.auth = (function () {
     // 2. a tela
     iniciarComSessao(s);
 
+    /* Enquanto o movimento carrega, a etiqueta diz isso. Sem o
+       aviso, quem olhasse nesse intervalo concluiria que o sistema
+       não grava — e estaria vendo só a carga em andamento. */
+    const tagCarga = ERP.util.el('tag-modo');
+    if (tagCarga) tagCarga.textContent = 'carregando os lançamentos…';
+
     // 3. o movimento, que é o que leva mais tempo
     if (!ERP.persistencia) return;
     let r;

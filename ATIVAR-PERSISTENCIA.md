@@ -58,3 +58,24 @@ projeto no Supabase com os mesmos SQL — me peça que eu preparo.
 
 Estoque, procedimentos, folha, compras e ativos. Vêm em seguida, na
 mesma mecânica. Até lá, esses módulos continuam só na tela.
+
+## Atualização: a carga ficou rápida
+
+A primeira versão pedia ao banco um número de sequência por vez,
+vinte vezes seguidas — uns quinze segundos em que o sistema já
+estava na tela mas ainda não gravava. Quem testasse nesse intervalo
+via o sistema "não salvando" sem nada estar errado.
+
+Agora é uma chamada só, que reserva um bloco. Para isso, rode
+também:
+
+```
+supabase/07-ids.sql
+```
+
+Sem ele o sistema ainda funciona (volta ao caminho antigo), mas a
+carga segue lenta.
+
+Enquanto carrega, a etiqueta no topo diz **"carregando os
+lançamentos…"**. Quando terminar, vira **"conectado ao banco"**. Só
+a partir daí o que você lançar está sendo gravado.

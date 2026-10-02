@@ -119,18 +119,25 @@ ERP.persistencia = (function () {
      o próximo número ao banco. Como a chamada é assíncrona e o
      store é síncrono, o sistema mantém um pequeno lote de números
      reservados à frente. */
-  let reserva = [];
+  const TAMANHO_BLOCO = 200;
   async function alinharSequencia() {
     const c = cliente();
     if (!c) return;
-    /* Pede um bloco e guarda: o store consome da reserva sem
-       esperar a rede. */
-    for (let i = 0; i < 20; i++) {
-      const { data } = await c.rpc('proximo_id', { prefixo: '' });
-      if (data) reserva.push(parseInt(String(data).replace(/\D/g, ''), 10));
+    /* UMA chamada reserva um bloco inteiro. A primeira versão pedia
+       um id por vez, vinte vezes — vinte idas e voltas pela rede, e
+       uns quinze segundos em que o sistema já estava na tela mas
+       ainda não gravava. Quem testasse nesse intervalo via o
+       sistema "não salvando" sem nada estar errado. */
+    const { data, error } = await c.rpc('reservar_ids', { qtd: TAMANHO_BLOCO });
+    if (!error && data) {
+      ERP.store.st.seq = Number(data);
+      return;
     }
-    if (reserva.length) {
-      ERP.store.st.seq = Math.max.apply(null, reserva) + 1;
+    /* Banco ainda sem a função (07-ids.sql não rodado): cai no
+       caminho antigo, pedindo um só. Melhor um id do que nenhum. */
+    const r = await c.rpc('proximo_id', { prefixo: '' });
+    if (r && r.data) {
+      ERP.store.st.seq = parseInt(String(r.data).replace(/\D/g, ''), 10) || ERP.store.st.seq;
     }
   }
 
