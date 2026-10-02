@@ -51,6 +51,19 @@ ERP.persistencia = (function () {
     regras: { tabela: 'regras_conciliacao', colunas: ['id', 'padrao', 'conta', 'centro', 'credor', 'ativo'] }
   };
 
+  /* `usuarios` não entra no MAPA acima de propósito: ele é cadastro,
+     carregado por `dados-remoto`, e a gravação passa por aqui à
+     parte — só a Administração escreve, e a RLS confere. */
+  async function salvarUsuario(u) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const linha = { id: u.id, nome: u.nome, perfil: u.perfil,
+      email: u.email || null, ativo: u.ativo !== false,
+      senha_provisoria: !!u.senha_provisoria };
+    const { error } = await c.from('usuarios').upsert([linha], { onConflict: 'id' });
+    return error ? { erro: error.message } : { ok: true };
+  }
+
   let sombra = {};        // coleção → { id: json }
   let agendado = null;
   let ligado = false;
@@ -254,5 +267,6 @@ ERP.persistencia = (function () {
   }
 
   return { iniciar: iniciar, sincronizar: sincronizar, carregar: carregar,
+           salvarUsuario: salvarUsuario,
            pendencias: () => diferencas().length, ligado: () => ligado };
 })();

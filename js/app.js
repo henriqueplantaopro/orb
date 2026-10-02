@@ -89,6 +89,9 @@ ERP.app = (function () {
       rodape.appendChild(b);
     });
     U.el('modal-x').addEventListener('click', fecharModal);
+    /* Gancho para quem precisa amarrar evento em algo DENTRO do
+       modal: o conteúdo só existe no DOM a partir daqui. */
+    if (typeof cfg.aposAbrir === 'function') cfg.aposAbrir();
     U.el('modal-fechar').addEventListener('click', fecharModal);
     /* Só fecha se o clique COMEÇOU e TERMINOU no fundo. Sem isso,
        selecionar um texto dentro do modal e soltar o mouse fora fecha a

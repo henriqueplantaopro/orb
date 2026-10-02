@@ -10407,6 +10407,9 @@ ERP.store = (function () {
     if (alvo) {
       alvo.nome = d.nome; alvo.perfil = d.perfil; alvo.email = d.email || '';
       alvo.ativo = d.ativo !== false;
+      /* Senha provisória: quem marca é a Administração; quem
+         desmarca é a própria pessoa, ao escolher a senha dela. */
+      if (d.senha_provisoria !== undefined) alvo.senha_provisoria = !!d.senha_provisoria;
       if (alvo.id === st.usuarioId && alvo.perfil !== 'admin' && !D.usuarios.some(function (u) {
         return u.perfil === 'admin' && u.ativo !== false; })) {
         alvo.perfil = 'admin';

@@ -105,6 +105,12 @@ ERP.auth = (function () {
         return;
       }
       d.remove();
+      /* Mesma trava no outro caminho de entrada. Esquecer um dos
+         dois já custou uma versão. */
+      if (r.sessao.usuario && r.sessao.usuario.senha_provisoria) {
+        telaTrocaObrigatoria(r.sessao);
+        return;
+      }
       montarTudo(r.sessao);
     };
     ERP.util.el('login-entrar').addEventListener('click', tentar);
@@ -130,8 +136,13 @@ ERP.auth = (function () {
       const cx = document.querySelector('.sessao');
       if (cx) {
         cx.innerHTML = '<span>Você está como</span>' +
-          '<b style="margin:0 8px">' + ERP.util.esc(s.usuario.nome) + '</b>' +
+          '<button class="btn-usuario" id="btn-meus-dados" title="Ver meus dados">' +
+          ERP.util.esc(s.usuario.nome) + '</button>' +
           '<button class="btn-sm" id="btn-sair">Sair</button>';
+        const bu = ERP.util.el('btn-meus-dados');
+        if (bu) bu.addEventListener('click', function () {
+          if (ERP.perfilUsuario) ERP.perfilUsuario.abrir();
+        });
         const bs = ERP.util.el('btn-sair');
         if (bs) bs.addEventListener('click', sair);
       }
@@ -149,6 +160,66 @@ ERP.auth = (function () {
         ERP.util.esc(s.usuario.nome) + '</b>, mas a tela não montou: ' +
         ERP.util.esc(e.message) + '. Abra o console (F12) e me mande o erro.</div>');
     }
+  }
+
+  /* Senha provisória: o administrador definiu uma senha para
+     destravar o acesso, e a pessoa tem de escolher a dela antes de
+     usar o sistema. A tela não fecha e não há como pular — é o que
+     garante que o administrador deixe de saber a senha assim que a
+     pessoa entra. */
+  function telaTrocaObrigatoria(s) {
+    const d = document.createElement('div');
+    d.id = 'tela-login';
+    d.innerHTML =
+      '<div class="login-caixa">' +
+        '<div class="login-marca">HJM Dom Pedro</div>' +
+        '<h1>Escolha a sua senha</h1>' +
+        '<div class="ajuda">Você entrou com uma senha provisória, definida pela ' +
+        'Administração. Escolha a sua para continuar — ninguém mais vai conhecê-la.</div>' +
+        '<label for="tr-nova">Nova senha</label>' +
+        '<input type="password" id="tr-nova" autocomplete="new-password" autofocus>' +
+        '<label for="tr-nova2">Repita a nova senha</label>' +
+        '<input type="password" id="tr-nova2" autocomplete="new-password">' +
+        '<button class="btn-aprovar" id="tr-ok">Salvar e entrar</button>' +
+        '<div id="tr-msg"></div>' +
+        '<div class="login-ajuda">Pelo menos 8 caracteres.</div>' +
+      '</div>';
+    document.body.appendChild(d);
+
+    const diz = function (t) {
+      const m = ERP.util.el('tr-msg');
+      if (m) m.innerHTML = '<div class="login-erro" style="margin-top:10px">' +
+        ERP.util.esc(t) + '</div>';
+    };
+
+    const salvar = async function () {
+      const n1 = ERP.util.val('tr-nova'), n2 = ERP.util.val('tr-nova2');
+      if (!n1 || n1.length < 8) return diz('A senha precisa ter pelo menos 8 caracteres.');
+      if (n1 !== n2) return diz('As duas senhas não são iguais.');
+      const b = ERP.util.el('tr-ok');
+      b.disabled = true; b.textContent = 'Salvando…';
+      const c = conectar();
+      const { error } = await c.auth.updateUser({ password: n1 });
+      if (error) {
+        b.disabled = false; b.textContent = 'Salvar e entrar';
+        return diz('Não foi possível trocar: ' + error.message);
+      }
+      /* Só desmarca DEPOIS de a senha nova valer. Na ordem inversa,
+         uma falha de rede no meio deixaria a pessoa sem a marca e
+         ainda com a senha do administrador. */
+      const r = await c.rpc('marcar_senha_trocada');
+      if (r && r.error) {
+        b.disabled = false; b.textContent = 'Salvar e entrar';
+        return diz('Senha trocada, mas o sistema não conseguiu registrar isso: ' +
+          r.error.message + ' Avise a Administração.');
+      }
+      if (s.usuario) s.usuario.senha_provisoria = false;
+      d.remove();
+      montarTudo(s);
+    };
+
+    ERP.util.el('tr-ok').addEventListener('click', salvar);
+    d.addEventListener('keydown', function (ev) { if (ev.key === 'Enter') salvar(); });
   }
 
   /* CAMINHO ÚNICO de montagem. Existem duas formas de entrar — com
@@ -207,9 +278,12 @@ ERP.auth = (function () {
     if (!configurado()) return false;      // segue no modo local
     const s = await carregarSessao();
     if (s && !s.erro) {
-      /* Os cadastros vêm do banco ANTES de montar: o sistema tem de
-         subir já com os centros, credores e contas que existem de
-         verdade, não com os de exemplo. */
+      /* Senha provisória barra tudo: nem cadastro é carregado antes
+         de a pessoa escolher a dela. */
+      if (s.usuario && s.usuario.senha_provisoria) {
+        telaTrocaObrigatoria(s);
+        return true;
+      }
       await montarTudo(s);
       return true;
     }

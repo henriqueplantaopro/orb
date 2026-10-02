@@ -205,6 +205,26 @@ ERP.administracao = (function () {
       'No sistema de verdade isso vira login, e a trilha de auditoria passa a ser à prova de edição.</div>';
   }
 
+  /* Dispara o e-mail de redefinição. Precisa de SMTP configurado no
+     Supabase; sem isso o envio falha e a mensagem diz. */
+  async function enviarReset(email) {
+    const msg = U.el('us-reset-msg');
+    const diz = function (t, cls) {
+      if (msg) msg.innerHTML = '<div class="' + (cls || 'ajuda') + '">' + U.esc(t) + '</div>';
+    };
+    if (!email) return diz('Cadastre o e-mail antes e salve.', 'login-erro');
+    const c = ERP.auth.cliente();
+    if (!c) return diz('Sem conexão com o banco.', 'login-erro');
+    diz('Enviando…');
+    const { error } = await c.auth.resetPasswordForEmail(email);
+    if (error) {
+      return diz('Não foi possível enviar: ' + error.message +
+        ' Enquanto o envio de e-mail não estiver configurado, redefina pelo painel do Supabase ' +
+        '(Authentication › Users › a pessoa › Reset password).', 'login-erro');
+    }
+    diz('Link enviado para ' + email + '.');
+  }
+
   function editarUsuario(id) {
     const u = id ? D.usuario(id) : null;
     ERP.app.modal({
@@ -220,13 +240,45 @@ ERP.administracao = (function () {
              '<input type="checkbox" id="us-ativo" style="width:auto"' +
              (u.ativo !== false ? ' checked' : '') + '> ativo</label>' : '') +
         '<div class="ajuda" style="margin-top:8px">O perfil define o que a pessoa vê e faz. ' +
-        'Os recortes ficam em "Perfis de acesso", onde dá para criar novos.</div>',
+        'Os recortes ficam em "Perfis de acesso", onde dá para criar novos.</div>' +
+        /* Senha: o sistema só manda o link de redefinição. Trocar a
+           senha de outra pessoa direto exigiria a credencial de
+           administração do banco no navegador — e quem abrisse o
+           console teria acesso a tudo, inclusive folha e dados
+           bancários. */
+        (u && ERP.auth && ERP.auth.configurado() ?
+          '<h4 style="margin:16px 0 6px">Senha</h4>' +
+          '<div class="ajuda">O sistema envia um link de redefinição para o e-mail acima. ' +
+          'A pessoa escolhe a senha nova — ninguém, nem você, chega a ver.</div>' +
+          '<button class="btn-sm" id="us-reset" style="margin-top:6px">Enviar link de redefinição' +
+          '</button><div id="us-reset-msg"></div>' +
+          '<label style="display:flex;gap:7px;align-items:flex-start;margin-top:12px;font-weight:400">' +
+          '<input type="checkbox" id="us-provisoria" style="width:auto;margin-top:3px"' +
+          (u.senha_provisoria ? ' checked' : '') + '>' +
+          '<span>Senha provisória — exigir troca no próximo acesso' +
+          '<div class="sub">Marque depois de definir a senha da pessoa no painel do Supabase. ' +
+          'Ela entra com a provisória, escolhe a dela, e a sua deixa de valer.</div>' +
+          '</span></label>'
+        : ''),
+      aposAbrir: function () {
+        const b = U.el('us-reset');
+        if (b) b.addEventListener('click', function () { enviarReset(U.val('us-email').trim()); });
+      },
       acoes: [{ txt: u ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const r = S.salvarUsuario({
           id: id, nome: U.val('us-nome'), perfil: U.val('us-perfil'), email: U.val('us-email'),
-          ativo: U.el('us-ativo') ? U.el('us-ativo').checked : true
+          ativo: U.el('us-ativo') ? U.el('us-ativo').checked : true,
+          senha_provisoria: U.el('us-provisoria') ? U.el('us-provisoria').checked : false
         });
         if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        /* Usuário é cadastro: vai ao banco na hora, não pela
+           sincronização do movimento. */
+        if (ERP.persistencia && ERP.persistencia.ligado()) {
+          ERP.persistencia.salvarUsuario(D.usuario(r.usuario ? r.usuario.id : id) || {})
+            .then(function (x) {
+              if (x && x.erro) ERP.app.aviso('Salvo na tela, mas não no banco: ' + x.erro, 'erro');
+            });
+        }
         ERP.app.fecharModal();
         ERP.app.aviso('Usuário salvo.', 'ok');
         ERP.app.montarSeletorUsuario && ERP.app.montarSeletorUsuario();
