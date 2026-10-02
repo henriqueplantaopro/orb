@@ -58,6 +58,23 @@ ERP.app = (function () {
 
   function aviso(msg, tipo) {
     const t = U.el('toast');
+    /* Quando o banco não está gravando, um "Lançado" sem ressalva é
+       mentira útil para ninguém: quem lança olha o aviso, não a
+       etiqueta no topo da tela. Então o aviso de SUCESSO carrega o
+       recado junto, e em vermelho.
+
+       Se o módulo específico está degradado mas o resto grava, o
+       recado nomeia a situação em vez de dizer que nada grava. */
+    const semBanco = ERP.auth && ERP.auth.configurado() &&
+      ERP.persistencia && !ERP.persistencia.ligado();
+    const degradadas = (ERP.persistencia && ERP.persistencia.degradadas)
+      ? ERP.persistencia.degradadas() : [];
+    if (tipo !== 'erro' && semBanco) {
+      msg = msg + ' — ATENÇÃO: não está sendo gravado no banco, vai sumir ao recarregar.';
+      tipo = 'erro';
+    } else if (tipo !== 'erro' && degradadas.length) {
+      msg = msg + ' (atenção: ' + degradadas.length + ' módulo(s) sem gravar nesta sessão)';
+    }
     t.textContent = msg;
     t.style.background = tipo === 'erro' ? 'var(--red)' : 'var(--brand)';
     t.style.display = 'block';

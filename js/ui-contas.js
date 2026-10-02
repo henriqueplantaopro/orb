@@ -853,7 +853,10 @@ ERP.contas = (function () {
     const cz = r.cruzamento || {};
     ERP.app.modal({
       titulo: 'Pagamento entre empresas do grupo',
-      fecharTxt: 'Voltar e trocar a conta',
+      /* Fechar pelo X ou pelo Esc continua cancelando. O botão de
+         voltar está nas ações, com o que o nome dele promete:
+         reabre a baixa com o que já estava digitado. */
+      fecharTxt: 'Cancelar a baixa',
       corpo:
         '<div class="destaque">' +
           '<div class="resumo-linha"><span>Nota em nome de</span><span class="v">' +
@@ -869,7 +872,14 @@ ERP.contas = (function () {
         'o acerto entre elas.</div>' +
         '<label>Observação (opcional)</label>' +
         '<input id="cz-obs" placeholder="Ex.: acerto na transferência do dia 30">',
-      acoes: [{ txt: 'Confirmar e registrar o mútuo', cls: 'btn-pagar', fn: function () {
+      acoes: [{ txt: '← Voltar e trocar a conta', cls: 'btn-sm', fn: function () {
+        /* Reabre a baixa com data, valores e comprovante como
+           estavam. Antes este botão fechava tudo e devolvia para a
+           lista: quem errou a conta perdia o que tinha digitado e
+           precisava redigitar. */
+        ERP.app.fecharModal();
+        abrirBaixa(id, dados);
+      } }, { txt: 'Confirmar e registrar o mútuo', cls: 'btn-pagar', fn: function () {
         const obs = U.val('cz-obs');
         const d2 = Object.assign({}, dados, { confirmar_cruzamento: true });
         if (obs) d2.obs = obs;
@@ -883,27 +893,47 @@ ERP.contas = (function () {
   }
 
   /* ── baixa ─────────────────────────────────────────────*/
-  function abrirBaixa(id) {
+  /* `antes` traz o que a pessoa já tinha digitado, quando ela volta
+     da confirmação do pagamento entre empresas. Sem isso, voltar
+     significava redigitar data, valores e comprovante. */
+  function abrirBaixa(id, antes) {
     const p = S.parcela(id);
     const saldo = S.saldoDe(p);
+    const ant = antes || {};
     ERP.app.modal({
       titulo: 'Solicitar pagamento',
       corpo:
         '<div class="resumo-linha"><span>' + U.esc(S.descricaoVisivel(p)) + (p.total > 1 ? ' · ' + p.num + '/' + p.total : '') + '</span>' +
           '<span class="v">' + U.brl(p.valor) + '</span></div>' +
         '<div class="resumo-linha"><span>Saldo em aberto</span><span class="v">' + U.brl(saldo) + '</span></div>' +
-        '<div class="row2"><div><label>Data do pagamento</label><input type="date" id="pg-data" value="' + U.hoje() + '"></div>' +
-        '<div><label>Valor pago (principal)</label><input id="pg-valor" class="num" inputmode="decimal" value="' + U.num(saldo) + '"></div></div>' +
-        '<div class="row3"><div><label>Juros</label><input id="pg-juros" class="num" inputmode="decimal" value="0,00"></div>' +
-        '<div><label>Multa</label><input id="pg-multa" class="num" inputmode="decimal" value="0,00"></div>' +
-        '<div><label>Desconto</label><input id="pg-desc" class="num" inputmode="decimal" value="0,00"></div></div>' +
+        '<div class="row2"><div><label>Data do pagamento</label><input type="date" id="pg-data" value="' +
+          (ant.data || U.hoje()) + '"></div>' +
+        '<div><label>Valor pago (principal)</label><input id="pg-valor" class="num" inputmode="decimal" value="' +
+          U.num(ant.valor !== undefined ? ant.valor : saldo) + '"></div></div>' +
+        '<div class="row3"><div><label>Juros</label><input id="pg-juros" class="num" inputmode="decimal" value="' +
+          U.num(ant.juros || 0) + '"></div>' +
+        '<div><label>Multa</label><input id="pg-multa" class="num" inputmode="decimal" value="' +
+          U.num(ant.multa || 0) + '"></div>' +
+        '<div><label>Desconto</label><input id="pg-desc" class="num" inputmode="decimal" value="' +
+          U.num(ant.desconto || 0) + '"></div></div>' +
         '<div class="row2"><div><label>Conta de saída</label><select id="pg-banco">' +
-          D.bancos.map(b => '<option value="' + b.id + '">' + U.esc(b.apelido) + '</option>').join('') +
+          /* A empresa dona da conta vai junto, como em Conciliação e
+             Saldo. É neste campo que a pessoa decide algo que vira
+             conta corrente entre empresas — era o único lugar onde
+             ela não via de quem é a conta. */
+          D.bancos.map(b => '<option value="' + b.id + '"' +
+            (ant.banco === b.id ? ' selected' : '') + '>' + U.esc(b.apelido) +
+            (b.empresa ? ' · ' + U.esc((D.empresaPor(b.empresa) || {}).apelido || '') : '') +
+            '</option>').join('') +
         '</select></div>' +
         '<div><label>Forma (do cadastro do credor)</label>' +
           '<input value="' + U.esc((S.formaDoCredor(p.credor) || {}).nome || 'não configurada') + '" disabled></div></div>' +
-        '<label>Comprovante / autenticação</label><input id="pg-doc" placeholder="opcional">' +
+        '<label>Comprovante / autenticação</label><input id="pg-doc" placeholder="opcional" value="' +
+          U.esc(ant.doc || '') + '">' +
         '<div class="destaque" id="pg-resumo"></div>',
+      /* Voltando da confirmação, o foco vai direto para a conta de
+         saída: é o campo que a pessoa veio trocar. */
+      aoAbrir2: true,
       acoes: [{ txt: 'Enviar para autorização', cls: 'btn-pagar', fn: () => {
         /* Lê os campos ANTES de abrir qualquer outro modal: o
            modal de confirmação substitui este, e aí os campos já
@@ -929,6 +959,10 @@ ERP.contas = (function () {
         depois();
       } }],
       aoAbrir: () => {
+        /* Voltando da confirmação do pagamento entre empresas, o foco
+           vai direto para a conta de saída: é o campo que a pessoa
+           veio trocar. */
+        if (antes && U.el('pg-banco')) U.el('pg-banco').focus();
         // ao digitar desconto, o principal cai para saldo - desconto:
         // é o desconto que quita o resto, sem sair do caixa
         U.el('pg-desc').addEventListener('change', function () {

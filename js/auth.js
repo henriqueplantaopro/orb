@@ -270,6 +270,16 @@ ERP.auth = (function () {
     if (ERP.app && ERP.app.atualizar) ERP.app.atualizar();
     if (ERP.app && ERP.app.renderHome) ERP.app.renderHome();
     const tag = ERP.util.el('tag-modo');
+    if (r && r.degradadas && r.degradadas.length) {
+      /* Carregou quase tudo. Nomear o que faltou é melhor que
+         desligar tudo ou fingir que está completo. */
+      if (tag) tag.textContent = 'conectado — ' + r.degradadas.length + ' módulo(s) sem gravar';
+      if (ERP.app && ERP.app.aviso) {
+        ERP.app.aviso('Estes módulos não gravam nesta sessão: ' + r.degradadas.join(', ') +
+          '. Causa: ' + (r.detalhe || 'desconhecida'), 'erro');
+      }
+      return;
+    }
     if (tag) tag.textContent = 'conectado ao banco';
   }
 

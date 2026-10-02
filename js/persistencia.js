@@ -35,6 +35,20 @@ ERP.persistencia = (function () {
      prevê vai para `extra`, em JSON: assim nenhum campo se perde
      por falta de coluna, e o que se consulta continua em coluna
      de verdade. */
+  /* Tabelas com coluna fechada por permissão (paciente, valores)
+     não podem ser lidas com `select *`: o banco recusa a requisição
+     inteira, e com razão. A LEITURA vai pela visão, que mascara o
+     que a pessoa não pode ver; a ESCRITA continua na tabela, que é
+     onde o dado mora.
+
+     A tentação aqui era dar `grant select` na tabela e seguir o
+     hint do PostgREST. Isso calaria o erro e devolveria o nome do
+     paciente a quem não pode vê-lo. */
+  const LEITURA_POR_VISAO = {
+    procedimentos: 'procedimentos_visivel',
+    estoqueMov: 'estoque_movimentos_visivel'
+  };
+
   const MAPA = {
     titulos: { tabela: 'titulos', colunas: ['id', 'descricao', 'credor', 'doc', 'tipo_titulo', 'emissao', 'origem', 'origem_ref', 'obs', 'valor_total', 'valor_bruto', 'qtd', 'empresa_tomadora', 'criado_por', 'criado_por_id', 'criado_em'] },
     parcelas: { tabela: 'parcelas', colunas: ['id', 'titulo_id', 'num', 'total', 'descricao', 'credor', 'conta', 'centro', 'rateio', 'tipo_titulo', 'emissao', 'comp', 'venc', 'valor', 'status', 'valor_pago', 'pago_em', 'aprovacao', 'aprovado_por', 'aprovado_em', 'motivo', 'origem', 'doc', 'obs', 'chave', 'retencoes', 'valor_retido', 'itens', 'criado_por', 'criado_por_id', 'criado_em'] },
@@ -128,6 +142,7 @@ ERP.persistencia = (function () {
     });
   }
 
+  let degradadas = [];    // coleções que não carregaram
   let sombra = {};        // coleção → { id: json }
   let agendado = null;
   let ligado = false;
@@ -171,10 +186,20 @@ ERP.persistencia = (function () {
     if (!c) return { erro: 'Sem conexão com o banco.' };
     const st = ERP.store.st;
 
+    /* Uma coleção que falha NÃO derruba as outras. Antes, a primeira
+       recusa abortava a carga inteira e a persistência desligava
+       para o sistema todo — um privilégio esquecido numa tabela
+       deixava 26 módulos em memória. Agora o módulo problemático
+       fica indisponível e o resto funciona. */
+    degradadas = [];
     for (const nome of Object.keys(MAPA)) {
       const def = MAPA[nome];
-      const { data, error } = await c.from(def.tabela).select('*');
-      if (error) return { erro: 'Falha ao ler ' + def.tabela + ': ' + error.message };
+      const fonte = LEITURA_POR_VISAO[nome] || def.tabela;
+      const { data, error } = await c.from(fonte).select('*');
+      if (error) {
+        degradadas.push({ nome: nome, tabela: fonte, erro: error.message });
+        continue;
+      }
       const alvo = st[nome];
       if (!Array.isArray(alvo)) continue;
       alvo.length = 0;
@@ -191,7 +216,12 @@ ERP.persistencia = (function () {
 
     tirarFoto();
     ligado = true;
-    return { ok: true };
+    /* Carregou o que deu. Quem não carregou vira aviso nomeado, não
+       silêncio nem desligamento geral. */
+    return degradadas.length
+      ? { ok: true, degradadas: degradadas.map(function (d) { return d.nome; }),
+          detalhe: degradadas[0].tabela + ': ' + degradadas[0].erro }
+      : { ok: true };
   }
 
   /* O store gera id com um contador próprio. Com várias pessoas
@@ -235,7 +265,12 @@ ERP.persistencia = (function () {
   function diferencas() {
     const st = ERP.store.st;
     const mudou = [];
+    const fora = degradadas.map(function (d) { return d.nome; });
     Object.keys(MAPA).forEach(function (nome) {
+      /* Coleção que não carregou fica de fora da gravação também:
+         sem a sombra, TUDO pareceria novo e a sincronização
+         sobrescreveria o banco com o que está na memória. */
+      if (fora.indexOf(nome) >= 0) return;
       const antes = sombra[nome] || {};
       const agora = {};
       const novos = [];
@@ -342,5 +377,6 @@ ERP.persistencia = (function () {
 
   return { iniciar: iniciar, sincronizar: sincronizar, carregar: carregar,
            salvarUsuario: salvarUsuario,
-           pendencias: () => diferencas().length, ligado: () => ligado };
+           pendencias: () => diferencas().length, ligado: () => ligado,
+           degradadas: () => degradadas.slice() };
 })();
