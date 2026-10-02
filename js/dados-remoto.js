@@ -42,6 +42,32 @@ ERP.dadosRemoto = (function () {
     { tabela: 'cargos', destino: 'cargos', ordem: 'id' }
   ];
 
+  /* Ordem NATURAL, não alfabética. O banco ordena texto, e em texto
+     "10" vem antes de "2" — foi o que embaralhou o plano de contas,
+     que passou a listar "10 · Aportes" no topo e "2 · Impostos"
+     depois. O mesmo valeria para centro pj10 e conta 6.07 contra
+     6.1.
+
+     A comparação quebra o código em pedaços de número e de texto, e
+     compara número com número. */
+  function compararNatural(a, b) {
+    const pa = String(a === undefined || a === null ? '' : a).match(/(\d+|\D+)/g) || [];
+    const pb = String(b === undefined || b === null ? '' : b).match(/(\d+|\D+)/g) || [];
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+      const x = pa[i], y = pb[i];
+      if (x === undefined) return -1;
+      if (y === undefined) return 1;
+      const nx = /^\d+$/.test(x), ny = /^\d+$/.test(y);
+      if (nx && ny) {
+        const d = parseInt(x, 10) - parseInt(y, 10);
+        if (d) return d;
+      } else if (x !== y) {
+        return x.localeCompare(y, 'pt-BR');
+      }
+    }
+    return 0;
+  }
+
   /* O banco guarda `null`; o sistema, em vários pontos, testa
      `if (x.campo)` e trata string vazia e ausência igual. Tirar os
      nulos evita que um `null` vire o texto "null" numa tela. */
@@ -87,7 +113,9 @@ ERP.dadosRemoto = (function () {
       const alvo = D[item.destino];
       if (!Array.isArray(alvo)) continue;
       alvo.length = 0;
-      data.forEach(function (l) { alvo.push(limpar(l)); });
+      data.slice()
+        .sort(function (x, y) { return compararNatural(x[item.ordem], y[item.ordem]); })
+        .forEach(function (l) { alvo.push(limpar(l)); });
     }
 
     /* Tabela vazia é sinal de carga incompleta, não de cadastro
@@ -97,6 +125,18 @@ ERP.dadosRemoto = (function () {
       return { erro: 'Cadastro essencial faltando no banco: ' + vazias.join(', ') +
         ' sem nenhuma linha. Rode o 03-seed.sql.' };
     }
+
+    /* O plano de contas é hierárquico, e o sistema agrupa pelo
+       campo `pai`. Se o banco ainda não tiver a coluna (08-plano-pai
+       não rodado), deriva do próprio código: 6.07 pertence ao 6.
+       Sem isso, o combo de natureza mostra os grupos vazios e não
+       dá para lançar nada. */
+    D.plano.forEach(function (p) {
+      if (p.nivel > 1 && !p.pai) {
+        const raiz = String(p.cod).split('.')[0];
+        if (raiz && raiz !== p.cod) p.pai = raiz;
+      }
+    });
 
     const { data: mz, error: errMz } = await c.from('matriz_acesso').select('*');
     if (errMz) return { erro: 'Não foi possível ler a matriz de acesso: ' + errMz.message };
