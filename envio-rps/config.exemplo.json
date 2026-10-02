@@ -1,0 +1,8 @@
+{
+  "_comentario": "Copie para config.json e preencha. NÃO versione o config.json: ele guarda a senha do certificado.",
+  "ambiente": "homologacao",
+  "certificado": "C:\\certificados\\hjm-dom-pedro-a1.pfx",
+  "senha": "senha-do-certificado",
+  "inscricao_municipal": "5BX8969",
+  "cnpj": "34958609000190"
+}

@@ -1,0 +1,696 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ERP · Contas a Pagar (protótipo v2)</title>
+<link rel="stylesheet" href="css/erp.css">
+</head>
+<body>
+
+<header>
+  <h1>ERP · Gestão Financeira</h1>
+  <span class="tag" id="empresa-nome"></span>
+  <span class="tag" id="tag-modo">protótipo v2 — dados só nesta tela</span>
+  <div class="sessao">
+    <span>Você está como</span>
+    <select id="sessao-usuario" aria-label="Trocar de usuário"></select>
+  </div>
+</header>
+
+<div class="barra-modulo" id="barra-modulo" style="display:none">
+  <button class="btn-voltar" id="btn-home">← Módulos</button>
+  <span class="modulo-nome" id="modulo-nome"></span>
+  <div id="area-fin" class="areas">
+    <button data-area="pagar" aria-pressed="true">A pagar</button>
+    <button data-area="pago" aria-pressed="false">Pago</button>
+    <button data-area="receber" aria-pressed="false">A receber</button>
+    <button data-area="recebido" aria-pressed="false">Recebido</button>
+    <button data-area="conciliacao" aria-pressed="false">Conciliação</button>
+    <button data-area="saldo" aria-pressed="false">Saldo bancário</button>
+    <button data-area="relatorios" aria-pressed="false">Relatórios</button>
+  </div>
+
+  <nav class="abas" id="sub-abas">
+    <button data-aba="contas" data-area="pagar" aria-current="true">Contas a pagar</button>
+    <button data-aba="aprovacoes" data-area="pagar" id="aba-aprovacoes">Pagamentos a aprovar<span class="contador" id="cont-pendentes">0</span></button>
+    <button data-aba="remessa" data-area="pagar">Remessa bancária</button>
+    <button data-aba="despesas" data-area="pagar">Despesas previstas</button>
+    <button data-aba="retencoes" data-area="pagar">Retenções de impostos</button>
+    <button data-aba="anexos" data-area="pagar" class="aba-lembrete">Pago sem NF<span class="contador" id="cont-anexos">0</span></button>
+    <button data-aba="pago" data-area="pago" style="display:none">Pagamentos realizados</button>
+    <button data-aba="receber" data-area="receber" style="display:none">Contas a receber<span class="contador" id="cont-receber">0</span></button>
+    <button data-aba="recebido" data-area="recebido" style="display:none">Recebimentos<span class="contador" id="cont-receber-atraso">0</span></button>
+    <button data-aba="conciliacao" data-area="conciliacao" style="display:none">Extrato e conciliação</button>
+    <button data-aba="saldo" data-area="saldo" style="display:none">Saldo bancário</button>
+    <button data-aba="relatorios" data-area="relatorios" style="display:none">Relatórios</button>
+  </nav>
+</div>
+
+<div class="wrap">
+
+  <!-- ══════════ MÓDULOS ══════════ -->
+  <div data-modulo="home" id="tela-home">
+    <div class="modulos" id="grade-modulos"></div>
+    <div id="home-pendencias"></div>
+  </div>
+
+  <!-- ══════════ PRODUTIVIDADE ══════════ -->
+  <div data-modulo="produtividade" style="display:none">
+    <div class="card">
+      <div class="rel-nav" id="pr-nav" style="margin:0 0 10px">
+        <button data-praba="importar" aria-pressed="true">Importar</button>
+        <button data-praba="lotes" aria-pressed="false">Lançamentos</button>
+        <button data-praba="cobertura" aria-pressed="false">Cobertura<span class="contador" id="pr-alerta" style="display:none"></span></button>
+        <button data-praba="pendentes" aria-pressed="false">Pendentes de pagamento</button>
+      </div>
+      <div id="pr-aba-pendentes" style="display:none"></div>
+      <div id="pr-aba-importar">
+        <h2>Importar fechamento de produtividade<span class="sub">arquivo do PegaPlantão</span></h2>
+        <input type="file" id="pr-arquivo" accept=".xlsx,.xls" style="border:none;padding:0">
+        <div class="ajuda">Lê a aba PRODUTIVIDADE (projeto, período e plantões por médico) e a aba
+          FINANCEIRO (razão social, CNPJ/CPF e chave PIX). Agrupa por médico, setor e tipo.</div>
+        <div id="pr-saida"></div>
+      </div>
+      <div id="pr-aba-lotes" style="display:none"></div>
+      <div id="pr-aba-cobertura" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ FATURAMENTO ══════════ -->
+  <div data-modulo="faturamento" style="display:none">
+    <div class="card">
+      <div class="rel-nav" id="fa-nav" style="margin:0 0 10px">
+        <button data-faaba="status" aria-pressed="true">Status</button>
+        <button data-faaba="resultado">Resultado</button>
+        <button data-faaba="previsoes">Previsões</button>
+        <button data-faaba="esteira">Esteira<span class="contador" id="fa-esteira-n">0</span></button>
+        <button data-faaba="rps">RPS em lote</button>
+        <button data-faaba="notas">Notas do portal</button>
+        <button data-faaba="fatura">Fatura (locação sem NF)</button>
+        <button data-faaba="cobertura">Cobertura<span class="contador" id="fa-alerta" style="display:none"></span></button>
+      </div>
+      <div id="fa-aba-fatura" style="display:none"></div>
+      <div id="fa-aba-status"></div>
+<div id="fa-aba-resultado" style="display:none"></div>
+<div id="fa-aba-previsoes" style="display:none">
+        <h2>Previsões de faturamento<span class="sub">quanto cada projeto deve faturar na competência</span></h2>
+        <div class="filtros">
+          <div class="f"><label for="pv-comp">Competência</label><input type="month" id="pv-comp"></div>
+          <button class="btn-linha" id="pv-salvar">Salvar e confirmar o mês</button>
+          <button class="btn-sm btn-cancelar" id="pv-encerrar">Encerrar mês</button>
+        </div>
+        <div id="pv-saida"></div>
+      </div>
+      <div id="fa-aba-rps" style="display:none"></div>
+      <div id="fa-aba-esteira" style="display:none"></div>
+      <div id="fa-aba-cobertura" style="display:none"></div>
+      <div id="fa-aba-notas" style="display:none">
+      <h2>Notas emitidas<span class="sub">pacote do portal da prefeitura</span></h2>
+      <input type="file" id="fa-arquivo" accept=".zip,.txt,.xml" multiple style="border:none;padding:0">
+      <div class="ajuda">Solte aqui o .ZIP que o portal manda pelo link do e-mail, os .TXT de dentro dele,
+        ou o <b>.XML da NFS-e</b> (um arquivo pode trazer várias notas). O sistema lê as notas, identifica a
+        empresa do grupo pelo CNPJ do prestador e o cliente pelo do tomador, e monta o contas a receber.</div>
+      <div id="fa-saida"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ ESTOQUE ══════════ -->
+  <div data-modulo="estoque" style="display:none">
+    <div class="card">
+      <h2>Estoque de materiais<span class="sub">por armazém, custo médio ponderado móvel</span></h2>
+      <div class="filtros">
+        <div class="rel-nav" id="es-nav" style="margin:0">
+          <button data-es="posicao" aria-pressed="true">Posição e alertas</button>
+          <button data-es="extrato" aria-pressed="false">Movimentações</button>
+          <button data-es="pacientes" aria-pressed="false">Consumo por paciente</button>
+          <button data-es="entrada" aria-pressed="false">Entrada de material</button>
+          <button data-es="inventario" aria-pressed="false">Inventário inicial</button>
+          <button data-es="relatorios" aria-pressed="false">Relatórios</button>
+        </div>
+        <div class="f"><label for="es-armazem">Armazém</label><select id="es-armazem"></select></div>
+        <button class="btn-sm" id="es-transferir">Transferir</button>
+        <button class="btn-linha" id="es-baixa">+ Baixa de material</button>
+      </div>
+      <div id="es-saida"></div>
+    </div>
+  </div>
+
+
+  <!-- ══════════ PROCEDIMENTOS (mutirão HGB) ══════════ -->
+  <div data-modulo="procedimentos" style="display:none">
+    <div class="card">
+      <h2>Procedimentos — mutirão HGB<span class="sub">tabela PATE 2026 · material, repasse e resultado por cirurgia</span></h2>
+      <div class="filtros">
+        <div class="rel-nav" id="pc-nav" style="margin:0">
+          <button data-pc="lancar" aria-pressed="true">Lançar</button>
+          <button data-pc="lista" aria-pressed="false">Lançamentos</button>
+          <button data-pc="relatorios" aria-pressed="false">Relatórios</button>
+          <button data-pc="fechamento" aria-pressed="false">Fechamento</button>
+        </div>
+      </div>
+      <div id="pc-saida"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ COMPRAS ══════════ -->
+  <div data-modulo="compras" style="display:none">
+    <div class="card">
+      <h2>Compras<span class="sub">requisição, aprovação, pedido e recebimento</span></h2>
+      <div class="filtros">
+        <div class="rel-nav" id="cp-nav" style="margin:0">
+          <button data-cp="abertas" aria-pressed="true">Em andamento</button>
+          <button data-cp="aprovar" aria-pressed="false">Aguardando aprovação</button>
+          <button data-cp="cotar" aria-pressed="false">Em cotação</button>
+          <button data-cp="receber" aria-pressed="false">Aguardando entrega</button>
+          <button data-cp="fechadas" aria-pressed="false">Fechadas</button>
+          <button data-cp="todas" aria-pressed="false">Todas</button>
+        </div>
+        <button class="btn-linha" id="cp-nova">+ Nova requisição</button>
+      </div>
+      <div id="cp-saida"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ CONTRATOS ══════════ -->
+  <div data-modulo="contratos" style="display:none">
+    <div class="card">
+      <h2>Contratos<span class="sub">vigência, valor mensal e aditivos</span></h2>
+      <div class="rel-nav" id="ct-parte" style="margin:0 0 10px">
+        <button data-parte="cliente" aria-pressed="true">Com clientes (a faturar)</button>
+        <button data-parte="fornecedor" aria-pressed="false">Com fornecedores (a pagar)</button>
+      </div>
+      <div class="filtros">
+        <div class="rel-nav" id="ct-nav" style="margin:0">
+          <button data-ct="vigentes" aria-pressed="true">Vigentes</button>
+          <button data-ct="vencendo" aria-pressed="false">Vencendo em 90 dias</button>
+          <button data-ct="reajuste" aria-pressed="false">Reajuste em 45 dias</button>
+          <button data-ct="encerrados" aria-pressed="false">Encerrados</button>
+          <button data-ct="todos" aria-pressed="false">Todos</button>
+        </div>
+        <div class="f"><label for="ct-comp">Competência</label><input type="month" id="ct-comp"></div>
+        <button class="btn-sm" id="ct-aplicar">Aplicar valores nas previsões</button>
+        <button class="btn-linha" id="ct-novo">+ Novo contrato</button>
+      </div>
+      <div id="ct-saida"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ PESSOAL (DP) ══════════ -->
+  <div data-modulo="dp" style="display:none">
+    <div class="card">
+      <div class="rel-nav" id="dp-nav" style="margin:0 0 10px">
+        <button data-dpaba="funcionarios" aria-pressed="true">Funcionários</button>
+        <button data-dpaba="folha" aria-pressed="false">Folha</button>
+        <button data-dpaba="relatorio" aria-pressed="false">Relatório da folha</button>
+        <button data-dpaba="decimo" aria-pressed="false">13º</button>
+        <button data-dpaba="ferias" aria-pressed="false">Férias<span class="contador" id="dp-alerta-ferias" style="display:none"></span></button>
+        <button data-dpaba="rescisao" aria-pressed="false">Rescisão</button>
+        <button data-dpaba="custos" aria-pressed="false">Custos</button>
+        <button data-dpaba="tabelas" aria-pressed="false">Tabelas</button>
+      </div>
+      <div id="dp-aba-funcionarios"></div>
+      <div id="dp-aba-folha" style="display:none"></div>
+      <div id="dp-aba-relatorio" style="display:none"></div>
+      <div id="dp-aba-decimo" style="display:none"></div>
+      <div id="dp-aba-ferias" style="display:none"></div>
+      <div id="dp-aba-rescisao" style="display:none"></div>
+      <div id="dp-aba-custos" style="display:none"></div>
+      <div id="dp-aba-tabelas" style="display:none"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ CADASTROS ══════════ -->
+  <div data-modulo="cadastros" style="display:none">
+    <div class="card">
+      <h2>Cadastros<span class="sub">tudo o que os módulos consomem</span></h2>
+      <div class="cad-layout">
+        <nav class="cad-menu" id="cad-nav"></nav>
+        <div id="cad-saida"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ ATIVOS (equipamentos) ══════════ -->
+  <div data-modulo="ativos" style="display:none">
+    <div class="card">
+      <h2>Ativos<span class="sub">equipamentos: onde está cada um, com quem e desde quando</span></h2>
+      <div class="rel-nav" id="av-nav" style="margin:0 0 10px">
+        <button data-av="inventario" aria-pressed="true">Inventário</button>
+        <button data-av="os">Ordens de serviço<span class="contador" id="av-os-n">0</span></button>
+        <button data-av="preventiva">Preventiva</button>
+        <button data-av="ociosos">Ociosidade</button>
+        <button data-av="resultado">Resultado por equipamento</button>
+        <button data-av="indicadores">Indicadores e calibração</button>
+      </div>
+      <div id="av-saida"></div>
+    </div>
+  </div>
+
+  <!-- ══════════ ADMINISTRAÇÃO ══════════ -->
+  <div data-modulo="administracao" style="display:none">
+    <div class="card">
+      <h2>Administração<span class="sub">quem pode o quê, e o rastro do que foi feito</span></h2>
+      <div class="cad-layout">
+        <nav class="cad-menu" id="ad-nav"></nav>
+        <div id="ad-saida"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ MÓDULO AINDA NÃO CONSTRUÍDO ══════════ -->
+  <div data-modulo="em-breve" style="display:none">
+    <div class="card">
+      <div class="vazio"><strong id="eb-nome">Módulo em construção</strong>
+        <span id="eb-texto"></span></div>
+    </div>
+  </div>
+
+  <!-- ══════════ FINANCEIRO ══════════ -->
+  <div data-modulo="financeiro" style="display:none">
+  <div data-painel="contas" id="tab-contas">
+    <div class="acao-topo">
+      <button class="btn-linha" id="btn-abrir-lanc">+ Novo lançamento</button>
+    </div>
+
+    <!-- ── lançamento (recolhido por padrão) ── -->
+    <div class="card" id="card-lancamento" style="display:none">
+      <h2>Novo lançamento<span class="sub">um título, N parcelas</span></h2>
+
+      <div class="form-grid">
+        <div class="c2">
+          <label for="l-desc">Descrição</label>
+          <input id="l-desc" placeholder="Ex.: Produtividade médica — agosto">
+        </div>
+        <div>
+          <label for="l-doc">Nº do título / NF *</label>
+          <input id="l-doc" placeholder="Ex.: 4471">
+          <label for="l-pedido" style="margin-top:6px">Pedido de compra (opcional)</label>
+          <select id="l-pedido"><option value="">Nenhum</option></select>
+          <label style="font-weight:400;margin-top:4px"><input type="checkbox" id="l-sem-nf" style="width:auto">
+            Sem NF (informar depois)</label>
+        </div>
+        <div>
+          <label for="l-tipo">Tipo do título *</label>
+          <select id="l-tipo">
+            <option value="nf">Nota fiscal</option>
+            <option value="fatura">Fatura</option>
+            <option value="boleto">Boleto</option>
+            <option value="recibo">Recibo</option>
+            <option value="guia">Guia / imposto</option>
+            <option value="medicao">Medição de contrato</option>
+            <option value="adiantamento">Adiantamento</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="l-credor">Fornecedor / credor *
+            <button class="btn-ghost" id="l-novo-credor" type="button"
+                    style="float:right;padding:0">+ cadastrar</button></label>
+          <input id="l-credor" list="dl-credores" placeholder="Médico, fornecedor ou órgão">
+          <datalist id="dl-credores"></datalist>
+        </div>
+        <div class="c2">
+          <label for="l-conta">Natureza (plano de contas) *</label>
+          <select id="l-conta"></select>
+        </div>
+        <div>
+          <label for="l-origem">Origem</label>
+          <select id="l-origem">
+            <option value="manual">Manual</option>
+            <option value="produtividade">Produtividade</option>
+            <option value="nota_fiscal">NF de compra</option>
+            <option value="recorrente">Recorrente</option>
+          </select>
+        </div>
+
+        <div>
+          <label for="l-emissao">Data de emissão *</label>
+          <input type="date" id="l-emissao">
+        </div>
+        <div>
+          <label for="l-empresa">Nota em nome de</label>
+          <select id="l-empresa"></select>
+          <div class="ajuda" style="margin-top:4px">De quem é a obrigação. Troque só quando a nota
+            vier em nome de outra empresa do grupo.</div>
+        </div>
+        <div>
+          <label for="l-comp">Competência (DRE)</label>
+          <input type="month" id="l-comp">
+          <label style="display:flex;gap:6px;align-items:center;margin-top:5px;font-weight:400">
+            <input type="checkbox" id="l-compsegue" style="width:auto"> acompanha cada vencimento
+          </label>
+        </div>
+        <div>
+          <label for="l-valor" id="l-valor-label">Valor total (R$) *</label>
+          <input id="l-valor" class="num" inputmode="decimal" placeholder="0,00">
+        </div>
+        <div class="linha4">
+          <div>
+            <label for="l-qtd">Parcelas</label>
+            <input id="l-qtd" type="number" min="1" max="60" value="1">
+          </div>
+          <div>
+            <label for="l-venc1">1º vencimento *</label>
+            <input type="date" id="l-venc1">
+          </div>
+          <div>
+            <label for="l-period">Intervalo</label>
+            <select id="l-period">
+              <option value="unica">Sem recorrência (pagamento único)</option>
+              <option value="mensal">Mensal</option>
+              <option value="quinzenal">Quinzenal</option>
+              <option value="semanal">Semanal</option>
+              <option value="livre">Datas livres (digito cada uma)</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="c2">
+          <label>Centro de custo * <span class="sub">rateio entre projetos, se precisar</span></label>
+          <div id="l-rateio"></div>
+        </div>
+        <div class="c2" id="l-barras-box" style="display:none">
+          <label for="l-barras">Código de barras / linha digitável</label>
+          <input id="l-barras" inputmode="numeric" autocomplete="off"
+                 placeholder="passe o leitor no boleto ou digite os 47 dígitos">
+          <div class="ajuda">Leitor USB funciona como teclado: clique no campo e bipe o boleto.
+            O sistema valida, extrai vencimento e valor e guarda o código de 44 posições que vai na remessa.</div>
+          <div id="l-barras-info"></div>
+        </div>
+
+        <div class="c2" id="l-reten-box">
+          <label style="display:flex;gap:8px;align-items:flex-start;font-weight:400">
+            <input type="checkbox" id="l-reten-tem" style="width:auto;margin-top:3px">
+            <span><b>Reter algum tributo deste fornecedor.</b><br><span class="sub">Do mesmo jeito que
+              órgãos retêm da HJM — preenche sozinho quando vem de um XML com retenção; marque aqui
+              quando o lançamento é manual.</span></span></label>
+          <div class="row3" id="l-reten-campos" style="display:none">
+            <div><label>ISS</label><input class="num" id="l-reten-ISS" inputmode="decimal" value="0"></div>
+            <div><label>IRRF</label><input class="num" id="l-reten-IRRF" inputmode="decimal" value="0"></div>
+            <div><label>PIS</label><input class="num" id="l-reten-PIS" inputmode="decimal" value="0"></div>
+            <div><label>COFINS</label><input class="num" id="l-reten-COFINS" inputmode="decimal" value="0"></div>
+            <div><label>CSLL</label><input class="num" id="l-reten-CSLL" inputmode="decimal" value="0"></div>
+            <div><label>INSS</label><input class="num" id="l-reten-INSS" inputmode="decimal" value="0"></div>
+          </div>
+          <div class="ajuda" id="l-reten-resumo" style="display:none;margin-top:6px"></div>
+        </div>
+
+        <div class="c2">
+          <label for="l-obs">Observação</label>
+          <textarea id="l-obs" placeholder="opcional — identificação e acompanhamento"></textarea>
+        </div>
+
+        <div class="c2">
+          <div class="importar">
+            <div class="tit">Importar nota fiscal</div>
+            <input type="file" id="l-nf" accept=".xml,.pdf" aria-label="Arquivo da nota fiscal">
+            <div class="ajuda">XML de NF-e, NFS-e nacional ou ABRASF: preenche emitente, número, série,
+              emissão, valor, itens, retenções e as parcelas das duplicatas.
+              PDF que nasceu digital: lê a chave de acesso e preenche o que dá — confira antes de lançar.
+              PDF digitalizado precisa de OCR.</div>
+            <div id="l-nf-info"></div>
+          </div>
+        </div>
+        <div class="c2" id="l-parcelas-box">
+          <label>Parcelas geradas</label>
+          <div class="parcelas" id="l-parcelas"></div>
+        </div>
+      </div>
+
+      <div class="form-acoes">
+        <button class="btn-sm" id="btn-limpar-lanc">Limpar formulário</button>
+        <button class="btn-sm" id="btn-fechar-lanc">Fechar</button>
+        <button class="btn-primary" id="btn-lancar" style="width:auto;margin:0">Lançar conta a pagar</button>
+      </div>
+    </div>
+
+    <!-- ── lista ── -->
+    <div>
+      <div class="saldo-dia" id="cp-resumo"></div>
+
+      <div class="card">
+        <div class="rel-nav" id="ct-aba-nav" style="margin:0 0 10px">
+          <button data-ctaba="apagar" aria-pressed="true">A pagar</button>
+          <button data-ctaba="pagas" aria-pressed="false">Pagas</button>
+        </div>
+        <div class="filtros">
+          <div class="f" id="f-venc-de"><label for="flt-de">Vencimento de</label><input type="date" id="flt-de"></div>
+          <div class="f" id="f-venc-ate"><label for="flt-ate">até</label><input type="date" id="flt-ate"></div>
+          <div class="f" id="f-baixa-de" style="display:none"><label for="flt-baixa-de">Baixado de</label><input type="date" id="flt-baixa-de"></div>
+          <div class="f" id="f-baixa-ate" style="display:none"><label for="flt-baixa-ate">até</label><input type="date" id="flt-baixa-ate"></div>
+          <div class="f"><label for="flt-empresa">Empresa</label><select id="flt-empresa"><option value="">todas</option></select></div>
+          <div class="f" id="f-flt-banco" style="display:none"><label for="flt-banco">Banco</label><select id="flt-banco"><option value="">todos</option></select></div>
+          <button class="btn-sm" id="flt-avancada" aria-expanded="false">Pesquisa avançada</button>
+          <button class="btn-sm" id="flt-limpar">Limpar</button>
+          <button class="btn-sm" id="btn-exportar-contas">Exportar</button>
+          <button class="btn-sm" id="btn-imprimir-contas">Imprimir / PDF</button>
+        </div>
+
+        <div class="filtros" id="flt-mais" style="display:none">
+          <div class="f"><label for="flt-credor">Fornecedor</label>
+            <input id="flt-credor" list="lista-credores" placeholder="digite para filtrar" autocomplete="off">
+            <datalist id="lista-credores"></datalist></div>
+          <div class="f"><label for="flt-busca">Buscar</label><input id="flt-busca" placeholder="descrição, documento ou fornecedor"></div>
+          <div class="f"><label for="flt-comp">Competência</label><input type="month" id="flt-comp"></div>
+          <div class="f"><label for="flt-centro">Projeto / centro de custo</label><select id="flt-centro"></select></div>
+          <div class="f"><label for="flt-conta">Natureza</label><select id="flt-conta"></select></div>
+          <div class="f" id="f-status"><label for="flt-status">Situação</label>
+            <select id="flt-status">
+              <option value="apagar">A pagar (com saldo)</option>
+              <option value="previsto">Só previstos</option>
+              <option value="aguardando">Aguardando aprovação</option>
+              <option value="autorizado">Aprovadas p/ remessa</option>
+              <option value="enviado">No banco</option>
+              <option value="cancelado">Canceladas</option>
+              <option value="nao_pago">Todas (menos pagas)</option>
+            </select></div>
+          <div class="f"><label for="flt-anexo">NF</label>
+            <select id="flt-anexo">
+              <option value="">Todos</option>
+              <option value="sem">Pago sem NF (alerta)</option>
+              <option value="sem_qualquer">Qualquer um sem NF</option>
+              <option value="dispensada">Dispensada</option>
+              <option value="com">Com NF/anexo</option>
+            </select></div>
+        </div>
+
+        <div class="barra-lote" id="barra-lote" style="display:none">
+          <span class="conta" id="lote-conta"></span>
+          <button class="btn-sm" id="lote-vencidas">Marcar vencidas e de hoje</button>
+          <button class="btn-linha" id="lote-aprovar">Aprovar lançamentos</button>
+          <button class="btn-linha" id="lote-pagar">Solicitar pagamento</button>
+          <button class="btn-ghost" id="lote-limpar">limpar seleção</button>
+        </div>
+
+        <div class="tabela-rolagem">
+          <table>
+            <thead><tr>
+              <th style="width:24px"><input type="checkbox" id="chk-todas" style="width:auto" title="Selecionar todas as pendentes"></th>
+              <th>Fornecedor</th><th>Projeto</th><th class="num">Valor</th><th class="num">Saldo</th>
+              <th>Vencimento</th><th id="th-baixa" style="display:none">Data da baixa</th><th id="th-banco" style="display:none">Banco</th><th>Série / título</th><th>Descrição</th>
+              <th class="col-situacao">Situação</th><th class="col-acoes"></th>
+            </tr></thead>
+            <tbody id="tbody-contas"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════ RELATÓRIOS ══════════ -->
+  <div data-painel="aprovacoes" style="display:none">
+    <div class="card">
+      <h2>Pagamentos aguardando aprovação<span class="sub">visão da diretoria e do sócio</span></h2>
+      <div class="saldo-dia" id="ap-saldo"></div>
+      <div id="ap-saida"></div>
+    </div>
+  </div>
+
+  <div data-painel="receber" style="display:none">
+    <div class="metrics">
+      <div class="metric"><div class="lbl">A receber</div>
+        <div class="val" id="rc-aberto">R$ 0,00</div><div class="pe" id="rc-aberto-pe"></div></div>
+      <div class="metric"><div class="lbl">Vencido</div>
+        <div class="val" id="rc-vencido">R$ 0,00</div><div class="pe" id="rc-vencido-pe"></div>
+        <button class="btn-sm" id="rc-ver-atrasadas" style="margin-top:6px">Ver só as atrasadas</button></div>
+      <div class="metric"><div class="lbl">Recebido</div>
+        <div class="val" id="rc-recebido">R$ 0,00</div><div class="pe" id="rc-recebido-pe"></div></div>
+      <div class="metric"><div class="lbl">Retido + glosa</div>
+        <div class="val" id="rc-retido">R$ 0,00</div><div class="pe" id="rc-retido-pe"></div></div>
+    </div>
+
+    <div class="card">
+      <div class="filtros">
+        <div class="f"><label for="rc-busca">Buscar</label><input id="rc-busca" placeholder="NF, cliente"></div>
+        <div class="f"><label for="rc-comp">Competência</label><input type="month" id="rc-comp"></div>
+        <div class="f"><label for="rc-de">Previsão de</label><input type="date" id="rc-de"></div>
+        <div class="f"><label for="rc-ate">até</label><input type="date" id="rc-ate"></div>
+        <div class="f"><label for="rc-centro">Projeto</label><select id="rc-centro"></select></div>
+        <div class="f"><label for="rc-status">Situação</label>
+          <select id="rc-status">
+            <option value="aberto">Em aberto (previsto + faturado)</option>
+            <option value="atrasado">Atrasadas (vencidas e não recebidas)</option>
+            <option value="previsto">Só previsto</option>
+            <option value="faturado">Só faturado</option>
+            <option value="recebido">Recebidas</option>
+            <option value="substituido">Previsões substituídas</option>
+            <option value="">Todas</option>
+          </select></div>
+        <button class="btn-sm" id="rc-limpar">Limpar</button>
+        <button class="btn-sm" id="rc-exportar">Exportar</button>
+      </div>
+      <div class="tabela-rolagem" id="rc-saida"></div>
+    </div>
+  </div>
+
+  <div data-painel="conciliacao" style="display:none">
+    <div class="card">
+      <h2>Conciliação bancária<span class="sub">o extrato do banco contra o que está no sistema</span></h2>
+      <div class="filtros">
+        <div class="f"><label for="cn-banco">Conta</label><select id="cn-banco"></select></div>
+        <div class="f"><label for="cn-arquivo">Extrato OFX</label>
+          <input type="file" id="cn-arquivo" accept=".ofx,.OFX" style="border:none;padding:0"></div>
+        <div class="rel-nav" id="cn-nav" style="margin:0">
+          <button data-cn="concretos" aria-pressed="true">Vínculos concretos<span class="contador">0</span></button>
+          <button data-cn="possiveis" aria-pressed="false">Vínculos possíveis<span class="contador">0</span></button>
+          <button data-cn="sem" aria-pressed="false">Sem vínculo<span class="contador">0</span></button>
+          <button data-cn="produtividade" aria-pressed="false">Produtividade<span class="contador">0</span></button>
+          <button data-cn="regras" aria-pressed="false">Regras<span class="contador">0</span></button>
+          <button data-cn="feitos" aria-pressed="false">Já conciliados<span class="contador">0</span></button>
+        </div>
+      </div>
+      <div id="cn-saida"></div>
+    </div>
+  </div>
+
+  <div data-painel="despesas" style="display:none">
+    <div class="card">
+      <h2>Despesas previstas<span class="sub">o que se espera pagar e ainda não virou título</span></h2>
+      <div class="filtros">
+        <div class="f"><label for="pd-comp">Competência</label><input type="month" id="pd-comp"></div>
+      </div>
+      <div id="pd-saida"></div>
+    </div>
+  </div>
+
+  <div data-painel="retencoes" style="display:none">
+    <div class="card" id="rt-saida"></div>
+  </div>
+
+  <div data-painel="saldo" style="display:none">
+    <div class="card">
+      <h2>Saldo bancário<span class="sub">informado por você, para conferir com o que o sistema calcula</span></h2>
+      <div id="sb-saida"></div>
+    </div>
+  </div>
+
+  <div data-painel="remessa" style="display:none">
+    <div class="card">
+      <h2>Remessa bancária<span class="sub">Bradesco Multipag · CNAB 240 posições</span></h2>
+      <div id="rm-saida"></div>
+      <div class="form-acoes" style="margin:14px -14px -14px">
+        <span class="ajuda" style="margin-right:auto">Importe o arquivo de retorno do banco para dar baixa automática.</span>
+        <label class="btn-sm" style="padding:6px 10px;cursor:pointer">Importar retorno
+          <input type="file" id="rm-retorno" accept=".ret,.RET,.txt" style="display:none">
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div data-painel="relatorios" style="display:none">
+    <div class="card">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="f" style="min-width:300px">
+          <label for="rel-tipo">Relatório</label>
+          <select id="rel-tipo">
+            <optgroup label="Caixa">
+              <option value="fluxoDiario">Fluxo de caixa diário</option>
+            </optgroup>
+            <optgroup label="Financeiro — período">
+              <option value="aPagarReceber">Contas a pagar e a receber</option>
+              <option value="pagasRecebidas">Contas pagas e recebidas</option>
+            </optgroup>
+            <optgroup label="Resultado">
+              <option value="dre">DRE por competência</option>
+              <option value="empresas">Resultado por empresa (grupo)</option>
+              <option value="centro">Total por centro de custo</option>
+              <option value="projeto">Resultado por projeto</option>
+            </optgroup>
+            <optgroup label="Faturamento">
+              <option value="faturamento">Faturamento por projeto</option>
+            </optgroup>
+            <optgroup label="Caixa e produtividade">
+              <option value="fluxo">Fluxo de caixa</option>
+              <option value="setortipo">Custos por setor/tipo</option>
+            </optgroup>
+          </select>
+        </div>
+        <div class="rel-acoes">
+          <button class="btn-sm" id="rel-exportar">Exportar</button>
+          <button class="btn-linha" id="rel-fluxo-xls">Fluxo de caixa completo (Excel)</button>
+          <button class="btn-sm" id="rel-imprimir">Imprimir / PDF</button>
+        </div>
+      </div>
+      <div id="rel-saida" style="margin-top:16px"></div>
+    </div>
+  </div>
+  </div>
+
+</div>
+
+<div id="toast" style="display:none;position:fixed;right:18px;top:18px;background:var(--brand);
+  color:#fff;padding:11px 16px;border-radius:3px;font-size:12.5px;font-weight:600;max-width:340px;z-index:80"></div>
+
+<script src="js/vendor/xlsx.full.min.js"></script>
+<script src="js/util.js"></script>
+<script src="js/dados.js"></script>
+<script src="js/store.js"></script>
+<script src="js/ui-lancamento.js"></script>
+<script src="js/ui-contas.js"></script>
+<script src="js/vendor/exceljs.min.js"></script>
+<script src="js/exportar-fluxo.js"></script>
+<script src="js/ui-relatorios.js"></script>
+<script src="js/vendor/pdf.js"></script>
+<script>if (window.pdfjsLib) pdfjsLib.GlobalWorkerOptions.workerSrc = 'js/vendor/pdf.worker.js';</script>
+<script src="js/vendor/jszip.min.js"></script>
+<script src="js/nfe.js"></script>
+  <script src="js/nfse.js"></script>
+<script src="js/rps-barueri.js"></script>
+<script src="js/nfse-emitidas.js"></script>
+<script src="js/danfe.js"></script>
+<script src="js/sugestao.js"></script>
+<script src="js/boleto.js"></script>
+<script src="js/cnab-bradesco.js"></script>
+<script src="js/ui-aprovacoes.js"></script>
+<script src="js/ui-remessa.js"></script>
+<script src="js/ui-produtividade.js"></script>
+<script src="js/ui-faturamento.js"></script>
+<script src="js/ui-receber.js"></script>
+<script src="js/ui-cadastros.js"></script>
+<script src="js/ui-previsoes.js"></script>
+<script src="js/ui-contratos.js"></script>
+<script src="js/ui-estoque.js"></script>
+<script src="js/ui-procedimentos.js"></script>
+<script src="js/qrcode.js"></script>
+<script src="js/ui-ativos.js"></script>
+<script src="js/ui-compras.js"></script>
+<script src="js/pdf.js"></script>
+<script src="js/exportar.js"></script>
+<script src="js/ofx.js"></script>
+<script src="js/ui-conciliacao.js"></script>
+<script src="js/ui-saldo.js"></script>
+<script src="js/ui-retencoes.js"></script>
+<script src="js/ui-administracao.js"></script>
+<script src="js/ui-dp.js"></script>
+<!-- Biblioteca do Supabase. Falhando o carregamento (sem internet,
+     por exemplo), `ERP.auth.configurado()` devolve falso e o sistema
+     segue no modo local, sem login. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="js/config.js"></script>
+<script src="js/auth.js"></script>
+<script src="js/dados-remoto.js"></script>
+<script src="js/app.js"></script>
+</body>
+</html>
