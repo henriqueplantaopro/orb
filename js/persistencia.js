@@ -178,6 +178,37 @@ ERP.persistencia = (function () {
     return data || {};
   }
 
+  /* Cria (ou redefine) a credencial de acesso de alguém. A chave de
+     administração vive no servidor, nunca aqui — este código só
+     pede, com a sessão de quem está pedindo. */
+  async function criarLogin(email, senha) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const { data: { session } } = await c.auth.getSession();
+    if (!session) return { erro: 'Sessão expirada. Entre de novo.' };
+
+    const base = (ERP.config.url || '').replace(/\/$/, '');
+    try {
+      const resp = await fetch(base + '/functions/v1/criar-login', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer ' + session.access_token,
+          'apikey': ERP.config.anon,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ email: email, senha: senha })
+      });
+      if (resp.status === 404) {
+        return { erro: 'A função criar-login ainda não foi publicada no Supabase. ' +
+          'Veja o CRIAR-LOGIN-PELO-SISTEMA.md — é um passo único.' };
+      }
+      const r = await resp.json().catch(function () { return {}; });
+      return resp.ok ? r : { erro: r.erro || ('falha ' + resp.status) };
+    } catch (e) {
+      return { erro: e.message };
+    }
+  }
+
   async function statusLogins() {
     const c = cliente();
     if (!c) return [];
@@ -719,6 +750,7 @@ ERP.persistencia = (function () {
            limparMovimentoLocal: limparMovimentoLocal,
            salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
+           criarLogin: criarLogin,
            pendencias: () => diferencas().length, ligado: () => ligado,
            degradadas: () => degradadas.slice() };
 })();

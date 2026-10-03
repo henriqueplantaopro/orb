@@ -265,6 +265,47 @@ ERP.administracao = (function () {
     diz('Link enviado para ' + email + '.');
   }
 
+  /* Cria a credencial de acesso sem sair do sistema. A senha é
+     digitada aqui e vira provisória: a pessoa troca no primeiro
+     acesso e o administrador deixa de saber qual é. */
+  function criarAcesso(email) {
+    const msg = U.el('us-reset-msg');
+    const diz = function (t, cls) {
+      if (msg) msg.innerHTML = '<div class="' + (cls || 'ajuda') + '">' + U.esc(t) + '</div>';
+    };
+    if (!email) return diz('Preencha o e-mail e salve o usuário antes.', 'login-erro');
+
+    ERP.app.modal({
+      titulo: 'Criar acesso de ' + email,
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<label for="cl-senha">Senha provisória *</label>' +
+        '<input type="text" id="cl-senha" value="DomPedro' + new Date().getFullYear() + '!" ' +
+          'autocomplete="off">' +
+        '<div class="ajuda">Pelo menos 8 caracteres. Anote e passe à pessoa — ela será obrigada ' +
+        'a escolher a dela no primeiro acesso, e a partir daí ninguém mais conhece a senha ' +
+        'dela. Se já existir acesso para este e-mail, a senha é redefinida.</div>' +
+        '<div id="cl-msg"></div>',
+      acoes: [{ txt: 'Criar acesso', cls: 'btn-aprovar', fn: function () {
+        const senha = U.val('cl-senha');
+        const m2 = U.el('cl-msg');
+        const diz2 = function (t, cls) {
+          if (m2) m2.innerHTML = '<div class="' + (cls || 'ajuda') + '">' + U.esc(t) + '</div>';
+        };
+        if (!senha || senha.length < 8) return diz2('Mínimo de 8 caracteres.', 'login-erro');
+        diz2('Criando…');
+        ERP.persistencia.criarLogin(email, senha).then(function (r) {
+          if (r.erro) return diz2(r.erro, 'login-erro');
+          ERP.app.fecharModal();
+          ERP.app.aviso((r.redefinido ? 'Senha redefinida' : 'Acesso criado') + ' para ' + email +
+            '. Passe a senha provisória — a troca é obrigatória no primeiro acesso.', 'ok');
+          statusLogin = null;
+          render();
+        });
+      } }]
+    });
+  }
+
   function editarUsuario(id) {
     const u = id ? D.usuario(id) : null;
     ERP.app.modal({
@@ -290,8 +331,13 @@ ERP.administracao = (function () {
           '<h4 style="margin:16px 0 6px">Senha</h4>' +
           '<div class="ajuda">O sistema envia um link de redefinição para o e-mail acima. ' +
           'A pessoa escolhe a senha nova — ninguém, nem você, chega a ver.</div>' +
-          '<button class="btn-sm" id="us-reset" style="margin-top:6px">Enviar link de redefinição' +
-          '</button><div id="us-reset-msg"></div>' +
+          '<button class="btn-sm" id="us-criar-login">Criar acesso / redefinir senha</button> ' +
+          '<button class="btn-sm" id="us-reset">Enviar link por e-mail</button>' +
+          '<div id="us-reset-msg"></div>' +
+          '<div class="ajuda">O primeiro cria a credencial com uma senha provisória que você ' +
+          'informa e passa à pessoa — ela é obrigada a trocar no primeiro acesso, e a sua deixa ' +
+          'de valer. O segundo manda um link para a pessoa escolher sozinha (precisa de envio ' +
+          'de e-mail configurado).</div>' +
           '<label style="display:flex;gap:7px;align-items:flex-start;margin-top:12px;font-weight:400">' +
           '<input type="checkbox" id="us-provisoria" style="width:auto;margin-top:3px"' +
           (u.senha_provisoria ? ' checked' : '') + '>' +
@@ -303,6 +349,8 @@ ERP.administracao = (function () {
       aposAbrir: function () {
         const b = U.el('us-reset');
         if (b) b.addEventListener('click', function () { enviarReset(U.val('us-email').trim()); });
+        const bc = U.el('us-criar-login');
+        if (bc) bc.addEventListener('click', function () { criarAcesso(U.val('us-email').trim()); });
       },
       acoes: [{ txt: u ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const r = S.salvarUsuario({
