@@ -44,6 +44,10 @@ ERP.persistencia = (function () {
      A tentação aqui era dar `grant select` na tabela e seguir o
      hint do PostgREST. Isso calaria o erro e devolveria o nome do
      paciente a quem não pode vê-lo. */
+  /* Tabelas com coluna fechada: a escrita não pode usar upsert.
+     Ver o comentário em `sincronizar`. */
+  const SEM_UPSERT = { procedimentos: true, estoque_movimentos: true };
+
   const LEITURA_POR_VISAO = {
     procedimentos: 'procedimentos_visivel',
     estoqueMov: 'estoque_movimentos_visivel'
@@ -443,7 +447,36 @@ ERP.persistencia = (function () {
     for (const m of mudou) {
       /* Já foram no bloco acima. */
       if (m.nome === 'estoque' || m.nome === 'estoqueMov') continue;
-      if (m.novos.length) {
+      if (m.novos.length && SEM_UPSERT[m.def.tabela]) {
+        /* Tabela com coluna fechada por permissão não aceita
+           upsert. O `on conflict do update set paciente =
+           excluded.paciente` LÊ a coluna, e ler exige SELECT além
+           de UPDATE — nenhum grant de escrita resolve isso, e dar o
+           SELECT seria reabrir o que a etapa 04 fechou.
+
+           Então aqui o caminho é separado: linha nova vai por
+           INSERT, linha alterada vai por UPDATE com `eq('id')`.
+           Nenhum dos dois lê a coluna. O id nasce no cliente, então
+           sabemos qual é qual pela sombra. */
+        const conhecidos = sombra[m.nome] || {};
+        const inserir = [], atualizar = [];
+        m.novos.forEach(function (it) {
+          (conhecidos[it.id] === undefined ? inserir : atualizar).push(it);
+        });
+        if (inserir.length) {
+          const linhas = inserir.map(function (it) {
+            return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+          });
+          const { error } = await c.from(m.def.tabela).insert(linhas);
+          if (error) falhas.push(m.def.tabela + ': ' + error.message);
+        }
+        for (const it of atualizar) {
+          const linha = completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+          delete linha.id;
+          const { error } = await c.from(m.def.tabela).update(linha).eq('id', it.id);
+          if (error) falhas.push(m.def.tabela + ' (atualizar ' + it.id + '): ' + error.message);
+        }
+      } else if (m.novos.length) {
         const linhas = m.novos.map(function (it) {
           return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
         });

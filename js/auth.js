@@ -251,15 +251,22 @@ ERP.auth = (function () {
       }
     }
 
-    /* O movimento de exemplo sai ANTES de a tela aparecer: o que a
-       pessoa vir é do banco ou é vazio, nunca dado de demonstração
-       com cara de real. */
-    if (ERP.persistencia && ERP.persistencia.limparMovimentoLocal) {
-      ERP.persistencia.limparMovimentoLocal();
-    }
-
     // 2. a tela
     iniciarComSessao(s);
+
+    /* O movimento de exemplo sai DEPOIS de montar, não antes.
+       `iniciarComSessao` chama o `init` do app, que chama
+       `store.init()` — e o `init` recria o seed inteiro. Limpar
+       antes era limpar e ver tudo voltar: títulos, posições e
+       ativos de demonstração seguiam na tela por um segundo, com
+       cara de número da empresa.
+
+       Depois da montagem, o estado fica vazio até o banco
+       responder. Vazio é honesto. */
+    if (ERP.persistencia && ERP.persistencia.limparMovimentoLocal) {
+      ERP.persistencia.limparMovimentoLocal();
+      if (ERP.app && ERP.app.redesenhar) ERP.app.redesenhar();
+    }
 
     /* Enquanto o movimento carrega, a etiqueta diz isso. Sem o
        aviso, quem olhasse nesse intervalo concluiria que o sistema
