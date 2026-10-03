@@ -268,6 +268,21 @@ ERP.auth = (function () {
       if (ERP.app && ERP.app.redesenhar) ERP.app.redesenhar();
     }
 
+    /* Funcionários: só agora dá para carregar, porque a FONTE
+       depende da permissão de quem entrou — a tabela inteira para
+       quem tem `ver_dados_pessoais`, a visão sem CPF e salário para
+       os demais. Enquanto isso, a lista fica vazia em vez de
+       mostrar a semente do código. */
+    if (ERP.dados && Array.isArray(ERP.dados.funcionarios)) ERP.dados.funcionarios.length = 0;
+    if (ERP.dadosRemoto && ERP.dadosRemoto.funcionarios) {
+      ERP.dadosRemoto.funcionarios().then(function (aviso) {
+        if (aviso && ERP.app && ERP.app.aviso) {
+          ERP.app.aviso('Pessoal: ' + aviso, 'erro');
+        }
+        if (ERP.app && ERP.app.redesenhar) ERP.app.redesenhar();
+      });
+    }
+
     /* Enquanto o movimento carrega, a etiqueta diz isso. Sem o
        aviso, quem olhasse nesse intervalo concluiria que o sistema
        não grava — e estaria vendo só a carga em andamento. */

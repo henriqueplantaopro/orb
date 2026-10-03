@@ -42,6 +42,32 @@ ERP.dadosRemoto = (function () {
     { tabela: 'cargos', destino: 'cargos', ordem: 'id' }
   ];
 
+  /* FUNCIONÁRIOS é cadastro, e vai à parte porque a FONTE depende
+     de quem está lendo. Quem tem `ver_dados_pessoais` lê a tabela,
+     com CPF, salário e conta; quem não tem lê a visão
+     `funcionarios_publico`, que traz a lista utilizável sem nada
+     disso.
+
+     Este módulo ficou para trás na migração: seguia vindo da
+     semente do código, e por isso um perfil de Consulta via
+     salário e CPF de todo mundo. O mascaramento mora no banco, e
+     quem não chega ao banco não é mascarado. */
+  async function carregarFuncionarios(c, D) {
+    const completo = ERP.store.pode('ver_dados_pessoais');
+    const fonte = completo ? 'funcionarios' : 'funcionarios_publico';
+    const { data, error } = await c.from(fonte).select('*');
+    if (error) {
+      /* Sem a visão no banco (SQL antigo), esvazia em vez de cair
+         na semente: mostrar dado de demonstração como se fosse da
+         empresa é pior que mostrar nada. */
+      D.funcionarios.length = 0;
+      return 'não foi possível ler ' + fonte + ': ' + error.message;
+    }
+    D.funcionarios.length = 0;
+    (data || []).forEach(function (f) { D.funcionarios.push(limpar(f)); });
+    return null;
+  }
+
   /* Ordem NATURAL, não alfabética. O banco ordena texto, e em texto
      "10" vem antes de "2" — foi o que embaralhou o plano de contas,
      que passou a listar "10 · Aportes" no topo e "2 · Impostos"
@@ -175,5 +201,14 @@ ERP.dadosRemoto = (function () {
     return { ok: true, tabelas: MAPA.length, matriz: (mz || []).length };
   }
 
-  return { carregar: carregar };
+  /* Chamada à parte, DEPOIS de o usuário da sessão estar definido:
+     a fonte depende da permissão dele, e na carga dos cadastros
+     ainda não se sabe quem é. */
+  async function funcionarios() {
+    const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
+    if (!c) return 'sem conexão';
+    return carregarFuncionarios(c, ERP.dados);
+  }
+
+  return { carregar: carregar, funcionarios: funcionarios };
 })();

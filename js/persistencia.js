@@ -50,8 +50,14 @@ ERP.persistencia = (function () {
 
   const LEITURA_POR_VISAO = {
     procedimentos: 'procedimentos_visivel',
-    estoqueMov: 'estoque_movimentos_visivel'
+    estoqueMov: 'estoque_movimentos_visivel',
   };
+
+  function fonteDeLeitura(nome, tabela) {
+    const f = LEITURA_POR_VISAO[nome];
+    if (!f) return tabela;
+    return typeof f === 'function' ? f() : f;
+  }
 
   const MAPA = {
     titulos: { tabela: 'titulos', colunas: ['id', 'descricao', 'credor', 'doc', 'tipo_titulo', 'emissao', 'origem', 'origem_ref', 'obs', 'valor_total', 'valor_bruto', 'qtd', 'empresa_tomadora', 'criado_por', 'criado_por_id', 'criado_em'] },
@@ -355,7 +361,7 @@ ERP.persistencia = (function () {
        lenta. */
     const nomes = Object.keys(MAPA);
     const respostas = await Promise.all(nomes.map(function (nome) {
-      const fonte = LEITURA_POR_VISAO[nome] || MAPA[nome].tabela;
+      const fonte = fonteDeLeitura(nome, MAPA[nome].tabela);
       return c.from(fonte).select('*').then(function (r) {
         return { nome: nome, fonte: fonte, data: r.data, error: r.error };
       }, function (e) {
