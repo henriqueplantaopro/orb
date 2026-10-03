@@ -251,6 +251,13 @@ ERP.auth = (function () {
       }
     }
 
+    /* O movimento de exemplo sai ANTES de a tela aparecer: o que a
+       pessoa vir é do banco ou é vazio, nunca dado de demonstração
+       com cara de real. */
+    if (ERP.persistencia && ERP.persistencia.limparMovimentoLocal) {
+      ERP.persistencia.limparMovimentoLocal();
+    }
+
     // 2. a tela
     iniciarComSessao(s);
 

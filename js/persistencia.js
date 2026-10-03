@@ -236,6 +236,26 @@ ERP.persistencia = (function () {
   }
 
   /* ── carga inicial ──────────────────────────────────── */
+  /* Com banco configurado, o movimento de EXEMPLO sai antes de a
+     tela aparecer. Sem isto o sistema subia mostrando o inventário
+     embutido no código, e só alguns segundos depois trocava pelo
+     real — número de exemplo apresentado como número da empresa, o
+     que é pior que tela vazia: a pessoa confere, aprova, e o número
+     muda sozinho.
+
+     Cadastro é diferente: `dados-remoto` carrega antes de montar, e
+     ali a troca é síncrona. */
+  function limparMovimentoLocal() {
+    const st = ERP.store.st;
+    Object.keys(MAPA).forEach(function (nome) {
+      if (Array.isArray(st[nome])) st[nome].length = 0;
+    });
+    [POSICOES, MINIMOS].forEach(function (def) {
+      const o = st[def.estado];
+      if (o) Object.keys(o).forEach(function (k) { delete o[k]; });
+    });
+  }
+
   async function carregar() {
     const c = cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
@@ -247,19 +267,29 @@ ERP.persistencia = (function () {
        deixava 26 módulos em memória. Agora o módulo problemático
        fica indisponível e o resto funciona. */
     degradadas = [];
-    for (const nome of Object.keys(MAPA)) {
-      const def = MAPA[nome];
-      const fonte = LEITURA_POR_VISAO[nome] || def.tabela;
-      const { data, error } = await c.from(fonte).select('*');
-      if (error) {
-        degradadas.push({ nome: nome, tabela: fonte, erro: error.message });
-        continue;
+    /* As 25 leituras vão JUNTAS, não uma esperando a outra. Em fila
+       o tempo era a soma de todas — uns segundos em internet boa, e
+       bem mais em internet ruim. Em paralelo é o tempo da mais
+       lenta. */
+    const nomes = Object.keys(MAPA);
+    const respostas = await Promise.all(nomes.map(function (nome) {
+      const fonte = LEITURA_POR_VISAO[nome] || MAPA[nome].tabela;
+      return c.from(fonte).select('*').then(function (r) {
+        return { nome: nome, fonte: fonte, data: r.data, error: r.error };
+      }, function (e) {
+        return { nome: nome, fonte: fonte, data: null, error: { message: e.message } };
+      });
+    }));
+    respostas.forEach(function (r) {
+      if (r.error) {
+        degradadas.push({ nome: r.nome, tabela: r.fonte, erro: r.error.message });
+        return;
       }
-      const alvo = st[nome];
-      if (!Array.isArray(alvo)) continue;
+      const alvo = st[r.nome];
+      if (!Array.isArray(alvo)) return;
       alvo.length = 0;
-      (data || []).forEach(function (l) { alvo.push(doBanco(l)); });
-    }
+      (r.data || []).forEach(function (l) { alvo.push(doBanco(l)); });
+    });
 
     await lerIndexado(POSICOES);
     await lerIndexado(MINIMOS);
@@ -539,6 +569,7 @@ ERP.persistencia = (function () {
   }
 
   return { iniciar: iniciar, sincronizar: sincronizar, carregar: carregar,
+           limparMovimentoLocal: limparMovimentoLocal,
            salvarUsuario: salvarUsuario,
            pendencias: () => diferencas().length, ligado: () => ligado,
            degradadas: () => degradadas.slice() };
