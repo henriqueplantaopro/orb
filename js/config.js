@@ -13,6 +13,13 @@
    bateria de testes continua rodando. */
 window.ERP = window.ERP || {};
 ERP.config = {
+  /* Endereço da função que cria acesso. O painel do Supabase às
+     vezes publica com um nome automático (`dynamic-responder` e
+     parecidos) e mostra o nome escolhido só como rótulo — o ERP
+     chama pelo endereço, então é este valor que precisa bater com
+     o que aparece na coluna URL, depois de `/functions/v1/`. */
+  funcaoCriarLogin: 'criar-login',
+
   url: 'https://jsdyowuqehryfwqyklax.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpzZHlvd3VxZWhyeWZ3cXlrbGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDM4ODIsImV4cCI6MjEwNjUxOTg4Mn0.UPFhyMPwmM9DzyiRnjTg3EQGPg9KvcIQcP6wHM5WRSg',
 

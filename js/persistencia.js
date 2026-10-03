@@ -181,6 +181,14 @@ ERP.persistencia = (function () {
   /* Cria (ou redefine) a credencial de acesso de alguém. A chave de
      administração vive no servidor, nunca aqui — este código só
      pede, com a sessão de quem está pedindo. */
+  const NAO_PUBLICADA = 'Não encontrei a função de criar acesso no Supabase. Duas causas ' +
+    'possíveis: ela ainda não foi publicada, ou foi publicada com OUTRO endereço. No painel, ' +
+    'em Edge Functions, veja a coluna URL: o trecho depois de /functions/v1/ precisa ser igual ' +
+    'a "' + ((ERP.config && ERP.config.funcaoCriarLogin) || 'criar-login') + '". Se for ' +
+    'diferente (o painel às vezes gera nomes como "dynamic-responder"), ajuste o campo ' +
+    'funcaoCriarLogin no js/config.js. Enquanto isso, o caminho pelo painel continua valendo: ' +
+    'Authentication › Users › Add user, com "Auto Confirm User" marcado.';
+
   async function criarLogin(email, senha) {
     const c = cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
@@ -189,7 +197,8 @@ ERP.persistencia = (function () {
 
     const base = (ERP.config.url || '').replace(/\/$/, '');
     try {
-      const resp = await fetch(base + '/functions/v1/criar-login', {
+      const nome = (ERP.config && ERP.config.funcaoCriarLogin) || 'criar-login';
+      const resp = await fetch(base + '/functions/v1/' + nome, {
         method: 'POST',
         headers: {
           'Authorization': 'Bearer ' + session.access_token,
@@ -199,12 +208,18 @@ ERP.persistencia = (function () {
         body: JSON.stringify({ email: email, senha: senha })
       });
       if (resp.status === 404) {
-        return { erro: 'A função criar-login ainda não foi publicada no Supabase. ' +
-          'Veja o CRIAR-LOGIN-PELO-SISTEMA.md — é um passo único.' };
+        return { erro: NAO_PUBLICADA };
       }
       const r = await resp.json().catch(function () { return {}; });
       return resp.ok ? r : { erro: r.erro || ('falha ' + resp.status) };
     } catch (e) {
+      /* "Failed to fetch" é o que o navegador diz quando a
+         requisição nem chegou. Com função não publicada, o Supabase
+         responde sem os cabeçalhos que o navegador exige e o erro
+         vira este — então a mensagem crua não ajuda ninguém. */
+      if (/failed to fetch|networkerror|load failed/i.test(e.message || '')) {
+        return { erro: NAO_PUBLICADA };
+      }
       return { erro: e.message };
     }
   }
