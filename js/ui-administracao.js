@@ -181,12 +181,35 @@ ERP.administracao = (function () {
     'configurações. Troque o usuário no topo da tela (há um "Administrador" na lista) para editar.</div>';
 
   /* ── usuários ───────────────────────────────────────────*/
+  /* Estado do login de cada pessoa, lido do banco. Guardado aqui
+     porque a leitura é assíncrona e a tabela se redesenha várias
+     vezes. */
+  let statusLogin = null;
+
+  function carregarStatusLogin() {
+    if (!ERP.persistencia || !ERP.persistencia.statusLogins) return;
+    ERP.persistencia.statusLogins().then(function (lista) {
+      if (!lista || !lista.length) return;
+      statusLogin = {};
+      lista.forEach(function (l) { statusLogin[l.id] = l; });
+      render();
+    });
+  }
+
   function usuarios() {
     return avisoPerfil() +
       '<div class="ap-acoes"><button class="btn-linha" id="ad-novo-user"' +
-        (souAdmin() ? '' : ' disabled') + '>+ Novo usuário</button></div>' +
+        (souAdmin() ? '' : ' disabled') + '>+ Novo usuário</button>' +
+        (souAdmin() && ERP.persistencia && ERP.persistencia.ligado()
+          ? '<button class="btn-sm" id="ad-ver-logins">Verificar logins</button>' : '') +
+      '</div>' +
+      '<div class="ajuda">O cadastro aqui define <b>o que a pessoa pode fazer</b>. A senha ' +
+      'dela é criada uma única vez no painel do Supabase (Authentication › Users › Add user, ' +
+      'com "Auto Confirm User" marcado) — o sistema não cria senha por conta própria, de ' +
+      'propósito: para isso ele precisaria carregar a chave de administração do banco, e quem ' +
+      'abrisse o console teria acesso a tudo. Criado o login, o vínculo é automático.</div>' +
       '<table><thead><tr><th>Nome</th><th>Perfil</th><th>E-mail</th>' +
-      '<th class="num">Alçada</th><th>Situação</th><th></th></tr></thead><tbody>' +
+      '<th class="num">Alçada</th><th>Login</th><th>Situação</th><th></th></tr></thead><tbody>' +
       D.usuarios.map(function (u) {
         const lim = S.parametros().alcada[u.perfil];
         return '<tr' + (u.ativo === false ? ' class="cancelada"' : '') + '>' +
@@ -199,6 +222,20 @@ ERP.administracao = (function () {
           '<td class="sub">' + U.esc(u.email || '—') + '</td>' +
           '<td class="num">' + (['diretoria', 'socio', 'admin'].indexOf(u.perfil) < 0 ? '—'
             : lim ? U.brl(lim) : 'sem limite') + '</td>' +
+          /* Quem já consegue entrar e quem não. Sem isto, só se
+             descobria que faltava o login quando a pessoa tentava
+             acessar e não conseguia. */
+          '<td>' + (function () {
+            if (!statusLogin) return '<span class="sub">—</span>';
+            const st2 = statusLogin[u.id];
+            if (!u.email) return '<span class="badge b-cancelado">sem e-mail</span>';
+            if (st2 && st2.tem_login) {
+              return '<span class="badge b-aprovado">entra</span>' +
+                (st2.senha_provisoria ? '<div class="sub">senha provisória</div>' : '');
+            }
+            return '<span class="badge b-aberto" title="Crie em Authentication › Users">' +
+              'falta criar</span>';
+          })() + '</td>' +
           '<td>' + (u.ativo === false ? '<span class="badge b-cancelado">inativo</span>'
                                       : '<span class="badge b-aprovado">ativo</span>') + '</td>' +
           '<td class="acoes">' + (souAdmin()
@@ -277,10 +314,29 @@ ERP.administracao = (function () {
         /* Usuário é cadastro: vai ao banco na hora, não pela
            sincronização do movimento. */
         if (ERP.persistencia && ERP.persistencia.ligado()) {
-          ERP.persistencia.salvarUsuario(D.usuario(r.usuario ? r.usuario.id : id) || {})
-            .then(function (x) {
-              if (x && x.erro) ERP.app.aviso('Salvo na tela, mas não no banco: ' + x.erro, 'erro');
+          const u2 = D.usuario(r.usuario ? r.usuario.id : id) || {};
+          ERP.persistencia.salvarUsuario(u2).then(function (x) {
+            if (x && x.erro) {
+              return ERP.app.aviso('Salvo na tela, mas não no banco: ' + x.erro, 'erro');
+            }
+            /* Liga o login na hora, se já existir um com esse
+               e-mail. Antes isto era um comando no SQL Editor a
+               cada pessoa — o cadastro pela tela ficava pela
+               metade. */
+            if (!u2.email) return;
+            ERP.persistencia.vincularLogin(u2.email).then(function (v) {
+              if (v && v.ok) {
+                ERP.app.aviso('Usuário salvo e login vinculado — já pode entrar.', 'ok');
+              } else if (v && v.motivo === 'login_nao_existe') {
+                ERP.app.aviso('Usuário salvo. Falta criar o login de ' + u2.email +
+                  ' no painel do Supabase (Authentication › Users › Add user, com ' +
+                  '"Auto Confirm User" marcado). Depois clique em "Verificar logins".', 'erro');
+              } else if (v && v.erro) {
+                ERP.app.aviso('Usuário salvo, mas o vínculo falhou: ' + v.erro, 'erro');
+              }
+              render();
             });
+          });
         }
         ERP.app.fecharModal();
         ERP.app.aviso('Usuário salvo.', 'ok');
@@ -719,6 +775,24 @@ ERP.administracao = (function () {
   }
 
   function ligar() {
+    /* Estava dentro de `ligarMatriz`, que só roda na aba de perfis —
+       então a coluna de login nunca carregava na aba de usuários,
+       que é onde ela aparece. */
+    if (U.el('ad-ver-logins')) {
+      U.el('ad-ver-logins').addEventListener('click', function () {
+        ERP.persistencia.vincularPendentes().then(function (r) {
+          if (r.erro) return ERP.app.aviso('Não consegui verificar: ' + r.erro, 'erro');
+          ERP.app.aviso(r.n ? r.n + ' login(s) vinculado(s).'
+            : 'Nenhum login novo para vincular.', 'ok');
+          carregarStatusLogin();
+        });
+      });
+    }
+    if (aba === 'usuarios' && statusLogin === null &&
+        ERP.persistencia && ERP.persistencia.ligado()) {
+      carregarStatusLogin();
+    }
+
     if (aba === 'perfis') ligarMatriz();
     if (aba === 'impostos') ligarImpostos();
     if (U.el('fiscal-salvar')) {

@@ -160,6 +160,38 @@ ERP.persistencia = (function () {
   const LIMITE_TENTATIVAS = 5;
   let tentativas = 0;
   let degradadas = [];    // coleções que não carregaram
+  /* Liga o usuário do sistema ao login de mesmo e-mail. Antes isto
+     era um `update` colado no SQL Editor a cada pessoa cadastrada —
+     o módulo de Administração gravava metade do cadastro e a outra
+     metade ficava fora do sistema. */
+  async function vincularLogin(email) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const { data, error } = await c.rpc('vincular_login', { p_email: email });
+    if (error) {
+      if (/function .*vincular_login|PGRST202/i.test(error.message || '')) {
+        return { erro: 'O banco ainda não tem a função vincular_login — rode o ' +
+          'ATUALIZAR-TUDO.sql.' };
+      }
+      return { erro: error.message };
+    }
+    return data || {};
+  }
+
+  async function statusLogins() {
+    const c = cliente();
+    if (!c) return [];
+    const { data, error } = await c.rpc('status_logins');
+    return error ? [] : (data || []);
+  }
+
+  async function vincularPendentes() {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const { data, error } = await c.rpc('vincular_logins_pendentes');
+    return error ? { erro: error.message } : { ok: true, n: data || 0 };
+  }
+
   let sombra = {};        // coleção → { id: json }
   let agendado = null;
   let ligado = false;
@@ -341,6 +373,20 @@ ERP.persistencia = (function () {
   }
 
   /* ── o que mudou desde a última vez ─────────────────── */
+  /* Registra que UMA coleção já está igual no banco. Antes a
+     sombra só era atualizada quando o ciclo inteiro dava certo —
+     então, se uma parte gravava e outra falhava, a que gravou era
+     reenviada no ciclo seguinte e batia em "duplicate key". O
+     lançamento ESTAVA no banco e o sistema dizia que não.
+
+     Agora cada coleção registra o próprio sucesso. */
+  function tirarFotoDe(nome) {
+    const st = ERP.store.st;
+    const m = {};
+    (st[nome] || []).forEach(function (it) { if (it && it.id) m[it.id] = JSON.stringify(it); });
+    sombra[nome] = m;
+  }
+
   function tirarFoto() {
     const st = ERP.store.st;
     sombra = {};
@@ -464,6 +510,7 @@ ERP.persistencia = (function () {
           'operação falhou, e o lançamento sem a baixa diz ter consumido material que não saiu');
         continue;
       }
+      const falhasAntes = falhas.length;
       if (m.novos.length && SEM_UPSERT[m.def.tabela]) {
         /* Tabela com coluna fechada por permissão não aceita
            upsert. O `on conflict do update set paciente =
@@ -485,7 +532,19 @@ ERP.persistencia = (function () {
             return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
           });
           const { error } = await c.from(m.def.tabela).insert(linhas);
-          if (error) falhas.push(m.def.tabela + ': ' + error.message);
+          if (error && /duplicate key|23505/i.test(error.message || '')) {
+            /* Chave duplicada quer dizer QUE JÁ ESTÁ LÁ. Não é
+               erro: é o sistema reenviando o que já gravou. Vira
+               atualização, uma a uma, e segue sem alarmar ninguém. */
+            for (const it of inserir) {
+              const linha = completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+              delete linha.id;
+              const r2 = await c.from(m.def.tabela).update(linha).eq('id', it.id);
+              if (r2.error) falhas.push(m.def.tabela + ' (' + it.id + '): ' + r2.error.message);
+            }
+          } else if (error) {
+            falhas.push(m.def.tabela + ': ' + error.message);
+          }
         }
         for (const it of atualizar) {
           const linha = completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
@@ -504,7 +563,13 @@ ERP.persistencia = (function () {
            volta — ela já está na memória, foi de lá que saiu. */
         const { error } = await c.from(m.def.tabela)
           .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
-        if (error) falhas.push(m.def.tabela + ': ' + error.message);
+        if (error && /duplicate key|23505/i.test(error.message || '')) {
+          /* Idem: já está no banco. Com upsert isto é raro, mas
+             acontece quando a tabela tem outra chave única. */
+          tirarFotoDe(m.nome);
+        } else if (error) {
+          falhas.push(m.def.tabela + ': ' + error.message);
+        }
       }
       /* Registro que saiu do estado. O sistema cancela e estorna em
          vez de apagar, então isto quase nunca dispara — mas, quando
@@ -513,6 +578,9 @@ ERP.persistencia = (function () {
         const { error } = await c.from(m.def.tabela).delete().eq('id', id);
         if (error) falhas.push(m.def.tabela + ' (remover ' + id + '): ' + error.message);
       }
+      /* Esta coleção foi: guarda o estado dela. O que falhou em
+         outra coleção não faz esta ser reenviada. */
+      if (falhas.length === falhasAntes) tirarFotoDe(m.nome);
     }
     /* Mínimos é cadastro: vai sozinho, sem depender de nada. */
     const fm = await gravarIndexado(MINIMOS);
@@ -649,7 +717,8 @@ ERP.persistencia = (function () {
 
   return { iniciar: iniciar, sincronizar: sincronizar, carregar: carregar,
            limparMovimentoLocal: limparMovimentoLocal,
-           salvarUsuario: salvarUsuario,
+           salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
+           statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            pendencias: () => diferencas().length, ligado: () => ligado,
            degradadas: () => degradadas.slice() };
 })();
