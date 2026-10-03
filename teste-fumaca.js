@@ -4390,9 +4390,15 @@ function liberarParaFaturar(centro, competencia) {
     S.saldoEstoque('pr20', 'am06') === saldoAntes + 1, S.saldoEstoque('pr20', 'am06'));
   verificar('o lançamento antigo sai da lista', 
     !S.listarProcedimentos({}).some(x => x.id === orig.id), '');
+  /* `cancelado` virou booleano (a coluna do banco é boolean, e
+     gravar objeto ali derrubava o PATCH e duplicava o faturamento).
+     O detalhe mora em campos próprios. */
+  const editado = S.listarProcedimentos({ cancelados: true }).find(x => x.id === orig.id) || {};
   verificar('e fica no histórico marcado como editado',
-    (S.listarProcedimentos({ cancelados: true }).find(x => x.id === orig.id) || {})
-      .cancelado.edicao === true, '');
+    editado.cancelado === true && editado.edicao === true, JSON.stringify({
+      cancelado: editado.cancelado, edicao: editado.edicao }));
+  verificar('com o motivo e quem editou registrados',
+    !!editado.motivo_cancelamento && !!editado.cancelado_por, editado.motivo_cancelamento);
   verificar('o novo aponta para o que substituiu',
     ed.procedimento.substitui === orig.id, '');
 
@@ -6710,5 +6716,54 @@ function liberarParaFaturar(centro, competencia) {
     { data: Ut.hoje(), motivo: 'primeiro inventário' });
   verificar('v27 — e com o custo informado, entra',
     r2.ok && Math.abs(S.custoMedio(novo, am) - 3.5) < 0.001, JSON.stringify(r2).slice(0, 60));
+  S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v29: cancelado é sim ou não ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u13');
+
+  /* A coluna do banco é booleana. Guardar um objeto ali funcionava
+     na memória (JavaScript trata objeto como verdadeiro) e era
+     recusado na gravação — e aí o procedimento antigo ficava ATIVO
+     ao lado do novo: corrigir o nome de um paciente dobrava o
+     faturamento do mutirão. */
+  const a = S.lancarProcedimento({ data: Ut.hoje(), procedimento: 'pa08',
+    medico: 'DR TIPO BOOLEANO', paciente: 'PACIENTE A', materiais: [] });
+  if (a.ok) {
+    const ed = S.editarProcedimento(a.procedimento.id, { paciente: 'PACIENTE B' });
+    const antigo = S.listarProcedimentos({ cancelados: true })
+      .find(function (x) { return x.id === a.procedimento.id; }) || {};
+    verificar('v29 — ao editar, o antigo é cancelado com BOOLEANO',
+      antigo.cancelado === true, typeof antigo.cancelado);
+    verificar('v29 — e o detalhe vai em campos próprios, não dentro do booleano',
+      !!antigo.motivo_cancelamento && !!antigo.cancelado_por && antigo.edicao === true,
+      JSON.stringify({ m: antigo.motivo_cancelamento, p: antigo.cancelado_por }));
+    verificar('v29 — só UM procedimento ativo depois da edição',
+      S.listarProcedimentos({}).filter(function (x) {
+        return x.medico === 'DR TIPO BOOLEANO'; }).length === 1,
+      S.listarProcedimentos({}).filter(function (x) {
+        return x.medico === 'DR TIPO BOOLEANO'; }).length);
+
+    /* O mesmo no cancelamento direto. */
+    const b2 = S.lancarProcedimento({ data: Ut.hoje(), procedimento: 'pa08',
+      medico: 'DR CANCELA', paciente: 'PACIENTE C', materiais: [] });
+    if (b2.ok) {
+      S.cancelarProcedimento(b2.procedimento.id, 'teste de cancelamento');
+      const c = S.listarProcedimentos({ cancelados: true })
+        .find(function (x) { return x.id === b2.procedimento.id; }) || {};
+      verificar('v29 — cancelar também grava booleano',
+        c.cancelado === true && c.motivo_cancelamento === 'teste de cancelamento',
+        typeof c.cancelado);
+    }
+  }
+
+  /* Nenhum lugar do sistema pode voltar a guardar objeto ali: é o
+     tipo de coisa que passa no navegador e quebra no banco. */
+  const comObjeto = (S.st.procedimentos || []).concat(S.st.fechamentosProcedimentos || [])
+    .filter(function (x) { return x.cancelado && typeof x.cancelado === 'object'; });
+  verificar('v29 — nenhum registro com objeto no campo cancelado',
+    comObjeto.length === 0, comObjeto.length);
   S.setUsuario('u8');
 })();

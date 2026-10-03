@@ -460,7 +460,10 @@ ERP.procedimentos = (function () {
                  (p.materiais.length || '—') + '</td>') +
             '<td>' + (p.cancelado
               ? '<span class="badge b-cancelado">' +
-                (p.cancelado.edicao ? 'editado' : 'cancelado') + '</span>'
+                /* `edicao` é campo próprio agora: `cancelado` é só
+                   sim ou não, para a coluna booleana do banco
+                   aceitar. */
+                (p.edicao ? 'editado' : 'cancelado') + '</span>'
               : (p.financeiro
                 ? '<span class="badge b-pago" title="' + U.esc(p.financeiro) + '">no financeiro</span>'
                 : (podeLancar()

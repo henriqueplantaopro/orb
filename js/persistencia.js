@@ -444,9 +444,26 @@ ERP.persistencia = (function () {
       if (erroEstoque) falhas.push(erroEstoque);
     }
 
+    /* O que DEPENDE do estoque não vai se o estoque não foi.
+       Procedimento consome material: gravá-lo com a baixa recusada
+       produz uma cirurgia que diz ter usado 5 luvas que nunca
+       saíram do armazém. É a mesma classe do saldo sem lastro, um
+       nível acima — e o remédio é o mesmo: a parte que depende
+       espera a parte de que depende.
+
+       A transação do banco cobre as três tabelas de estoque; isto
+       cobre o que vem depois delas. */
+    const estoqueFalhou = falhas.some(function (f) { return String(f).indexOf('estoque') === 0; });
+    const DEPENDE_DO_ESTOQUE = ['procedimentos', 'fechamentosProcedimentos', 'previsoes', 'compras'];
+
     for (const m of mudou) {
       /* Já foram no bloco acima. */
       if (m.nome === 'estoque' || m.nome === 'estoqueMov') continue;
+      if (estoqueFalhou && DEPENDE_DO_ESTOQUE.indexOf(m.nome) >= 0) {
+        falhas.push(m.def.tabela + ': não gravado de propósito — a baixa de estoque desta ' +
+          'operação falhou, e o lançamento sem a baixa diz ter consumido material que não saiu');
+        continue;
+      }
       if (m.novos.length && SEM_UPSERT[m.def.tabela]) {
         /* Tabela com coluna fechada por permissão não aceita
            upsert. O `on conflict do update set paciente =

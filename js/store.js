@@ -2164,8 +2164,21 @@ ERP.store = (function () {
       return novo;
     }
 
-    antigo.cancelado = { motivo: 'Editado — substituído por ' + novo.procedimento.id,
-      em: U.hoje(), usuario: usuario().nome, edicao: true };
+    /* `cancelado` é SIM OU NÃO, e o detalhe vai em campos próprios.
+       Guardar um objeto aqui funcionava na memória — JavaScript
+       trata objeto como verdadeiro — e era recusado pelo banco, que
+       tem a coluna como booleana. O resultado: a edição gravava o
+       procedimento NOVO e não conseguia encerrar o antigo, então
+       corrigir o nome de um paciente dobrava o faturamento do
+       mutirão depois do reload.
+
+       É o tipo de divergência que só aparece quando há banco: na
+       tela ficava certo. */
+    antigo.cancelado = true;
+    antigo.motivo_cancelamento = 'Editado — substituído por ' + novo.procedimento.id;
+    antigo.cancelado_em = U.hoje();
+    antigo.cancelado_por = usuario().nome;
+    antigo.edicao = true;
     atualizarPrevisoesProcedimentos(antigo.competencia);
     if (novo.procedimento.competencia !== antigo.competencia) {
       atualizarPrevisoesProcedimentos(novo.procedimento.competencia);
@@ -2198,7 +2211,10 @@ ERP.store = (function () {
     /* O material JÁ saiu do estoque. Cancelar o procedimento não
        devolve sozinho: quem devolve é a entrada por devolução, no
        módulo de estoque, senão o saldo passa a mentir. */
-    p.cancelado = { motivo: motivo, em: U.hoje(), usuario: usuario().nome };
+    p.cancelado = true;
+    p.motivo_cancelamento = motivo;
+    p.cancelado_em = U.hoje();
+    p.cancelado_por = usuario().nome;
     atualizarPrevisoesProcedimentos(p.competencia);
     logar('procedimento', p.id, 'cancelou', motivo);
     return { ok: true, aviso: p.materiais.length
@@ -2831,8 +2847,10 @@ ERP.store = (function () {
     /* Refazer substitui o anterior: dois fechamentos vivos na mesma
        competência somariam duas vezes na lista. */
     if (res.fechamento && d.refazer) {
-      res.fechamento.cancelado = { motivo: 'refeito pelo fechamento ' + f.id,
-        em: U.hoje(), usuario: usuario().nome };
+      res.fechamento.cancelado = true;
+      res.fechamento.motivo_cancelamento = 'refeito pelo fechamento ' + f.id;
+      res.fechamento.cancelado_em = U.hoje();
+      res.fechamento.cancelado_por = usuario().nome;
       f.refaz = res.fechamento.id;
     }
     st.fechamentosProcedimentos.push(f);
@@ -2897,7 +2915,10 @@ ERP.store = (function () {
       if (des2.erro) return { erro: 'Desfaça a autorização antes: ' + des2.erro };
     }
     parcelas.forEach(function (p) { cancelar(p.id, motivo, true); });
-    f.cancelado = { motivo: motivo, em: U.hoje(), usuario: usuario().nome };
+    f.cancelado = true;
+    f.motivo_cancelamento = motivo;
+    f.cancelado_em = U.hoje();
+    f.cancelado_por = usuario().nome;
     logar('procedimento', f.id, 'cancelou o fechamento do mutirão',
       U.fComp(f.competencia) + ' · ' + motivo);
     return { ok: true, fechamento: f, parcelas_canceladas: parcelas.length };
