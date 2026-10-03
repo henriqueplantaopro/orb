@@ -582,3 +582,8 @@ tr.puxa-hospital td { background: var(--amber-bg); }
   font-size: 13px;
 }
 table.compacta th, table.compacta td { padding: 3px 8px; font-size: 12px; }
+
+/* O aviso fica ACIMA do modal (que é 9999). Com camada menor, o
+   erro de um formulário aparecia atrás da própria janela que o
+   gerou: a pessoa clicava em Salvar e nada parecia acontecer. */
+#toast { z-index: 10050 !important; }

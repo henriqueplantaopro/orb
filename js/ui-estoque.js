@@ -1397,6 +1397,13 @@ ERP.estoque = (function () {
       '</div>';
   }
 
+  /* Zera os campos da contagem. Usada ao trocar de armazém e
+     depois de lançar: contagem é de um armazém e de um momento. */
+  function limparGradeInventario() {
+    document.querySelectorAll('[data-iv]').forEach(function (e) { e.value = ''; });
+    if (U.el('iv-motivo')) U.setVal('iv-motivo', '');
+  }
+
   function gravarInventario() {
     const am = U.val('iv-armazem');
     const itens = [];
@@ -1423,6 +1430,7 @@ ERP.estoque = (function () {
     if (!r.n) return ERP.app.aviso(r.aviso || 'Nada a ajustar.', 'ok');
     ERP.app.aviso('Inventário ajustado: ' + r.sobras + ' sobra(s) e ' + r.faltas +
       ' falta(s) lançada(s).', 'ok');
+    limparGradeInventario();
     aba = 'posicao';
     render();
   }
@@ -1739,6 +1747,14 @@ ERP.estoque = (function () {
       renderItensEntrada();
     }
     if (U.el('iv-gravar')) U.el('iv-gravar').addEventListener('click', gravarInventario);
+    /* Trocar de armazém LIMPA a contagem. Sem isto, contar o
+       almoxarifado, trocar a sala no seletor e clicar de novo
+       relançava a mesma contagem no armazém errado — e o estoque
+       errado só aparece no inventário seguinte. */
+    if (U.el('iv-armazem')) U.el('iv-armazem').addEventListener('change', function () {
+      limparGradeInventario();
+      ERP.app.aviso('Armazém trocado: a contagem anterior foi limpa.', 'ok');
+    });
     if (U.el('es-extrato-csv')) {
       U.el('es-extrato-csv').addEventListener('click', function () {
         /* Exporta a partir dos DADOS, não da tela: assim vão os 20
