@@ -6767,3 +6767,39 @@ function liberarParaFaturar(centro, competencia) {
     comObjeto.length === 0, comObjeto.length);
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v31: competência não fica presa em "fechado" ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+  const comp = '2059-07';
+  const centro = D.PATE_CENTRO;
+
+  /* O resíduo: previsão confirmada e nenhum fechamento ativo. Antes
+     a tela dizia "fechado" para sempre, oferecia o botão de fechar,
+     e recusava em silêncio — o mês ficava sem caminho de volta. */
+  S.salvarPrevisao({ centro: centro, competencia: comp, faturamento: 1000 });
+  const pv = S.st.previsoes.find(function (p) {
+    return p.competencia === comp && p.centro === centro;
+  });
+  pv.status = 'confirmada_prod';
+
+  const r = S.resumoFechamentoProcedimentos(comp, centro);
+  verificar('v31 — sem fechamento ativo, a competência está ABERTA',
+    r.etapa === 'previsao', r.etapa);
+  verificar('v31 — e o status preso é corrigido ao ler, não fica para trás',
+    pv.status === 'estimada', pv.status);
+
+  /* Com fechamento ativo, continua fechada — a correção não pode
+     reabrir o que está legitimamente fechado. */
+  pv.status = 'confirmada_prod';
+  S.st.fechamentosProcedimentos.push({ id: 'fx-teste-v31', competencia: comp,
+    centro: centro, faturamento: 0, repasse: 0, cancelado: false });
+  const r2 = S.resumoFechamentoProcedimentos(comp, centro);
+  verificar('v31 — com fechamento ativo, segue fechada',
+    r2.etapa === 'confirmado' && pv.status === 'confirmada_prod', r2.etapa);
+  S.st.fechamentosProcedimentos = S.st.fechamentosProcedimentos.filter(function (f) {
+    return f.id !== 'fx-teste-v31';
+  });
+  S.setUsuario('u8');
+})();

@@ -1216,10 +1216,24 @@ ERP.procedimentos = (function () {
         corpo: '<p class="ajuda">Os títulos de repasse ainda não pagos são cancelados e a ' +
             'competência volta a aceitar lançamento. O que já foi pago vira correção manual.</p>' +
           '<div class="filtros"><div class="f" style="min-width:280px">' +
-            '<label for="fc-motivo">Motivo</label><input id="fc-motivo"></div></div>',
+            /* O motivo É obrigatório — o store recusa sem ele. O
+               campo diz isso agora: antes parecia opcional, a
+               pessoa clicava e nada acontecia. */
+            '<label for="fc-motivo">Motivo *</label>' +
+            '<input id="fc-motivo" placeholder="por que está cancelando"></div></div>' +
+            '<div id="fc-erro"></div>',
         acoes: [{ txt: 'Cancelar fechamento', cls: 'btn-recusar', fn: function () {
           const r = S.cancelarFechamentoProcedimentos(r0.fechamento.id, U.val('fc-motivo'));
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (r.erro) {
+            /* A mensagem aparece DENTRO do modal, não só no aviso do
+               canto: é aqui que a pessoa está olhando. */
+            const e = U.el('fc-erro');
+            if (e) e.innerHTML = '<div class="login-erro" style="margin-top:10px">' +
+              U.esc(r.erro) + '</div>';
+            const campo = U.el('fc-motivo');
+            if (campo) campo.focus();
+            return ERP.app.aviso(r.erro, 'erro');
+          }
           ERP.app.fecharModal(); render();
           ERP.app.aviso('Fechamento cancelado · ' + r.parcelas_canceladas +
             ' título(s) de repasse cancelado(s).', 'ok');

@@ -2684,9 +2684,37 @@ ERP.store = (function () {
       resultado: Math.round((faturamento - imposto - material - repasse - plantao) * 100) / 100,
       medicos: medicos,
       fechamento: fechamentoProcedimentosDe(alvo, competencia),
-      etapa: etapaDaPrevisao(pv),
+      /* A etapa olha o FECHAMENTO, não só o status da previsão.
+         Uma competência cujo fechamento foi cancelado mas cuja
+         previsão ficou em `confirmada_prod` aparecia como "fechado"
+         para sempre: o botão oferecido era "Fechar", e fechar era
+         recusado em silêncio porque a tela se achava fechada. O mês
+         ficava preso, sem caminho de volta.
+
+         Agora, sem fechamento ativo, a competência está aberta —
+         qualquer que seja o status que tenha sobrado. A verdade é o
+         fechamento; o status é consequência. */
+      etapa: etapaCorrigida(alvo, competencia, pv),
       previsao: pv || null
     };
+  }
+
+  /* `confirmada_prod` sem fechamento ativo é resíduo, não estado.
+     Além de responder certo, conserta o registro: a próxima leitura
+     já encontra o status coerente. */
+  function etapaCorrigida(centro, competencia, pv) {
+    const etapa = etapaDaPrevisao(pv);
+    if (etapa !== 'confirmado') return etapa;
+    const f = fechamentoProcedimentosDe(centro, competencia);
+    if (f && !f.cancelado) return etapa;
+    if (pv && pv.status === 'confirmada_prod') {
+      pv.status = 'estimada';
+      delete pv.confirmado_por;
+      delete pv.confirmado_em;
+      logar('procedimento', pv.id, 'reabriu a competência',
+        U.fComp(competencia) + ' — não há fechamento ativo');
+    }
+    return 'previsao';
   }
 
   function fecharProcedimentos(d) {
