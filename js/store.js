@@ -8873,6 +8873,10 @@ ERP.store = (function () {
     st.estoque.push(c);
     st.estoqueMov.push({
       id: novoId('mv'), tipo: 'entrada',
+      /* Explícito desde a origem: o banco exige preenchido, e
+         deixar para a rede de obrigatórias preencher depois era
+         contar com a rede. */
+      estornado: false,
       /* Como veio na nota, para o histórico não virar adivinhação. */
       qtd_nota: qtdNota, unidades_por_embalagem: embalagem, custo_nota: custoNota, produto: d.produto, armazem: d.armazem,
       qtd: qtd, custo: custo, valor: Math.round(qtd * custo * 100) / 100,
@@ -9011,7 +9015,8 @@ ERP.store = (function () {
     const pacientes = (d.pacientes || []).map(function (x) { return String(x).trim(); })
       .filter(function (x) { return x.length; });
     const mv = {
-      id: novoId('mv'), tipo: 'saida', produto: d.produto, armazem: d.armazem,
+      id: novoId('mv'), tipo: 'saida', estornado: false,
+      produto: d.produto, armazem: d.armazem,
       qtd: qtd, custo: medio, valor: custoTotal,
       medio_depois: custoMedio(d.produto, d.armazem),
       data: d.data || U.hoje(), lancado_em: U.hoje(),
@@ -9369,23 +9374,35 @@ ERP.store = (function () {
       const atual = saldoEstoque(it.produto, armazem);
       const dif = Math.round((contado - atual) * 1000) / 1000;
       if (Math.abs(dif) < 0.0001) continue;
-      const custoLinha = it.custo === undefined || it.custo === null || it.custo === ''
-        ? (custoMedio(it.produto, armazem) || pr.custo || 0) : numeroBR(it.custo);
+      /* O CUSTO DA CONTAGEM VEM DO HISTÓRICO, não de quem conta.
+         Inventário é contagem física; preço entra por nota ou
+         pedido de compra. Se o material já tem custo médio, ele
+         manda — mesmo que a tela envie outro valor.
+
+         Só quando não há histórico nenhum é que o valor informado
+         vale: é o primeiro inventário de um produto novo, e aí não
+         há de onde puxar. Sem histórico e sem valor, o lançamento
+         para e diz o que falta, em vez de gravar material a custo
+         zero (que some do balanço e some do custo da cirurgia). */
+      const medioAtual = custoMedio(it.produto, armazem);
+      const informado = it.custo === undefined || it.custo === null || it.custo === ''
+        ? null : numeroBR(it.custo);
+      const custoLinha = medioAtual > 0 ? medioAtual : (informado !== null ? informado : 0);
+      if (medioAtual <= 0 && (informado === null || informado <= 0) && dif > 0) {
+        return { erro: pr.descricao + ': material sem entrada anterior, então o custo não tem ' +
+          'de onde vir. Informe o custo unitário nesta linha, ou dê entrada por nota/pedido antes.' };
+      }
       if (!isFinite(custoLinha) || custoLinha < 0) {
         return { erro: pr.descricao + ': custo inválido (' + it.custo + ').' };
       }
       plano.push({ produto: it.produto, descricao: pr.descricao, atual: atual,
         contado: contado, diferenca: dif,
-        custo: (function () {
-          /* O custo era validado só lá dentro, por `entrada()`, já no
-             meio do laço: a contagem gravava metade e devolvia erro,
-             e ainda carimbava a data do último inventário. Agora
-             entra na conferência prévia, com vírgula aceita. */
-          if (it.custo === undefined || it.custo === null || it.custo === '') {
-            return custoMedio(it.produto, armazem) || pr.custo || 0;
-          }
-          return numeroBR(it.custo);
-        })() });
+        /* O MESMO `custoLinha` calculado acima, não um segundo
+           cálculo. Havia dois, e o de baixo não conhecia a regra do
+           histórico: a contagem acabava passando o custo digitado
+           mesmo quando o material já tinha custo médio. Uma conta
+           só, feita uma vez. */
+        custo: custoLinha });
     }
     if (!plano.length) {
       return { ok: true, n: 0, ajustes: [], aviso: 'A contagem bate com o sistema: nada a ajustar.' };
@@ -9523,6 +9540,9 @@ ERP.store = (function () {
            e repetir os nomes contaria o material duas vezes no relatório */
         paciente: '', pacientes: [],
         grupo: pl.mv.grupo || null, origem: pl.mv.origem || 'manual',
+        /* O estorno é um movimento como outro qualquer: nasce não
+           estornado. Quem foi estornado é o movimento ORIGINAL. */
+        estornado: false,
         usuario: usuario().nome, em: new Date()
       };
       st.estoqueMov.push(invL);

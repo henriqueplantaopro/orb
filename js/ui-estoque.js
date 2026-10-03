@@ -1382,18 +1382,40 @@ ERP.estoque = (function () {
       '<th class="num">Custo unitário</th><th>Lote</th><th>Validade</th></tr></thead><tbody>' +
       D.produtos.filter(function (p) { return p.ativo; }).map(function (p) {
         const saldo = am ? S.saldoEstoque(p.id, am) : 0;
+        /* O CUSTO NÃO SE DIGITA NA CONTAGEM. Inventário é contagem
+           física; o preço vem da entrada com nota ou pedido. O campo
+           mostra o custo médio que o material já tem e fica
+           bloqueado.
+
+           A exceção é o material sem histórico nenhum — aí não há de
+           onde puxar, e o campo abre para digitar. É o caso do
+           primeiro inventário de um produto novo.
+
+           Antes o campo vinha preenchido com o custo de cadastro e
+           editável: recontar passava a média para um valor que
+           ninguém decidiu informar. */
+        const medio = am ? S.custoMedio(p.id, am) : 0;
+        const temHistorico = medio > 0;
         return '<tr><td class="desc">' + U.esc(p.descricao) +
             '<div class="sub">' + U.esc(p.codigo + ' · ' + p.unidade) + '</div></td>' +
           '<td class="num sub">' + (am ? U.num(saldo) : '—') + '</td>' +
           '<td><input class="num" data-iv="' + p.id + '" data-c="qtd" inputmode="decimal"></td>' +
-          '<td><input class="num" data-iv="' + p.id + '" data-c="custo" inputmode="decimal" value="' +
-            U.num(p.custo) + '"></td>' +
+          '<td>' + (temHistorico
+            ? '<input class="num" data-iv="' + p.id + '" data-c="custo" inputmode="decimal" value="' +
+              U.num(medio) + '" readonly title="Vem da entrada com nota. Para mudar o custo, ' +
+              'dê entrada com NF ou pedido.">'
+            : '<input class="num" data-iv="' + p.id + '" data-c="custo" inputmode="decimal" ' +
+              'placeholder="sem histórico — informe" title="Este material ainda não tem entrada ' +
+              'com nota, então não há custo de onde puxar.">') + '</td>' +
           '<td><input data-iv="' + p.id + '" data-c="lote"></td>' +
           '<td><input type="date" data-iv="' + p.id + '" data-c="validade"></td></tr>';
       }).join('') + '</tbody></table></div>' +
       '<div class="form-acoes" style="margin:14px -14px -14px">' +
         '<span class="ajuda" style="margin-right:auto">Deixe em branco o que não tem no armazém.</span>' +
         '<button class="btn-primary" id="iv-gravar" style="width:auto;margin:0">Lançar inventário</button>' +
+        '<div class="ajuda">O <b>custo não se digita aqui</b>: ele vem da entrada com nota ou ' +
+        'pedido de compra, e o campo mostra o custo médio atual de cada material. Só abre para ' +
+        'digitação quando o material ainda não tem nenhuma entrada — não há de onde puxar.</div>' +
       '</div>';
   }
 

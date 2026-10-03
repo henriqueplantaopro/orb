@@ -6660,3 +6660,55 @@ function liberarParaFaturar(centro, competencia) {
   S.salvarMatrizAcesso(JSON.parse(JSON.stringify(MATRIZ_TESTE)));
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v27: o inventário não precifica ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+  const am = 'am01', p1 = 'pr01';
+  /* Zera o estoque destes dois para o caso ser isolado. */
+  Object.keys(S.st.posicoes).forEach(function (k) {
+    if (k.indexOf(p1 + '|' + am) === 0) delete S.st.posicoes[k];
+  });
+
+  S.entrada({ produto: p1, armazem: am, qtd: 100, custo: 1.10, data: Ut.hoje(),
+    motivo: 'NF de teste', origem: 'nota' });
+  const base = S.custoMedio(p1, am);
+  verificar('v27 — entrada por nota define o custo', base > 0, base);
+
+  /* Contagem SEM custo: é o caso normal. O custo vem do histórico. */
+  S.ajusteInventario(am, [{ produto: p1, qtd: 150 }], { data: Ut.hoje(), motivo: 'contagem' });
+  verificar('v27 — recontagem sem custo não mexe no custo médio',
+    Math.abs(S.custoMedio(p1, am) - base) < 0.001, S.custoMedio(p1, am));
+
+  /* Contagem COM custo: a tela não deixa digitar, mas se chegar aqui
+     o histórico manda. Precificar é papel da nota, não da contagem. */
+  S.ajusteInventario(am, [{ produto: p1, qtd: 200, custo: 0.01 }],
+    { data: Ut.hoje(), motivo: 'com custo' });
+  verificar('v27 — nem com custo informado a contagem muda o custo médio',
+    Math.abs(S.custoMedio(p1, am) - base) < 0.001, S.custoMedio(p1, am));
+
+  /* Nota nova MUDA o custo: é o único caminho que precifica. */
+  S.entrada({ produto: p1, armazem: am, qtd: 200, custo: 2.00, data: Ut.hoje(),
+    motivo: 'NF nova', origem: 'nota' });
+  verificar('v27 — mas a nota muda, e faz média ponderada',
+    S.custoMedio(p1, am) > base, S.custoMedio(p1, am));
+
+  /* Produto sem histórico: aí o custo é obrigatório, senão entraria
+     material a custo zero — que some do balanço e do custo da
+     cirurgia sem ninguém perceber. */
+  const novo = 'pr22';
+  Object.keys(S.st.posicoes).forEach(function (k) {
+    if (k.indexOf(novo + '|') === 0) delete S.st.posicoes[k];
+  });
+  S.st.estoque = S.st.estoque.filter(function (c) { return c.produto !== novo; });
+  const r = S.ajusteInventario(am, [{ produto: novo, qtd: 10 }],
+    { data: Ut.hoje(), motivo: 'primeiro inventário' });
+  verificar('v27 — material sem histórico exige o custo, não entra a zero',
+    !!r.erro && /sem entrada anterior/.test(r.erro), JSON.stringify(r).slice(0, 80));
+  const r2 = S.ajusteInventario(am, [{ produto: novo, qtd: 10, custo: 3.5 }],
+    { data: Ut.hoje(), motivo: 'primeiro inventário' });
+  verificar('v27 — e com o custo informado, entra',
+    r2.ok && Math.abs(S.custoMedio(novo, am) - 3.5) < 0.001, JSON.stringify(r2).slice(0, 60));
+  S.setUsuario('u8');
+})();
