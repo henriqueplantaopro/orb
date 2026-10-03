@@ -2919,9 +2919,25 @@ ERP.store = (function () {
     f.motivo_cancelamento = motivo;
     f.cancelado_em = U.hoje();
     f.cancelado_por = usuario().nome;
+    /* A SITUAÇÃO volta junto. Cancelar o fechamento desfazia tudo
+       menos o status da previsão, e a tela seguia dizendo "fechado"
+       com os botões já oferecendo fechar de novo — dois textos
+       contando histórias diferentes sobre o mesmo mês.
+
+       `confirmada_prod` é o que faz a etapa ser "fechado"; voltar
+       para `estimada` devolve a competência ao estado de antes. */
+    const pvs = st.previsoes.filter(function (pv) {
+      return pv.competencia === f.competencia && pv.status === 'confirmada_prod';
+    });
+    pvs.forEach(function (pv) {
+      pv.status = 'estimada';
+      delete pv.confirmado_por;
+      delete pv.confirmado_em;
+    });
     logar('procedimento', f.id, 'cancelou o fechamento do mutirão',
       U.fComp(f.competencia) + ' · ' + motivo);
-    return { ok: true, fechamento: f, parcelas_canceladas: parcelas.length };
+    return { ok: true, fechamento: f, parcelas_canceladas: parcelas.length,
+      previsoes_reabertas: pvs.length };
   }
 
   /* Quais centros um fechamento abrange. Pedindo o projeto-mãe do

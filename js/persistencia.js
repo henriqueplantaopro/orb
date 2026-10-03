@@ -74,14 +74,14 @@ ERP.persistencia = (function () {
     estoque: { tabela: 'estoque_camadas', colunas: ['id', 'produto', 'armazem', 'qtd', 'custo', 'data', 'data_nf', 'lote', 'validade', 'origem', 'documento', 'nota_chave', 'pedido_id', 'grupo', 'lancado_em'] },
     estoqueMov: { tabela: 'estoque_movimentos', colunas: ['id', 'tipo', 'produto', 'armazem', 'qtd', 'qtd_nota', 'unidades_por_embalagem', 'custo', 'custo_nota', 'valor', 'medio_depois', 'data', 'data_nf', 'motivo', 'documento', 'lote', 'validade', 'origem', 'grupo', 'pedido_id', 'paciente', 'estornado', 'usuario', 'usuario_id', 'lancado_em'] },
     procedimentos: { tabela: 'procedimentos', colunas: ['id', 'data', 'competencia', 'centro', 'especialidade', 'procedimento', 'procedimento_nome', 'medico', 'paciente', 'qtd', 'faturamento', 'repasse', 'custo_material', 'imposto', 'imposto_pct', 'resultado', 'armazem', 'materiais', 'transferencias', 'grupo', 'financeiro', 'cancelado', 'motivo_cancelamento', 'editado_por', 'usuario_id', 'criado_em'] },
-    fechamentosProcedimentos: { tabela: 'fechamentos_procedimentos', colunas: ['id', 'competencia', 'centro', 'faturamento', 'repasse', 'procedimento_ids', 'titulo_ids', 'cancelado', 'criado_por', 'criado_em'] },
+    fechamentosProcedimentos: { tabela: 'fechamentos_procedimentos', colunas: ['id', 'competencia', 'centro', 'faturamento', 'repasse', 'procedimento_ids', 'titulo_ids', 'cancelado', 'motivo_cancelamento', 'cancelado_em', 'cancelado_por', 'refaz', 'criado_por', 'criado_em'] },
     compras: { tabela: 'compras', colunas: ['id', 'numero', 'armazem', 'centro', 'status', 'credor', 'itens', 'historico', 'compra_aprovada_por', 'criado_em'] },
     ativos: { tabela: 'ativos', colunas: ['id', 'tag', 'categoria', 'descricao', 'qtd', 'valor', 'aquisicao', 'status', 'condicao', 'local', 'projeto', 'projeto_nome', 'fornecedor_nome', 'nf', 'custodiante', 'contrato', 'valor_locacao', 'vida_util_meses', 'desmembrado', 'lote_origem', 'baixa', 'observacao'] },
     ativoMov: { tabela: 'ativo_movimentos', colunas: ['id', 'ativo', 'data', 'status', 'origem', 'destino', 'motivo', 'usuario_id', 'criado_em'] },
     ordensServico: { tabela: 'ordens_servico', colunas: ['id', 'ativo', 'tipo', 'descricao', 'abertura', 'fechamento', 'custo', 'custo_peca', 'custo_servico', 'fornecedor', 'laudo', 'status'] },
-    lotesProdutividade: { tabela: 'lotes_produtividade', colunas: ['id', 'centro', 'competencia', 'arquivo', 'titulo_ids', 'medicos', 'valor', 'confirmado', 'confirmado_por', 'confirmado_em', 'cancelado', 'cancelado_parcial', 'criado_por', 'criado_em'] },
+    lotesProdutividade: { tabela: 'lotes_produtividade', colunas: ['id', 'centro', 'competencia', 'arquivo', 'titulo_ids', 'medicos', 'valor', 'confirmado', 'confirmado_por', 'confirmado_em', 'cancelado', 'cancelado_parcial', 'criado_por', 'criado_em', 'motivo_cancelamento', 'cancelado_em', 'cancelado_por'] },
     lotesRPS: { tabela: 'lotes_rps', colunas: ['id', 'remessa', 'competencia', 'rps', 'status', 'protocolo', 'cancelado', 'criado_em'] },
-    folhas: { tabela: 'folhas', colunas: ['id', 'competencia', 'complementar', 'holerites', 'total_proventos', 'total_descontos', 'total_liquido', 'guias', 'cancelada', 'fechada_por', 'fechada_em'] },
+    folhas: { tabela: 'folhas', colunas: ['id', 'competencia', 'complementar', 'holerites', 'total_proventos', 'total_descontos', 'total_liquido', 'guias', 'cancelada', 'fechada_por', 'fechada_em', 'motivo_cancelamento', 'cancelado_em', 'cancelado_por'] },
     decimos: { tabela: 'decimos', colunas: ['id', 'funcionario', 'ano', 'parcela', 'valor', 'pago_em', 'cancelado'] }
   };
 
@@ -527,6 +527,12 @@ ERP.persistencia = (function () {
          Depois do limite, para de tentar e deixa o aviso de pé. */
       tentativas++;
       console.error('Falhas ao gravar (tentativa ' + tentativas + '):', falhas);
+      /* Faixa FIXA, além do aviso que some. Um toast de cinco
+         segundos não serve para "o que você acabou de lançar não
+         está salvo": quem estava digitando não olha para o canto da
+         tela, e quem voltou do café não viu nada. A faixa fica até
+         a gravação funcionar. */
+      marcarPendencia(falhas);
       if (ERP.app && ERP.app.aviso) {
         /* Quando parte grava e parte não, o aviso no singular faz
            parecer que nada foi. */
@@ -573,7 +579,30 @@ ERP.persistencia = (function () {
     tentativas = 0;
 
     tirarFoto();
+    limparPendencia();
     if (pendente) { pendente = false; agendar(); }
+  }
+
+  /* A faixa de "não está salvo". Fica no topo, vermelha, até a
+     próxima gravação dar certo. */
+  function marcarPendencia(falhas) {
+    let el = document.getElementById('faixa-nao-salvo');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'faixa-nao-salvo';
+      document.body.insertBefore(el, document.body.firstChild);
+    }
+    const quantas = falhas.length;
+    el.innerHTML = '<b>Não foi gravado no banco.</b> ' +
+      (quantas > 1 ? quantas + ' partes falharam. Primeira: ' : '') +
+      ERP.util.esc(String(falhas[0])) +
+      ' — o que está na tela ainda não está salvo. Não feche a aba.';
+    el.style.display = 'block';
+  }
+
+  function limparPendencia() {
+    const el = document.getElementById('faixa-nao-salvo');
+    if (el) el.style.display = 'none';
   }
 
   function agendar() {

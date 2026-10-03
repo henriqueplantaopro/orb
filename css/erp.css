@@ -587,3 +587,19 @@ table.compacta th, table.compacta td { padding: 3px 8px; font-size: 12px; }
    erro de um formulário aparecia atrás da própria janela que o
    gerou: a pessoa clicava em Salvar e nada parecia acontecer. */
 #toast { z-index: 10050 !important; }
+
+/* Faixa de "não foi gravado". Fica no topo até a gravação
+   funcionar: um aviso que some em cinco segundos não serve para
+   dizer que o lançamento não está salvo. */
+#faixa-nao-salvo {
+  display: none;
+  position: sticky;
+  top: 0;
+  z-index: 9000;
+  background: #8a2b2b;
+  color: #fff;
+  padding: 9px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+#faixa-nao-salvo b { color: #fff; }
