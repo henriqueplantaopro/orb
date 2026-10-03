@@ -141,7 +141,11 @@ ERP.persistencia = (function () {
     if (!obj) return;
     Object.keys(obj).forEach(function (k) { delete obj[k]; });
     (data || []).forEach(function (l) {
-      const o = {};
+      /* `produto` e `armazem` vão DENTRO do objeto também, não só
+         na chave. O estoque lê `pos.produto` para achar a descrição
+         e para filtrar por armazém; sem isso a tela de Posição
+         quebrava no sort, e o filtro por armazém não pegava. */
+      const o = { produto: l.produto, armazem: l.armazem };
       def.colunas.forEach(function (col) {
         if (col !== 'produto' && col !== 'armazem') o[col] = Number(l[col]) || 0;
       });
@@ -338,6 +342,40 @@ ERP.persistencia = (function () {
   }
 
   /* ── gravar ─────────────────────────────────────────── */
+  /* Camadas + movimentos + saldo numa transação do banco. Se
+     qualquer parte falhar, nada grava — nem camada órfã, nem saldo
+     sem lastro. */
+  async function gravarEstoqueJunto(mudou) {
+    const c = cliente();
+    const pega = function (nome) {
+      const m = mudou.find(function (x) { return x.nome === nome; });
+      if (!m) return [];
+      return m.novos.map(function (it) { return paraBanco(it, m.def.colunas); });
+    };
+    const posicoes = Object.keys(ERP.store.st.posicoes || {}).map(function (k) {
+      const p = k.split('|');
+      const v = ERP.store.st.posicoes[k] || {};
+      return { produto: p[0], armazem: p[1], saldo: v.saldo || 0, valor: v.valor || 0 };
+    }).filter(function (l) {
+      return l.produto && l.armazem && (Number(l.saldo) !== 0 || Number(l.valor) !== 0);
+    });
+
+    const { error } = await c.rpc('gravar_estoque', {
+      p_camadas: pega('estoque'),
+      p_movimentos: pega('estoqueMov'),
+      p_posicoes: posicoes
+    });
+    if (!error) return null;
+
+    /* Banco sem a função (12-estoque-atomico não rodado): avisa o
+       que falta, em vez de gravar pela metade. */
+    if (/function .*gravar_estoque|does not exist|PGRST202/i.test(error.message || '')) {
+      return 'estoque: o banco ainda não tem a função gravar_estoque — rode o ' +
+        '12-estoque-atomico.sql. Nada do estoque foi gravado.';
+    }
+    return 'estoque: ' + error.message;
+  }
+
   async function sincronizar() {
     if (!ligado || salvando) { pendente = !!ligado; return; }
     const c = cliente();
@@ -347,7 +385,26 @@ ERP.persistencia = (function () {
 
     salvando = true;
     const falhas = [];
+
+    /* ESTOQUE: camadas, movimentos e saldo vão juntos, numa chamada
+       só, dentro de uma transação do banco.
+
+       Três chamadas HTTP são três transações: a segunda pode falhar
+       depois de a primeira ter gravado, e foi o que produziu
+       camadas órfãs no banco. "Os três ou nenhum" não se resolve no
+       cliente — resolve-se em `gravar_estoque`, que desfaz o bloco
+       inteiro a qualquer erro. */
+    const temEstoque = mudou.some(function (m) {
+      return m.nome === 'estoque' || m.nome === 'estoqueMov';
+    });
+    if (temEstoque) {
+      const erroEstoque = await gravarEstoqueJunto(mudou);
+      if (erroEstoque) falhas.push(erroEstoque);
+    }
+
     for (const m of mudou) {
+      /* Já foram no bloco acima. */
+      if (m.nome === 'estoque' || m.nome === 'estoqueMov') continue;
       if (m.novos.length) {
         const linhas = m.novos.map(function (it) {
           return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
@@ -369,26 +426,9 @@ ERP.persistencia = (function () {
         if (error) falhas.push(m.def.tabela + ' (remover ' + id + '): ' + error.message);
       }
     }
-    /* O SALDO só vai se as CAMADAS e os MOVIMENTOS foram. Gravar a
-       posição sozinha produz saldo sem lastro: o número existe no
-       banco e a origem dele não, e no próximo acesso isso parece
-       íntegro. É pior que não gravar — um número que ninguém
-       consegue auditar.
-
-       Esta é a mesma ideia da conservação de valor que a bateria
-       confere no estoque, aplicada à gravação. */
-    const estoqueFalhou = falhas.some(function (f) {
-      return f.indexOf('estoque_camadas') === 0 || f.indexOf('estoque_movimentos') === 0;
-    });
-    if (estoqueFalhou) {
-      falhas.push('saldo do estoque NÃO gravado de propósito: as camadas e os movimentos ' +
-        'falharam, e saldo sem a origem dele é pior que saldo nenhum');
-    } else {
-      const f1 = await gravarIndexado(POSICOES);
-      if (f1) falhas.push(f1);
-      const f2 = await gravarIndexado(MINIMOS);
-      if (f2) falhas.push(f2);
-    }
+    /* Mínimos é cadastro: vai sozinho, sem depender de nada. */
+    const fm = await gravarIndexado(MINIMOS);
+    if (fm) falhas.push(fm);
 
     salvando = false;
 
@@ -410,7 +450,36 @@ ERP.persistencia = (function () {
             ? ' — PAREI DE TENTAR. Anote o que lançou e avise quem cuida do sistema.'
             : '. O lançamento está na tela, mas ainda não foi gravado.'), 'erro');
       }
-      if (tentativas >= LIMITE_TENTATIVAS) { ligado = false; pendente = false; }
+      /* O limite vale POR COLEÇÃO, não para o sistema. Desligar
+         tudo fazia com que abrir o inventário uma vez parasse o
+         financeiro de gravar até recarregar — e sem aviso nenhum.
+         Agora a coleção com defeito sai de cena e o resto continua.
+
+         Uma coleção que desiste entra em `degradadas`: é o mesmo
+         estado de quem não carregou, e a tela já sabe mostrar isso
+         no cartão do módulo. */
+      if (tentativas >= LIMITE_TENTATIVAS) {
+        falhas.forEach(function (f) {
+          const prefixo = String(f).split(':')[0].trim();
+          /* O prefixo pode ser o nome da TABELA (laço comum) ou o
+             rótulo "estoque" (bloco transacional, que cobre duas
+             coleções de uma vez). */
+          const nomes = prefixo === 'estoque'
+            ? ['estoque', 'estoqueMov']
+            : Object.keys(MAPA).filter(function (k) { return MAPA[k].tabela === prefixo; });
+          nomes.forEach(function (nome) {
+            if (!degradadas.some(function (d) { return d.nome === nome; })) {
+              degradadas.push({ nome: nome, tabela: MAPA[nome] ? MAPA[nome].tabela : prefixo,
+                erro: 'desistiu após ' + LIMITE_TENTATIVAS + ' tentativas' });
+            }
+          });
+        });
+        /* Zera a contagem e tira da sombra o que desistiu, para as
+           outras coleções voltarem a gravar normalmente. */
+        tentativas = 0;
+        tirarFoto();
+        if (ERP.app && ERP.app.renderHome) ERP.app.renderHome();
+      }
       return;
     }
     tentativas = 0;
@@ -448,11 +517,15 @@ ERP.persistencia = (function () {
     observar();
     /* Antes de fechar a aba, tenta mandar o que ainda não subiu. */
     window.addEventListener('beforeunload', function (e) {
-      if (diferencas().length) {
-        e.preventDefault();
-        e.returnValue = 'Há lançamentos ainda não salvos.';
-        return e.returnValue;
-      }
+      /* Só avisa quando ainda HÁ CHANCE de gravar. Se uma coleção
+         desistiu, as diferenças dela nunca zeram — e o aviso virava
+         uma aba impossível de recarregar, sem saída pelo caminho
+         normal. Preso é pior que avisado. */
+      if (!ligado) return;
+      if (!diferencas().length) return;
+      e.preventDefault();
+      e.returnValue = 'Há lançamentos ainda não salvos.';
+      return e.returnValue;
     });
     return r;
   }

@@ -20,7 +20,17 @@ ERP.auth = (function () {
   function conectar() {
     if (cliente || !configurado()) return cliente;
     cliente = window.supabase.createClient(ERP.config.url, ERP.config.anon, {
-      auth: { persistSession: true, autoRefreshToken: true }
+      auth: { persistSession: true, autoRefreshToken: true },
+      /* `Prefer: return=minimal` no CLIENTE, não na chamada.
+         A opcao `returning` dentro de upsert() foi removida no
+         supabase-js v2 e e ignorada em silencio — o POST continuava
+         mandando `return=representation`, o Postgres fazia
+         RETURNING *, e o * inclui a coluna `paciente`, revogada: 403.
+
+         No cliente o cabecalho vale para toda escrita. Quando
+         alguma chamada precisar do retorno, ela pede com um
+         `.select('<colunas>')` explicito, que sobrescreve isto. */
+      global: { headers: { Prefer: 'return=minimal' } }
     });
     return cliente;
   }

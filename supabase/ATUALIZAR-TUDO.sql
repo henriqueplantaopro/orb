@@ -1,0 +1,416 @@
+-- ERP Dom Pedro — ATUALIZAÇÃO COMPLETA DO BANCO
+-- Reúne as etapas 06 a 12 num arquivo só, na ordem certa.
+--
+-- COMO USAR: cole tudo no SQL Editor do Supabase e rode UMA vez.
+-- Ao terminar, confira com:
+--
+--   select * from verificar_instalacao() where resultado <> 'ok';
+--
+-- PODE RODAR DE NOVO sem medo. Tudo aqui é idempotente: as colunas
+-- usam `if not exists`, as funções usam `create or replace`, as
+-- visões são recriadas, e os `update` só tocam o que está nulo. Se
+-- você não souber se já rodou alguma parte, rode o arquivo inteiro.
+--
+-- O QUE CADA PEDAÇO FAZ:
+--   06  colunas `extra` nas tabelas do financeiro
+--   07  reserva de ids em bloco (carga rápida)
+--   08  hierarquia do plano de contas (o combo de natureza)
+--   09  senha provisória com troca obrigatória
+--   10  colunas `extra` nos demais módulos + especialidade da sala
+--   11  visões completas (leitura sem expor o nome do paciente)
+--   12  gravação atômica do estoque + limpeza de resíduo
+--
+-- NÃO inclui 01, 02, 03 e 04 (estrutura, políticas, cadastros e
+-- permissões de coluna): esses já rodaram e recriá-los sem
+-- necessidade mexeria em coisa que está funcionando.
+
+
+
+
+-- ====================================================================
+-- ETAPA 06 — 06-persistencia.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — ajustes para guardar o movimento
+-- Etapa 6. Roda depois dos anteriores, em qualquer momento.
+--
+-- O sistema guarda, em alguns registros, campos que o esquema não
+-- previu: o anexo da nota numa parcela, o código de barras do
+-- boleto, o motivo de um cancelamento. São poucos e variam por
+-- caso.
+--
+-- Duas saídas possíveis. Criar uma coluna para cada um deixaria a
+-- tabela larga e obrigaria a mexer no banco a cada campo novo da
+-- aplicação. A outra é uma coluna `extra` em JSON, que recebe o que
+-- não tem lugar próprio.
+--
+-- Escolhi a segunda, com uma regra: o que se CONSULTA, FILTRA ou
+-- SOMA tem coluna de verdade (valor, vencimento, status, centro). O
+-- `extra` é só para o que anda junto do registro e nunca aparece
+-- num `where`. Assim o banco continua consultável, e o sistema não
+-- perde dado por falta de coluna.
+
+alter table titulos                 add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table parcelas                add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table pagamentos              add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table receber                 add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table previsoes               add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table contratos               add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table retencoes_registradas   add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table guias_retencao          add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table transferencias_banco    add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table extratos                add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table linhas_extrato          add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table saldos_informados       add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table regras_conciliacao      add column if not exists extra jsonb not null default '{}'::jsonb;
+
+-- A trilha de auditoria recebe o id gerado pela aplicação. Sem
+-- isso, dois eventos gravados no mesmo instante por pessoas
+-- diferentes disputariam a mesma chave.
+alter table eventos add column if not exists app_id text;
+create unique index if not exists eventos_app_id_uk on eventos (app_id) where app_id is not null;
+
+-- Conferência:
+--   select count(*) from information_schema.columns
+--    where table_name = 'parcelas' and column_name = 'extra';
+--   -- esperado: 1
+
+
+-- ====================================================================
+-- ETAPA 07 — 07-ids.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — reserva de ids em bloco
+-- Etapa 7. Roda depois dos anteriores.
+--
+-- A `proximo_id` entrega um id por chamada. Na carga inicial o
+-- sistema precisa de um punhado deles adiantado, e pedir um por vez
+-- significava vinte idas e voltas pela rede — uns quinze segundos
+-- em que o sistema parecia carregado mas ainda não gravava.
+--
+-- Esta função reserva um BLOCO de uma vez e devolve o primeiro
+-- número. O cliente usa de `inicio` até `inicio + qtd - 1` sem
+-- falar com o banco de novo, e ninguém mais recebe esses números.
+
+create or replace function reservar_ids(qtd int)
+returns bigint language plpgsql security definer as $$
+declare inicio bigint;
+begin
+  if app_usuario() is null then
+    raise exception 'sem usuário autenticado';
+  end if;
+  if qtd is null or qtd < 1 or qtd > 1000 then
+    raise exception 'quantidade fora do intervalo (1 a 1000)';
+  end if;
+  update sequencia set valor = valor + qtd where id = 1
+    returning valor - qtd + 1 into inicio;
+  return inicio;
+end $$;
+
+revoke all on function reservar_ids(int) from public, anon;
+grant execute on function reservar_ids(int) to authenticated;
+
+-- Conferência (como usuário logado):
+--   select reservar_ids(5);   -- devolve o primeiro de um bloco de 5
+
+
+-- ====================================================================
+-- ETAPA 08 — 08-plano-pai.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — hierarquia do plano de contas
+-- Etapa 8. Roda depois dos anteriores.
+--
+-- O sistema agrupa as contas pelo campo `pai`: o combo de natureza
+-- mostra cada grupo de nível 1 com as suas contas dentro. A coluna
+-- faltou no esquema, e o resultado foi um combo com os dez grupos e
+-- nenhuma conta — o lançamento ficou impossível.
+--
+-- O `pai` é derivável do código (6.07 pertence ao 6), e por um
+-- instante pensei em calcular na aplicação. Mas aí a regra passaria
+-- a existir em dois lugares: no banco, implícita no código da
+-- conta, e no JavaScript, explícita. Coluna de verdade, preenchida
+-- uma vez, é mais simples de conferir.
+
+alter table plano_contas add column if not exists pai text references plano_contas (cod);
+
+-- Preenche a partir do código: tudo antes do primeiro ponto.
+update plano_contas
+   set pai = split_part(cod, '.', 1)
+ where nivel > 1
+   and pai is null
+   and split_part(cod, '.', 1) <> cod
+   and exists (select 1 from plano_contas p2 where p2.cod = split_part(plano_contas.cod, '.', 1));
+
+-- Conferência:
+--   select count(*) from plano_contas where nivel > 1 and pai is null;
+--   -- esperado: 0
+--   select cod, nome, pai from plano_contas where nivel > 1 order by cod limit 5;
+
+
+-- ====================================================================
+-- ETAPA 09 — 09-senha-provisoria.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — senha provisória
+-- Etapa 9. Roda depois dos anteriores.
+--
+-- Fluxo: quando alguém esquece a senha, o administrador define uma
+-- provisória pelo painel do Supabase e marca o usuário aqui. No
+-- próximo acesso, o sistema EXIGE a troca antes de deixar usar
+-- qualquer coisa.
+--
+-- O efeito importante é o que o próprio dono pediu: o administrador
+-- deixa de saber a senha de alguém assim que a pessoa entra. Senha
+-- que o administrador conhece não serve de prova de autoria — se um
+-- pagamento foi aprovado com o login de outra pessoa e você sabia a
+-- senha dela, a trilha perde valor como prova.
+
+alter table usuarios add column if not exists senha_provisoria boolean not null default false;
+
+-- Quem marca é a Administração, pela tela — a política de update
+-- de `usuarios` já cobre isso.
+--
+-- Quem DESMARCA é a própria pessoa, ao trocar a senha. E aí há um
+-- problema: a política proíbe alguém de alterar o próprio registro,
+-- justamente para ninguém se promover. A saída é esta função, que
+-- roda com privilégio e mexe em UM campo só — não dá para usá-la
+-- para virar administrador.
+create or replace function marcar_senha_trocada()
+returns void language plpgsql security definer as $$
+begin
+  if app_usuario() is null then
+    raise exception 'sem usuário autenticado';
+  end if;
+  update usuarios set senha_provisoria = false where id = app_usuario();
+end $$;
+
+revoke all on function marcar_senha_trocada() from public, anon;
+grant execute on function marcar_senha_trocada() to authenticated;
+
+-- Conferência:
+--   select id, nome, senha_provisoria from usuarios order by id;
+
+
+-- ====================================================================
+-- ETAPA 10 — 10-modulos.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — gravação dos demais módulos
+-- Etapa 10. Roda depois dos anteriores.
+--
+-- O 06 preparou as tabelas do financeiro. Estas são as de estoque,
+-- procedimentos, compras, ativos e pessoal, pelo mesmo critério: o
+-- que se consulta tem coluna, o resto vai em `extra`.
+
+alter table estoque_camadas           add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table estoque_movimentos        add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table procedimentos             add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table fechamentos_procedimentos add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table compras                   add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table ativos                    add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table ativo_movimentos          add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table ordens_servico            add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table lotes_produtividade       add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table lotes_rps                 add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table folhas                    add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table decimos                   add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table posicoes_estoque          add column if not exists extra jsonb not null default '{}'::jsonb;
+alter table minimos_estoque           add column if not exists extra jsonb not null default '{}'::jsonb;
+
+-- Conferência:
+--   select count(*) from information_schema.columns
+--    where column_name = 'extra' and table_schema = 'public';
+--   -- esperado: 27
+
+-- ── campo que faltou nos armazéns ──────────────────────
+--
+-- Cada sala de centro cirúrgico é ligada a uma especialidade, e é
+-- isso que faz o sistema saber de qual estoque baixar o material da
+-- cirurgia. A coluna não foi para o esquema, e o resultado foi o
+-- módulo de Procedimentos calculando o repasse mas não deixando
+-- lançar material nenhum — que é o ponto do módulo.
+--
+-- Mesmo caso do `pai` no plano de contas: campo que existia no
+-- cadastro embutido e não foi transcrito.
+
+alter table armazens add column if not exists especialidade text;
+
+update armazens set especialidade = 'OFTALMO'        where id = 'am06' and especialidade is null;
+update armazens set especialidade = 'CIRURGIA GERAL' where id = 'am07' and especialidade is null;
+update armazens set especialidade = 'RISCO CX'       where id = 'am08' and especialidade is null;
+update armazens set especialidade = 'UROLOGIA'       where id = 'am09' and especialidade is null;
+update armazens set especialidade = 'OTORRINO'       where id = 'am10' and especialidade is null;
+update armazens set especialidade = 'GINECO'         where id = 'am11' and especialidade is null;
+
+-- Conferência:
+--   select id, nome, especialidade from armazens where especialidade is not null;
+--   -- esperado: 6 salas
+
+
+-- ====================================================================
+-- ETAPA 11 — 11-visoes-completas.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — visões completas para a aplicação
+-- Etapa 11. Roda depois dos anteriores.
+--
+-- POR QUE ESTE ARQUIVO EXISTE, e por que NÃO se deve seguir o hint
+-- do PostgREST neste caso:
+--
+-- A aplicação lia `procedimentos` e `estoque_movimentos` com
+-- `select *`, e o banco recusava com 42501. O PostgREST sugere
+-- `GRANT SELECT ON ... TO anon`, e isso resolveria o erro — mas
+-- devolveria a coluna `paciente` a quem não pode vê-la, que é
+-- justamente o dado de saúde que a etapa 04 fechou por coluna.
+-- Seguir o hint desfaria a proteção para calar um erro.
+--
+-- A recusa estava CERTA. O errado era a aplicação pedir `*` numa
+-- tabela com coluna fechada. Ela passa a ler pelas visões, que já
+-- mascaram conforme a permissão de cada um — e as visões precisam
+-- trazer todas as colunas que a aplicação usa, que é o que este
+-- arquivo completa.
+
+drop view if exists procedimentos_visivel;
+create view procedimentos_visivel
+  with (security_invoker = false) as
+  select p.id, p.data, p.competencia, p.centro, p.especialidade,
+         p.procedimento, p.procedimento_nome, p.medico, p.qtd,
+         p.armazem, p.materiais, p.transferencias, p.grupo, p.financeiro,
+         p.cancelado, p.motivo_cancelamento, p.editado_por, p.usuario_id,
+         p.criado_em, p.extra,
+         case when tem_acao('ver_pacientes') then p.paciente end as paciente,
+         case when tem_nivel('procedimentos', 'F') then p.faturamento end as faturamento,
+         case when tem_nivel('procedimentos', 'F') then p.repasse end as repasse,
+         case when tem_nivel('procedimentos', 'F') then p.custo_material end as custo_material,
+         case when tem_nivel('procedimentos', 'F') then p.imposto end as imposto,
+         case when tem_nivel('procedimentos', 'F') then p.imposto_pct end as imposto_pct,
+         case when tem_nivel('procedimentos', 'F') then p.resultado end as resultado
+    from procedimentos p
+   where tem_nivel('procedimentos', 'V');
+
+drop view if exists estoque_movimentos_visivel;
+create view estoque_movimentos_visivel
+  with (security_invoker = false) as
+  select m.id, m.tipo, m.produto, m.armazem, m.qtd, m.qtd_nota,
+         m.unidades_por_embalagem, m.data, m.data_nf, m.motivo, m.documento,
+         m.lote, m.validade, m.origem, m.grupo, m.pedido_id, m.estornado,
+         m.usuario, m.usuario_id, m.lancado_em, m.extra,
+         case when tem_acao('ver_pacientes') then m.paciente end as paciente,
+         case when tem_nivel('estoque', 'F') then m.custo end as custo,
+         case when tem_nivel('estoque', 'F') then m.custo_nota end as custo_nota,
+         case when tem_nivel('estoque', 'F') then m.valor end as valor,
+         case when tem_nivel('estoque', 'F') then m.medio_depois end as medio_depois
+    from estoque_movimentos m
+   where tem_nivel('estoque', 'V');
+
+revoke all on procedimentos_visivel, estoque_movimentos_visivel from anon;
+grant select on procedimentos_visivel, estoque_movimentos_visivel to authenticated;
+
+-- Conferência (logado):
+--   select count(*) from procedimentos_visivel;
+--   select count(*) from estoque_movimentos_visivel;
+--   -- e, sem login, as duas devem recusar.
+
+
+-- ====================================================================
+-- ETAPA 12 — 12-estoque-atomico.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — gravação atômica do estoque
+-- Etapa 12. Roda depois dos anteriores.
+--
+-- A etapa 11 impediu o saldo de gravar sem as camadas e os
+-- movimentos. Faltava metade: as CAMADAS continuavam gravando
+-- sozinhas, e sobraram camadas no banco sem movimento e sem
+-- posição.
+--
+-- A regra certa é "os três ou nenhum", e isso não se resolve no
+-- cliente: três chamadas HTTP são três transações, e a segunda pode
+-- falhar depois de a primeira ter gravado. Precisa ser UMA
+-- transação, e transação é coisa do banco.
+--
+-- Esta função recebe os três conjuntos e grava tudo junto. Qualquer
+-- erro desfaz o bloco inteiro — é o `rollback` implícito de uma
+-- função PL/pgSQL.
+
+create or replace function gravar_estoque(
+  p_camadas jsonb default '[]'::jsonb,
+  p_movimentos jsonb default '[]'::jsonb,
+  p_posicoes jsonb default '[]'::jsonb
+) returns jsonb language plpgsql security definer as $$
+declare
+  n_cam int := 0;
+  n_mov int := 0;
+  n_pos int := 0;
+begin
+  if app_usuario() is null then
+    raise exception 'sem usuário autenticado';
+  end if;
+  /* A permissão é a mesma da tela: quem não movimenta estoque não
+     grava por aqui. A função roda com privilégio para poder
+     escrever na coluna `paciente`, que está revogada — não para
+     contornar a matriz de acesso. */
+  if not tem_nivel('estoque', 'M') then
+    raise exception 'seu perfil não movimenta estoque';
+  end if;
+
+  if jsonb_array_length(p_camadas) > 0 then
+    insert into estoque_camadas
+    select * from jsonb_populate_recordset(null::estoque_camadas, p_camadas)
+    on conflict (id) do update set
+      qtd = excluded.qtd, custo = excluded.custo, armazem = excluded.armazem,
+      lote = excluded.lote, validade = excluded.validade, extra = excluded.extra;
+    get diagnostics n_cam = row_count;
+  end if;
+
+  if jsonb_array_length(p_movimentos) > 0 then
+    insert into estoque_movimentos
+    select * from jsonb_populate_recordset(null::estoque_movimentos, p_movimentos)
+    on conflict (id) do update set
+      qtd = excluded.qtd, custo = excluded.custo, valor = excluded.valor,
+      estornado = excluded.estornado, medio_depois = excluded.medio_depois,
+      extra = excluded.extra;
+    get diagnostics n_mov = row_count;
+  end if;
+
+  if jsonb_array_length(p_posicoes) > 0 then
+    insert into posicoes_estoque (produto, armazem, saldo, valor)
+    select (x->>'produto')::text, (x->>'armazem')::text,
+           coalesce((x->>'saldo')::numeric, 0), coalesce((x->>'valor')::numeric, 0)
+      from jsonb_array_elements(p_posicoes) x
+    on conflict (produto, armazem) do update set
+      saldo = excluded.saldo, valor = excluded.valor;
+    get diagnostics n_pos = row_count;
+  end if;
+
+  return jsonb_build_object('camadas', n_cam, 'movimentos', n_mov, 'posicoes', n_pos);
+end $$;
+
+revoke all on function gravar_estoque(jsonb, jsonb, jsonb) from public, anon;
+grant execute on function gravar_estoque(jsonb, jsonb, jsonb) to authenticated;
+
+-- ── limpeza do resíduo das rodadas anteriores ──────────
+--
+-- 154 posições zeradas que versões antigas gravaram, e 5 camadas
+-- órfãs (sem movimento e sem posição). Nada disso é dado do
+-- cliente: é sujeira de teste.
+
+delete from posicoes_estoque where coalesce(saldo, 0) = 0 and coalesce(valor, 0) = 0;
+
+delete from estoque_camadas c
+ where not exists (select 1 from estoque_movimentos m where m.produto = c.produto
+                     and m.armazem = c.armazem)
+   and not exists (select 1 from posicoes_estoque p where p.produto = c.produto
+                     and p.armazem = c.armazem and coalesce(p.saldo, 0) <> 0);
+
+-- Conferência:
+--   select count(*) from posicoes_estoque;      -- só as com saldo
+--   select count(*) from estoque_camadas;       -- sem órfãs
+
+
+-- ══════════════════════════════════════════════════════════════════
+-- FIM. Confira com:
+--   select * from verificar_instalacao() where resultado <> 'ok';
+-- Nenhuma linha = tudo certo.
+-- ══════════════════════════════════════════════════════════════════
