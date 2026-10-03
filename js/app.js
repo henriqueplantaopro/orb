@@ -259,7 +259,12 @@ ERP.app = (function () {
     renderPendencias();
   }
 
+  /* Qual módulo está aberto. Serve para redesenhar a tela quando os
+     dados chegam do banco DEPOIS de ela ter sido montada. */
+  let moduloAberto = 'home';
+
   function abrirModulo(id) {
+    moduloAberto = id;
     if (id === 'ativos' && ERP.ativos) setTimeout(function () { ERP.ativos.render(); }, 0);
     /* Faturamento abre na Previsão: é o começo do fluxo (previsão →
        confirmado → autorizado → liberado → faturado). */
@@ -489,7 +494,18 @@ ERP.app = (function () {
     abrirModulo('home');
   }
 
-  return { init: init, iniciar: init, aviso: aviso, erroCampo: erroCampo, modal: modal, fecharModal: fecharModal,
+  /* Redesenha o que está na tela agora. A carga do movimento
+     termina depois de a tela montar, e sem isto o módulo aberto
+     ficava mostrando o estado anterior — trocar de aba e voltar
+     "consertava", o que é pior que um erro claro: a pessoa vê dois
+     números diferentes para a mesma coisa e não sabe qual vale. */
+  function redesenhar() {
+    renderHome();
+    atualizarContadores();
+    if (moduloAberto && moduloAberto !== 'home') abrirModulo(moduloAberto);
+  }
+
+  return { init: init, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, modal: modal, fecharModal: fecharModal,
            abrirModulo: abrirModulo, abrirAba: abrirAba, abrirArea: abrirArea, renderHome: renderHome,
            atualizar: atualizar, atualizarContadores: atualizarContadores };
 })();

@@ -277,8 +277,13 @@ ERP.auth = (function () {
       if (tag) tag.textContent = 'conectado — mas NÃO está gravando';
       return;
     }
-    if (ERP.app && ERP.app.atualizar) ERP.app.atualizar();
-    if (ERP.app && ERP.app.renderHome) ERP.app.renderHome();
+    /* Os dados chegaram: redesenha a tela ABERTA, não só a home. Sem
+       isto o módulo aberto seguia mostrando o estado anterior à
+       carga — e trocar de aba e voltar "consertava", o que é pior
+       que um erro claro: a pessoa vê dois números para a mesma
+       coisa e não sabe qual vale. */
+    if (ERP.app && ERP.app.redesenhar) ERP.app.redesenhar();
+    else if (ERP.app && ERP.app.atualizar) ERP.app.atualizar();
     const tag = ERP.util.el('tag-modo');
     if (r && r.degradadas && r.degradadas.length) {
       /* Carregou quase tudo. Nomear o que faltou é melhor que

@@ -179,6 +179,8 @@ ERP.persistencia = (function () {
      caminho no store que deveria preenchê-lo. O aviso no console
      serve para esse caminho ser achado depois. */
   const OBRIGATORIAS = {
+    estoque_movimentos: { estornado: false },
+    procedimentos: { cancelado: false },
     previsoes: { status: 'estimada' },
     receber: { origem: 'avulso', status: 'aberto' },
     parcelas: { status: 'aberto' },
@@ -350,7 +352,13 @@ ERP.persistencia = (function () {
     const pega = function (nome) {
       const m = mudou.find(function (x) { return x.nome === nome; });
       if (!m) return [];
-      return m.novos.map(function (it) { return paraBanco(it, m.def.colunas); });
+      /* Passa pela mesma completação das obrigatórias. A RPC monta
+         o INSERT no SQL e tem o próprio `coalesce`, mas mandar o
+         campo preenchido daqui é mais barato que depender só do
+         outro lado. */
+      return m.novos.map(function (it) {
+        return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+      });
     };
     const posicoes = Object.keys(ERP.store.st.posicoes || {}).map(function (k) {
       const p = k.split('|');
