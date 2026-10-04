@@ -31,6 +31,8 @@
 --       paciente), com senha provisória
 --   18  vínculo automático do login: cadastrar usuário deixa de
 --       exigir SQL
+--   19  visões passam a ser só de leitura: a escrita era barrada
+--       por acaso, não por política
 --
 -- NÃO inclui 01, 02, 03 e 04 (estrutura, políticas, cadastros e
 -- permissões de coluna): esses já rodaram e recriá-los sem
@@ -813,6 +815,45 @@ end $$;
 
 revoke all on function vincular_logins_pendentes() from public, anon;
 grant execute on function vincular_logins_pendentes() to authenticated;
+
+
+-- ====================================================================
+-- ETAPA 19 — 19-views-somente-leitura.sql
+-- ====================================================================
+
+-- ERP Dom Pedro — visões só de leitura
+-- Etapa 19.
+--
+-- A auditoria encontrou isto: o insert pela visão
+-- `funcionarios_publico` NÃO era barrado por política — ele
+-- avançava e só parava nas colunas obrigatórias da tabela-base,
+-- uma de cada vez. O que segurava era a ausência de `salario_base`
+-- na visão, não uma negação.
+--
+-- Funciona hoje e deixa de funcionar no dia em que alguém der um
+-- DEFAULT àquela coluna ou acrescentar um campo à visão. Proteção
+-- por acidente não é proteção: ninguém decidiu, e por isso ninguém
+-- vai lembrar de conferir.
+--
+-- As visões existem para LER. A escrita passa pela tabela, onde a
+-- política decide.
+
+revoke insert, update, delete on funcionarios_publico from authenticated, anon;
+revoke insert, update, delete on procedimentos_visivel from authenticated, anon;
+revoke insert, update, delete on estoque_movimentos_visivel from authenticated, anon;
+
+-- E, para o caso de alguma visão futura nascer esquecida, o padrão
+-- do schema passa a não conceder escrita em visão nova.
+alter default privileges in schema public revoke insert, update, delete on tables from authenticated;
+alter default privileges in schema public revoke insert, update, delete on tables from anon;
+
+-- O que o `alter default privileges` acima faz é valer para objetos
+-- criados DEPOIS dele pelo mesmo dono. As tabelas existentes não
+-- são afetadas — a escrita delas continua como está, governada
+-- pelas políticas de RLS.
+--
+-- Conferência (como Consulta, pela API):
+--   POST /rest/v1/funcionarios_publico  → deve dar 42501, não 23502
 
 
 -- ══════════════════════════════════════════════════════════════════
