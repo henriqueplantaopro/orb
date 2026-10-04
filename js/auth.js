@@ -131,6 +131,8 @@ ERP.auth = (function () {
      entrou, com a opção de sair. Trocar de usuário deixa de ser um
      clique: é sair e entrar de novo. */
   function iniciarComSessao(s) {
+    marcarDiaDaSessao();
+    vigiarVirada();
     /* A ORDEM importa, e errá-la deixa a tela em branco:
 
        1. montar o sistema primeiro. O `init` do app chama
@@ -327,10 +329,70 @@ ERP.auth = (function () {
     if (tag) tag.textContent = 'conectado ao banco';
   }
 
+  /* EXPIRAÇÃO DIÁRIA à meia-noite.
+
+     A sessão do Supabase se renova sozinha e dura semanas — quem
+     entrou uma vez num computador compartilhado continua dentro.
+     Aqui a sessão vale até as 00:00 do dia em que começou.
+
+     O que isto cobre: o computador que fica ligado, a aba que
+     ninguém fechou, a pessoa que saiu de férias. Na prática, é o
+     caso real.
+
+     O que NÃO cobre, e é honesto dizer: quem copiasse o token do
+     navegador poderia usá-lo pela API até ele expirar no servidor,
+     porque esta desconexão acontece no cliente. Fechar isso exige
+     reduzir o tempo de vida do token nas configurações do Supabase
+     (Authentication › Sessions) — é uma troca entre segurança e
+     pedir senha com mais frequência, e fica como decisão sua. */
+  const CHAVE_DIA = 'erp_sessao_dia';
+
+  function hojeLocal() {
+    const d = new Date();
+    return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') +
+      '-' + String(d.getDate()).padStart(2, '0');
+  }
+
+  function marcarDiaDaSessao() {
+    try { localStorage.setItem(CHAVE_DIA, hojeLocal()); } catch (e) { /* sem storage */ }
+  }
+
+  function sessaoVenceu() {
+    try {
+      const dia = localStorage.getItem(CHAVE_DIA);
+      return !!dia && dia !== hojeLocal();
+    } catch (e) { return false; }
+  }
+
+  /* Com a aba aberta, a virada do dia desconecta sem esperar a
+     próxima ação: o relógio é verificado de minuto em minuto. */
+  function vigiarVirada() {
+    setInterval(function () {
+      if (!sessaoVenceu()) return;
+      if (ERP.persistencia && ERP.persistencia.pendencias &&
+          ERP.persistencia.pendencias() > 0) {
+        /* Não desconecta com lançamento por gravar: perder trabalho
+           é pior que a sessão durar mais alguns minutos. */
+        return;
+      }
+      alert('Sua sessão expirou (as sessões valem até a meia-noite). Entre de novo.');
+      sair();
+    }, 60000);
+  }
+
   /* Ponto de entrada: decide entre modo local e modo com login. */
   async function iniciar() {
     if (!configurado()) return false;      // segue no modo local
     const s = await carregarSessao();
+    if (s && !s.erro && sessaoVenceu()) {
+      /* Sessão de ontem: pede a senha de novo antes de qualquer
+         coisa, sem carregar dado nenhum. */
+      const c = conectar();
+      if (c) await c.auth.signOut();
+      try { localStorage.removeItem(CHAVE_DIA); } catch (e) { /* sem storage */ }
+      telaLogin('Sua sessão expirou — as sessões valem até a meia-noite. Entre de novo.');
+      return true;
+    }
     if (s && !s.erro) {
       /* Senha provisória barra tudo: nem cadastro é carregado antes
          de a pessoa escolher a dela. */

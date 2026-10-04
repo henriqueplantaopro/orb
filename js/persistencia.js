@@ -379,6 +379,12 @@ ERP.persistencia = (function () {
       (r.data || []).forEach(function (l) { alvo.push(doBanco(l)); });
     });
 
+    /* O que já está na trilha não é reenviado. Lê só os ids, que é
+       o suficiente e não traz a trilha inteira para a memória. */
+    eventosEnviados = {};
+    const { data: evs } = await c.from('eventos').select('app_id').not('app_id', 'is', null);
+    (evs || []).forEach(function (e) { if (e.app_id) eventosEnviados[e.app_id] = true; });
+
     await lerIndexado(POSICOES);
     await lerIndexado(MINIMOS);
 
@@ -412,15 +418,27 @@ ERP.persistencia = (function () {
        ainda não gravava. Quem testasse nesse intervalo via o
        sistema "não salvando" sem nada estar errado. */
     const { data, error } = await c.rpc('reservar_ids', { qtd: TAMANHO_BLOCO });
-    if (!error && data) {
-      ERP.store.st.seq = Number(data);
+    const n = Number(data);
+    /* Só aceita NÚMERO. Uma resposta inesperada virava `NaN` aqui,
+       e `NaN` contamina todos os ids seguintes: `evNaN`, `p NaN`…
+       Como o id é a chave, isso faria o segundo registro colidir
+       com o primeiro — um erro silencioso que só apareceria na
+       gravação. Melhor manter a sequência local do que adotar
+       lixo. */
+    if (!error && isFinite(n) && n > 0) {
+      ERP.store.st.seq = n;
       return;
+    }
+    if (!error && data !== null && data !== undefined && !isFinite(n)) {
+      console.warn('reservar_ids devolveu algo que não é número:', data,
+        '— seguindo com a sequência local.');
     }
     /* Banco ainda sem a função (07-ids.sql não rodado): cai no
        caminho antigo, pedindo um só. Melhor um id do que nenhum. */
     const r = await c.rpc('proximo_id', { prefixo: '' });
     if (r && r.data) {
-      ERP.store.st.seq = parseInt(String(r.data).replace(/\D/g, ''), 10) || ERP.store.st.seq;
+      const m2 = parseInt(String(r.data).replace(/\D/g, ''), 10);
+      if (isFinite(m2) && m2 > 0) ERP.store.st.seq = m2;
     }
   }
 
@@ -514,6 +532,51 @@ ERP.persistencia = (function () {
         '12-estoque-atomico.sql. Nada do estoque foi gravado.';
     }
     return 'estoque: ' + error.message;
+  }
+
+  /* TRILHA DE AUDITORIA.
+     Vai à parte do resto porque é só-inserção: evento não se
+     altera nem se apaga, nem pelo administrador. Por isso não entra
+     no mecanismo de comparação — basta lembrar o que já subiu.
+
+     Sem isto, os 149 tipos de evento que o sistema registra ficavam
+     só na memória e sumiam ao recarregar. Uma aprovação indevida
+     não deixava rastro, e a segregação que a matriz garante perdia
+     metade do valor: ela impede, mas não prova. */
+  let eventosEnviados = {};
+
+  async function gravarEventos() {
+    const c = cliente();
+    if (!c) return null;
+    const novos = (ERP.store.st.eventos || []).filter(function (e) {
+      return e && e.id && !eventosEnviados[e.id];
+    });
+    if (!novos.length) return null;
+
+    const linhas = novos.map(function (e) {
+      return {
+        app_id: e.id,
+        entidade: e.entidade || '',
+        entidade_id: e.entidade_id || null,
+        acao: e.acao || '',
+        detalhe: e.detalhe || null,
+        usuario_id: e.usuario_id || null,
+        usuario: e.usuario || null,
+        em: e.em || new Date().toISOString()
+      };
+    });
+    const { error } = await c.from('eventos').insert(linhas);
+    if (error) {
+      /* Já estavam lá: o `app_id` é único justamente para o reenvio
+         não duplicar a trilha. */
+      if (/duplicate key|23505/i.test(error.message || '')) {
+        novos.forEach(function (e) { eventosEnviados[e.id] = true; });
+        return null;
+      }
+      return 'trilha de auditoria: ' + error.message;
+    }
+    novos.forEach(function (e) { eventosEnviados[e.id] = true; });
+    return null;
   }
 
   async function sincronizar() {
@@ -634,6 +697,11 @@ ERP.persistencia = (function () {
          outra coleção não faz esta ser reenviada. */
       if (falhas.length === falhasAntes) tirarFotoDe(m.nome);
     }
+    /* A trilha vai SEMPRE, mesmo que outra coisa tenha falhado: o
+       registro da tentativa é parte do que se quer guardar. */
+    const fe = await gravarEventos();
+    if (fe) falhas.push(fe);
+
     /* Mínimos é cadastro: vai sozinho, sem depender de nada. */
     const fm = await gravarIndexado(MINIMOS);
     if (fm) falhas.push(fm);
