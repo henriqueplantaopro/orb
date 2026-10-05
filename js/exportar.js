@@ -69,13 +69,17 @@ ERP.exportar = (function () {
        células, então as três primeiras linhas ficam reservadas para
        ela — senão a marca cobre o título do relatório. */
     let reservaTimbre = 0;
-    if (ERP.timbre && ERP.timbre.jpeg) {
+    if (ERP.timbre && ERP.timbre.png) {
       try {
-        const id = wb.addImage({ base64: ERP.timbre.jpeg, extension: 'jpeg' });
-        ws.addImage(id, { tl: { col: 0.15, row: 0.2 },
-          ext: { width: ERP.timbre.largura, height: ERP.timbre.altura } });
-        ws.addRow([]); ws.addRow([]); ws.addRow([]);
-        reservaTimbre = 3;
+        /* PNG, não JPEG: a planilha abre em 100% e o JPEG deixava
+           sujeira em volta das letras. A imagem é inserida na metade
+           do tamanho do arquivo, o que a deixa nítida em tela de
+           alta resolução. */
+        const id = wb.addImage({ base64: ERP.timbre.png, extension: 'png' });
+        ws.addImage(id, { tl: { col: 0.2, row: 0.3 },
+          ext: { width: ERP.timbre.pngLargura / 2, height: ERP.timbre.pngAltura / 2 } });
+        ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]);
+        reservaTimbre = 4;
       } catch (e) {
         /* Sem timbre a planilha ainda serve; sem dados, não. */
         console.warn('timbre não entrou na planilha:', e);
@@ -88,16 +92,54 @@ ERP.exportar = (function () {
     (cabecalho || []).forEach(function (linha, i) {
       const r = ws.addRow(Array.isArray(linha) ? linha : [linha]);
       r.font = { bold: i === 0, size: i === 0 ? 13 : 11 };
-      /* Título e período ocupam a largura: numa célula só, "Período:
+      /* CADA TEXTO OCUPA ATÉ A PRÓXIMA CÉLULA PREENCHIDA. "Período:
          01/10/2026 a 31/10/2026" saía como "Período: 01," porque a
-         coluna A é estreita. */
-      if (!Array.isArray(linha) || linha.length === 1) {
-        try { ws.mergeCells(r.number, 1, r.number, Math.min(colunas.length, 6)); }
-        catch (e) { /* já mesclado */ }
-      }
-      if (Array.isArray(linha)) {
-        linha.forEach(function (v, c) { if (typeof v === 'number') r.getCell(c + 1).numFmt = '#,##0.00'; });
-      }
+         coluna A é estreita e o Excel corta no vizinho ocupado.
+         Mesclar com as células vazias à frente resolve sem alargar
+         coluna nenhuma. */
+      /* CADA TEXTO OCUPA O QUE PRECISA. "Período: 01/10/2026 a
+         31/10/2026" saía como "Período: 01," porque a coluna A é
+         estreita e o Excel corta no vizinho ocupado.
+
+         Mesclar com as vazias à frente não bastava: se o grupo não
+         soma largura suficiente, o texto continua cortado. Então o
+         grupo cresce até caber, e o que vinha depois é empurrado
+         para a primeira coluna livre — ninguém perde conteúdo, e
+         nenhuma coluna de dados é alargada por causa do cabeçalho. */
+      const vals = Array.isArray(linha) ? linha : [linha];
+      const itens = [];
+      vals.forEach(function (v, c) {
+        if (v !== '' && v !== null && v !== undefined) itens.push({ v: v, col: c });
+      });
+      /* limpa a linha: ela é remontada nas posições calculadas */
+      for (let c = 1; c <= Math.max(colunas.length, vals.length); c++) r.getCell(c).value = null;
+
+      let cursor = 0;
+      itens.forEach(function (it, k) {
+        const inicio = Math.max(cursor, it.col);
+        const texto = String(it.v);
+        const precisa = typeof it.v === 'number' ? 12 : texto.length + 2;
+        let fim = inicio, soma = 0;
+        while (fim < colunas.length - 1 && soma < precisa) {
+          soma += (ws.getColumn(fim + 1).width || 12);
+          if (soma >= precisa) break;
+          fim++;
+        }
+        /* O item seguinte é EMPURRADO, não usado como trava: travar
+           aqui era o que mantinha "Período: 01/10/2026 a 31/10/2026"
+           cortado em duas colunas estreitas. Como o próximo começa em
+           `cursor`, ninguém é sobreposto. */
+        fim = Math.min(fim, colunas.length - 1);
+
+        const cel = r.getCell(inicio + 1);
+        cel.value = it.v;
+        if (typeof it.v === 'number') cel.numFmt = '#,##0.00';
+        if (fim > inicio) {
+          try { ws.mergeCells(r.number, inicio + 1, r.number, fim + 1); }
+          catch (e) { /* já mesclado */ }
+        }
+        cursor = fim + 1;
+      });
     });
     if (linhasCab) ws.addRow([]);
     const linhaTitulos = linhasCab ? linhasCab + 2 : 1;
@@ -113,13 +155,36 @@ ERP.exportar = (function () {
         linha.forEach(function (v, c) { if (typeof v === 'number') r.getCell(c + 1).numFmt = '#,##0.00'; });
       }
     });
+    /* SEM LINHAS DE GRADE. A grade do Excel pinta a planilha inteira,
+       inclusive onde não há nada, e compete com os números. No lugar
+       dela: faixas alternadas em azul muito claro, que guiam o olho
+       pela linha, e um fio cinza entre as linhas. */
+    const primeiraDados = linhaTitulos + 1;
+    const ultimaDados = linhaTitulos + linhas.length;
+    for (let n = primeiraDados; n <= ultimaDados; n++) {
+      const r = ws.getRow(n);
+      const par = (n - primeiraDados) % 2 === 1;
+      for (let c = 1; c <= colunas.length; c++) {
+        const cel = r.getCell(c);
+        if (par) {
+          cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF4FA' } };
+        }
+        cel.border = {
+          bottom: { style: 'thin', color: { argb: 'FFBFC8D0' } }
+        };
+      }
+    }
+
     rTit.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     /* Cabeçalho na cor da marca: a planilha sai parecendo documento
        do sistema, não exportação genérica. */
     rTit.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3A4D' } };
     rTit.alignment = { vertical: 'middle' };
     rTit.height = 20;
-    ws.views = [{ state: 'frozen', ySplit: linhaTitulos }];
+    /* Congela o cabeçalho E mantém a grade desligada: são a mesma
+       configuração de visualização, e definir duas vezes faz a
+       segunda apagar a primeira. */
+    ws.views = [{ state: 'frozen', ySplit: linhaTitulos, showGridLines: false }];
     ws.autoFilter = { from: { row: linhaTitulos, column: 1 }, to: { row: linhaTitulos, column: colunas.length } };
     /* LARGURA PELO CONTEÚDO. Antes era 18 para quase tudo, e aí
        "Competência" virava "Competênc", "Vencimento" virava
