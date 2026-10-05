@@ -318,11 +318,19 @@ ERP.persistencia = (function () {
     estoque_movimentos: { estornado: false },
     procedimentos: { cancelado: false },
     previsoes: { status: 'estimada' },
-    receber: { origem: 'avulso', status: 'aberto' },
+    receber: { origem: 'avulso', status: 'aberto', baixas: [], retencoes: [],
+      valor_recebido: 0, substitui: [] },
     parcelas: { status: 'aberto' },
     compras: { status: 'rascunho' },
     linhas_extrato: { situacao: 'pendente' },
-    ordens_servico: { status: 'aberta' }
+    ordens_servico: { status: 'aberta' },
+    /* Listas que o banco exige preenchidas. Vazio é o estado natural
+       de quase todas no nascimento — o que faltava era dizer isso. */
+    titulos: { retencoes: [], rateio: [] },
+    estoque_camadas: { qtd: 0 },
+    fechamentos_procedimentos: { cancelado: false, procedimento_ids: [], titulo_ids: [] },
+    lotes_produtividade: { cancelado: false },
+    folhas: { cancelado: false }
   };
 
   function completarObrigatorias(linha, tabela) {
