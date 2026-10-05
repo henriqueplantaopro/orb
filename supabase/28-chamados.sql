@@ -75,7 +75,12 @@ grant usage, select on sequence chamados_id_seq to anon;
 -- expor o resto do patrimônio. Esta visão devolve só isso.
 drop view if exists ativo_etiqueta;
 create view ativo_etiqueta as
-  select id, tag, descricao, serie
+  select id, tag, descricao,
+         /* A série não tem coluna própria: mora em `extra`, junto do
+            resto que veio do cadastro. Sai aqui como texto para a
+            página mostrar, sem expor o `extra` inteiro — que tem
+            outras coisas. */
+         nullif(extra->>'serie', '') as serie
     from ativos
    where coalesce(desmembrado, false) = false;
 
