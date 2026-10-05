@@ -115,8 +115,17 @@ input,select,textarea{
 textarea{resize:vertical;min-height:44px;}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 2px var(--brand-soft);}
 input:disabled,select:disabled{background:var(--line2);color:var(--ink3);}
-.row2{display:grid;grid-template-columns:1fr 1fr;gap:8px;}
-.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;}
+/* As colunas QUEBRAM quando não cabem, em vez de empurrar a tela
+   para o lado. Com `1fr 1fr 1fr` fixo, três campos num modal de
+   520px espremiam tudo e o conteúdo transbordava — a pessoa tinha
+   de rolar para a direita para achar metade do formulário.
+
+   `auto-fit` com largura mínima resolve: cabem três, ficam três;
+   não cabem, viram duas ou uma. Nenhuma tela do sistema deve rolar
+   na horizontal. */
+.row2{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:8px;}
+.row3{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;}
+.row2>*,.row3>*{min-width:0;}
 .ajuda{font-size:11px;color:var(--ink3);margin-top:3px;line-height:1.4;}
 
 button{font-family:inherit;cursor:pointer;border:1px solid transparent;border-radius:3px;font-weight:600;}
@@ -209,7 +218,11 @@ td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
 /* ── modal ──────────────────────────────────────────────── */
 .modal-fundo{position:fixed;inset:0;background:rgba(21,26,31,.5);display:flex;align-items:center;
   justify-content:center;padding:16px;z-index:50;}
-.modal{background:var(--surface);border-radius:var(--radius);width:100%;max-width:520px;max-height:90vh;overflow:auto;}
+.modal{background:var(--surface);border-radius:var(--radius);width:100%;max-width:520px;
+  max-height:90vh;overflow-y:auto;overflow-x:hidden;}
+/* Nada dentro do modal pode ser mais largo que ele. */
+.modal *{max-width:100%;}
+.modal input,.modal select,.modal textarea{max-width:100%;}
 .modal .topo{display:flex;align-items:center;justify-content:space-between;padding:10px 14px;
   border-bottom:1px solid var(--line);background:#f7f8f9;}
 .modal .topo h3{font-size:13px;font-weight:650;}
@@ -684,3 +697,44 @@ header .sessao > span { display: none; }
 /* As colunas de etapa guardam data ou visto: texto menor e centrado
    lê melhor que número alinhado à direita. */
 table td.col-etapa, table th.col-etapa { text-align: center; }
+
+/* ── Caixas de marcar: rótulo ao lado, nunca soltas ─────────────
+   Checkbox sem rótulo visível ao lado é caixa órfã: a pessoa vê o
+   quadradinho e procura a que se refere. O texto que estava numa
+   coluna vizinha ia parar fora da tela quando o grid apertava. */
+.marcar {
+  display: flex; align-items: center; gap: 8px;
+  font-weight: 400; font-size: 13px; line-height: 1.35;
+  padding: 6px 0;
+}
+.marcar input[type="checkbox"] {
+  width: 17px; height: 17px; flex: 0 0 auto; margin: 0;
+}
+.marcar span { min-width: 0; }
+
+/* Nenhuma tela rola para o lado. Onde há tabela larga, a rolagem
+   fica DENTRO do container dela, não no corpo da página. */
+html, body { overflow-x: hidden; }
+.tabela-rolagem { overflow-x: auto; max-width: 100%; }
+
+/* ── Caixas de marcar não são campos de texto ───────────────────
+   A regra geral dá 100% de largura a todo input — o que faz sentido
+   para texto e número, e nenhum para checkbox. O quadradinho
+   esticava pela linha inteira e empurrava o rótulo para fora da
+   tela: era por isso que apareciam "checkboxes perdidos" com o
+   texto longe, ou nem visível.
+
+   Vale em todo o sistema, não só no formulário de admissão. */
+input[type="checkbox"], input[type="radio"] {
+  width: 17px; height: 17px; min-width: 17px;
+  flex: 0 0 auto; margin: 0 2px 0 0; padding: 0;
+  vertical-align: -3px;
+}
+
+/* Rótulo que contém uma caixa de marcar vira linha: quadradinho e
+   texto lado a lado, sempre. */
+label:has(> input[type="checkbox"]),
+label:has(> input[type="radio"]) {
+  display: flex; align-items: flex-start; gap: 7px;
+  font-weight: 400; line-height: 1.4;
+}
