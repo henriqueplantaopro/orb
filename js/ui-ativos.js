@@ -557,7 +557,13 @@ ERP.ativos = (function () {
   function etiqueta(id) {
     const a = S.ativo(id);
     const at = S.situacaoAtiva(a);
-    const base = (S.st.parametros && S.st.parametros.url_chamado) || 'https://erp.dompedrosaude.com.br/chamado';
+    /* O padrão aponta para a página PÚBLICA de chamado, que fica
+       num endereço separado do sistema: quem lê uma etiqueta não
+       precisa descobrir onde está o ERP. O parâmetro
+       `url_chamado` sobrepõe, para o dia em que houver domínio
+       próprio. */
+    const base = (S.st.parametros && S.st.parametros.url_chamado) ||
+      'https://orb-chamado.vercel.app';
     const url = base + '?ativo=' + a.id + '&tag=' + encodeURIComponent(a.tag || '');
     let qr = '';
     try { qr = ERP.qrcode.svg(url, { tamanho: 150 }); }
