@@ -447,6 +447,11 @@ ERP.app = (function () {
 
   let iniciado = false;
   function init() {
+    /* A versão no console: a primeira coisa a conferir quando um
+       erro já corrigido reaparece. */
+    if (ERP.config && ERP.config.versao) {
+      console.log('%cORB ' + ERP.config.versao, 'color:#00B4FF;font-weight:600');
+    }
     if (iniciado) return;   // DOMContentLoaded pode disparar duas vezes
     iniciado = true;
     U.el('empresa-nome').textContent = D.empresa.nome;

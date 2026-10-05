@@ -38,6 +38,10 @@ ERP.perfilUsuario = (function () {
       titulo: 'Meus dados',
       fecharTxt: 'Fechar',
       corpo:
+        '' +
+        (ERP.config && ERP.config.versao
+          ? '<div class="sub" style="text-align:right;margin-bottom:8px">ORB ' +
+            ERP.util.esc(ERP.config.versao) + '</div>' : '') +
         '<div class="row2">' +
           '<div><label>Nome</label><div class="leitura">' + U.esc(u.nome) + '</div></div>' +
           '<div><label>Perfil</label><div class="leitura">' + U.esc(p.nome || u.perfil) +
