@@ -50,15 +50,26 @@ ERP.marca = (function () {
       '</svg>';
   }
 
+  /* A arte em imagem, para tela. `img()` devolve a versão certa para
+     o fundo: clara no topo escuro, escura no papel. */
+  function img(opcoes) {
+    const o = opcoes || {};
+    const clara = o.clara === true;
+    const altura = o.altura || 34;
+    return '<img src="img/orb-' + (clara ? 'claro' : 'escuro') + '.png" ' +
+      'alt="ORB — Sistema de Gestão Integrada" style="height:' + altura +
+      'px;width:auto;display:block">';
+  }
+
   /* Bloco de timbre para documento em papel: marca à esquerda, dados
      da empresa à direita. */
   function timbre(empresa) {
     const e = empresa || {};
-    return '<div class="marca-doc">' + svg({ altura: 36 }) + '</div>' +
+    return '<div class="marca-doc">' + img({ altura: 38 }) + '</div>' +
       (e.nome ? '<div class="rel-emp">' + ERP.util.esc(e.nome) +
         (e.cnpj ? '<span class="sub"> · CNPJ ' + ERP.util.esc(e.cnpj) + '</span>' : '') +
         '</div>' : '');
   }
 
-  return { svg: svg, timbre: timbre };
+  return { svg: svg, img: img, timbre: timbre };
 })();

@@ -660,7 +660,13 @@ input:focus, select:focus, textarea:focus {
    altura, vira um borrão cinza que ninguém lê e ainda rouba largura
    do nome da empresa. Ela aparece onde há espaço — relatórios,
    PDF, tela de login. */
-header .marca-svg { height: 32px; }
-header .marca-svg text:last-of-type { display: none; }
+header .marca-img { height: 32px; width: auto; display: block; }
+
 header .sessao { white-space: nowrap; }
 header .sessao > span { display: none; }
+
+/* A arte da marca. No topo ela aparece a 32px de altura — com a
+   assinatura inclusa, porque é a arte original e ela foi desenhada
+   para ser lida nesse conjunto. */
+.marca-img { height: 32px; width: auto; display: block; }
+@media (max-width: 620px) { .marca-img { height: 26px; } }

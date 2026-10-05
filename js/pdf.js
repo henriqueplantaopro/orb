@@ -66,6 +66,9 @@ ERP.pdf = (function () {
     const margem = opcoes.margem !== undefined ? opcoes.margem : 34;   // ~12 mm
     const paginas = [];
     let atual = [];
+    /* O objeto da imagem só é criado se alguma página usou o timbre:
+       documento sem marca não carrega o peso dela. */
+    let usouImagem = false;
 
     // y é contado de cima pra baixo (mais natural pra montar tabela)
     const y2pdf = y => altura - y;
@@ -144,11 +147,31 @@ ERP.pdf = (function () {
         return api;
       },
 
-      /* A marca no alto do documento. Desenhada, não embutida como
-         imagem: PDF com imagem externa sai sem timbre quando ela não
-         carrega, e timbre é justamente o que não pode faltar num
-         documento que vai para hospital ou órgão público. */
+      /* Coloca o timbre (JPEG embutido em js/timbre.js) na página.
+         O PDF guarda o JPEG como veio, sem recomprimir — é o que o
+         formato chama de DCTDecode. */
+      imagem: function (x, y, w, h) {
+        usouImagem = true;
+        atual.push('q ' + w.toFixed(2) + ' 0 0 ' + h.toFixed(2) + ' ' +
+          x.toFixed(2) + ' ' + y2pdf(y + h).toFixed(2) + ' cm /Im1 Do Q');
+        return api;
+      },
+
+      /* A marca no alto do documento. Usa a arte real quando ela está
+         disponível e cai no desenho vetorial se não estiver — PDF sem
+         timbre nenhum é o único resultado inaceitável, porque esses
+         documentos vão para hospital, contador e órgão público. */
       marca: function (x, y) {
+        if (ERP.timbre && ERP.timbre.jpeg) {
+          const alturaMarca = 15;
+          const largMarca = alturaMarca * (ERP.timbre.largura / ERP.timbre.altura);
+          api.imagem(x, y, largMarca, alturaMarca);
+          return api;
+        }
+        return api.marcaDesenhada(x, y);
+      },
+
+      marcaDesenhada: function (x, y) {
         const AZUL = [0.122, 0.227, 0.302];     // #1F3A4D
         const ACENTO = [0.0, 0.706, 1.0];       // #00B4FF
         api.circulo(x + 7, y + 7, 5.6, { cor: AZUL, espessura: 1.9 });
@@ -186,6 +209,23 @@ ERP.pdf = (function () {
           objs[idsStream[i]] = '<< /Length ' + fluxo.length + ' >>\nstream\n' + fluxo + '\nendstream';
         });
         objs[idBold] = '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>';
+
+        /* O JPEG do timbre entra como um objeto só, referenciado por
+           todas as páginas: uma cópia, não uma por página. */
+        let idImagem = 0;
+        if (usouImagem && ERP.timbre && ERP.timbre.jpeg) {
+          idImagem = idBold + 1;
+          const bin = atob(ERP.timbre.jpeg);
+          objs[idImagem] = '<< /Type /XObject /Subtype /Image /Width ' + ERP.timbre.largura +
+            ' /Height ' + ERP.timbre.altura + ' /ColorSpace /DeviceRGB /BitsPerComponent 8' +
+            ' /Filter /DCTDecode /Length ' + bin.length + ' >>\nstream\n' + bin + '\nendstream';
+          todas.forEach(function (c, i) {
+            objs[idsPagina[i]] = objs[idsPagina[i]].replace('/Contents',
+              '/XObject << /Im1 ' + idImagem + ' 0 R >> >> /Contents')
+              .replace('/F2 ' + idBold + ' 0 R >> >> /XObject',
+                '/F2 ' + idBold + ' 0 R >> /XObject');
+          });
+        }
 
         let pdf = '%PDF-1.4\n';
         const offsets = [];

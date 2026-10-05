@@ -65,12 +65,36 @@ ERP.exportar = (function () {
     ws.columns = colunas.map(function (c) {
       return { key: c.titulo, width: c.largura || 18 };
     });
+    /* O TIMBRE no alto da planilha. A imagem flutua sobre as
+       células, então as três primeiras linhas ficam reservadas para
+       ela — senão a marca cobre o título do relatório. */
+    let reservaTimbre = 0;
+    if (ERP.timbre && ERP.timbre.jpeg) {
+      try {
+        const id = wb.addImage({ base64: ERP.timbre.jpeg, extension: 'jpeg' });
+        ws.addImage(id, { tl: { col: 0.15, row: 0.2 },
+          ext: { width: ERP.timbre.largura, height: ERP.timbre.altura } });
+        ws.addRow([]); ws.addRow([]); ws.addRow([]);
+        reservaTimbre = 3;
+      } catch (e) {
+        /* Sem timbre a planilha ainda serve; sem dados, não. */
+        console.warn('timbre não entrou na planilha:', e);
+      }
+    }
+
     /* Cabeçalho do relatório (título, período, saldo bancário) antes da
        tabela, como na planilha que o financeiro já usa. */
-    const linhasCab = (cabecalho || []).length;
+    const linhasCab = (cabecalho || []).length + reservaTimbre;
     (cabecalho || []).forEach(function (linha, i) {
       const r = ws.addRow(Array.isArray(linha) ? linha : [linha]);
       r.font = { bold: i === 0, size: i === 0 ? 13 : 11 };
+      /* Título e período ocupam a largura: numa célula só, "Período:
+         01/10/2026 a 31/10/2026" saía como "Período: 01," porque a
+         coluna A é estreita. */
+      if (!Array.isArray(linha) || linha.length === 1) {
+        try { ws.mergeCells(r.number, 1, r.number, Math.min(colunas.length, 6)); }
+        catch (e) { /* já mesclado */ }
+      }
       if (Array.isArray(linha)) {
         linha.forEach(function (v, c) { if (typeof v === 'number') r.getCell(c + 1).numFmt = '#,##0.00'; });
       }
@@ -89,10 +113,30 @@ ERP.exportar = (function () {
         linha.forEach(function (v, c) { if (typeof v === 'number') r.getCell(c + 1).numFmt = '#,##0.00'; });
       }
     });
-    rTit.font = { bold: true };
-    rTit.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEFEFEF' } };
+    rTit.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    /* Cabeçalho na cor da marca: a planilha sai parecendo documento
+       do sistema, não exportação genérica. */
+    rTit.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1F3A4D' } };
+    rTit.alignment = { vertical: 'middle' };
+    rTit.height = 20;
     ws.views = [{ state: 'frozen', ySplit: linhaTitulos }];
     ws.autoFilter = { from: { row: linhaTitulos, column: 1 }, to: { row: linhaTitulos, column: colunas.length } };
+    /* LARGURA PELO CONTEÚDO. Antes era 18 para quase tudo, e aí
+       "Competência" virava "Competênc", "Vencimento" virava
+       "Vencimenti" e a pessoa tinha de arrastar coluna por coluna
+       antes de conseguir ler. Mede o maior texto de cada coluna,
+       com teto para uma descrição longa não empurrar o resto para
+       fora da tela. */
+    colunas.forEach(function (c, i) {
+      let maior = String(c.titulo || '').length;
+      linhas.forEach(function (l) {
+        const v = valorDe(c, l, true);
+        const t = v === null || v === undefined ? '' : String(v);
+        if (t.length > maior) maior = t.length;
+      });
+      ws.getColumn(i + 1).width = Math.min(Math.max(maior + 3, 10), 46);
+    });
+
     colunas.forEach(function (c, i) {
       const col = ws.getColumn(i + 1);
       if (c.tipo === 'numero' || c.tipo === 'data') {
