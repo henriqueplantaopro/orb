@@ -18,7 +18,15 @@ ERP.config = {
      parecidos) e mostra o nome escolhido só como rótulo — o ERP
      chama pelo endereço, então é este valor que precisa bater com
      o que aparece na coluna URL, depois de `/functions/v1/`. */
-  funcaoCriarLogin: 'criar-login',
+  /* O painel do Supabase publicou a função com o nome automático
+     `dynamic-responder` e mostra "criar-login" só como rótulo — o
+     sistema chama pelo ENDEREÇO. Este valor precisa bater com o
+     trecho depois de /functions/v1/ na coluna URL do painel.
+
+     ATENÇÃO ao atualizar o sistema: este arquivo vem no pacote e
+     sobrescreve o local. Se o acesso parar de ser criado depois de
+     uma atualização, é esta linha que voltou ao padrão. */
+  funcaoCriarLogin: 'dynamic-responder',
 
   /* Marcador da versão publicada. Serve para saber, em dois
      segundos, se o navegador está com o código novo ou com uma
