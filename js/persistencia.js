@@ -244,6 +244,54 @@ ERP.persistencia = (function () {
     return error ? { erro: error.message } : { ok: true, n: data || 0 };
   }
 
+  /* FUNCIONÁRIOS: cadastro, com gravação à parte.
+
+     Ao tirá-los do mapa de movimento (eles vivem em `D`, não em
+     `st`), ficou só a leitura — e o cadastro pela tela do DP não
+     chegava ao banco. A lista aparecia vazia para todo mundo, e o
+     diagnóstico fácil era culpar a permissão.
+
+     A comparação é feita contra a última cópia conhecida, igual ao
+     resto: só sobe o que mudou. */
+  const COLUNAS_FUNCIONARIO = ['id', 'matricula', 'nome', 'cpf', 'pis', 'nascimento',
+    'admissao', 'desligamento', 'cargo', 'tipo_contrato', 'salario_base',
+    'jornada_semanal_horas', 'centro', 'rateio', 'dependentes', 'dependentes_irrf',
+    'insalubridade_pct', 'periculosidade', 'vale_transporte', 'vt_dia', 'vt_desconto_modo',
+    'vt_desconto_valor', 'vale_refeicao', 'vr_dia', 'pensao_alimenticia', 'ferias',
+    'dados_pagamento', 'dados_aprovados', 'ativo'];
+
+  let sombraFuncionarios = {};
+
+  function fotoFuncionarios() {
+    sombraFuncionarios = {};
+    (ERP.dados.funcionarios || []).forEach(function (f) {
+      if (f && f.id) sombraFuncionarios[f.id] = JSON.stringify(f);
+    });
+  }
+
+  async function gravarFuncionarios() {
+    /* Sem `ver_dados_pessoais` a leitura veio da visão, que tem
+       menos colunas: gravar a partir dela apagaria CPF, salário e
+       conta de quem está no banco. Este perfil não grava, e isso
+       não é falha. */
+    if (!ERP.store.pode('ver_dados_pessoais')) return null;
+    const c = cliente();
+    if (!c) return null;
+
+    const mudaram = (ERP.dados.funcionarios || []).filter(function (f) {
+      if (!f || !f.id) return false;
+      return sombraFuncionarios[f.id] !== JSON.stringify(f);
+    });
+    if (!mudaram.length) return null;
+
+    const linhas = mudaram.map(function (f) { return paraBanco(f, COLUNAS_FUNCIONARIO); });
+    const { error } = await c.from('funcionarios')
+      .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
+    if (error) return 'funcionarios: ' + error.message;
+    mudaram.forEach(function (f) { sombraFuncionarios[f.id] = JSON.stringify(f); });
+    return null;
+  }
+
   let sombra = {};        // coleção → { id: json }
   let agendado = null;
   let ligado = false;
@@ -465,6 +513,15 @@ ERP.persistencia = (function () {
       (st[nome] || []).forEach(function (it) { m[it.id] = JSON.stringify(it); });
       sombra[nome] = m;
     });
+  }
+
+  /* Funcionários entram na conta de pendências: sem isto, o aviso
+     de "não salvo" ignoraria uma ficha recém-cadastrada. */
+  function funcionariosPendentes() {
+    if (!ERP.store.pode('ver_dados_pessoais')) return 0;
+    return (ERP.dados.funcionarios || []).filter(function (f) {
+      return f && f.id && sombraFuncionarios[f.id] !== JSON.stringify(f);
+    }).length;
   }
 
   function diferencas() {
@@ -697,6 +754,9 @@ ERP.persistencia = (function () {
          outra coleção não faz esta ser reenviada. */
       if (falhas.length === falhasAntes) tirarFotoDe(m.nome);
     }
+    const ff = await gravarFuncionarios();
+    if (ff) falhas.push(ff);
+
     /* A trilha vai SEMPRE, mesmo que outra coisa tenha falhado: o
        registro da tentativa é parte do que se quer guardar. */
     const fe = await gravarEventos();
@@ -840,6 +900,7 @@ ERP.persistencia = (function () {
            salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,
-           pendencias: () => diferencas().length, ligado: () => ligado,
+           pendencias: () => diferencas().length + funcionariosPendentes(),
+           fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
            degradadas: () => degradadas.slice() };
 })();

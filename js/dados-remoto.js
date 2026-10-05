@@ -65,6 +65,11 @@ ERP.dadosRemoto = (function () {
     }
     D.funcionarios.length = 0;
     (data || []).forEach(function (f) { D.funcionarios.push(limpar(f)); });
+    /* Marca o que veio do banco como já gravado, para a primeira
+       sincronização não reenviar a lista inteira. */
+    if (ERP.persistencia && ERP.persistencia.fotoFuncionarios) {
+      ERP.persistencia.fotoFuncionarios();
+    }
     return null;
   }
 
