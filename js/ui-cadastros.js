@@ -173,7 +173,9 @@ ERP.cadastros = (function () {
               '<div class="ajuda">Faturado é o que saiu em NF/fatura; sem nota no período, a coluna mostra o ' +
                 'valor da produção médica medida. Leve este resumo junto do pedido.</div>';
         };
-        ['at-de', 'at-ate'].forEach(function (id) { U.el(id).addEventListener('change', desenhar); });
+        /* `ligarData` em vez de `change` cru: digitar a data inteira
+           disparava o redesenho no meio e congelava o ano. */
+        ['at-de', 'at-ate'].forEach(function (id) { U.ligarData(id, desenhar); });
         U.el('at-tudo').addEventListener('click', function () { U.setVal('at-de', ''); desenhar(); });
         desenhar();
       }
@@ -463,7 +465,12 @@ ERP.cadastros = (function () {
         }).join('') + '</div>' +
         '<div class="row2" style="margin-top:8px">' +
         '<div><label>Retenção do órgão (%)</label><input id="pj-ret" class="num" inputmode="decimal" value="' +
-          U.num(c ? (c.retencao_pct || 0) : 0) + '"></div>' +
+          U.num(c ? (c.retencao_pct || 0) : 0) + '">' +
+          /* O aviso aparece na hora de digitar, não só no relatório:
+             retenção acima da soma dos impostos é dinheiro que não
+             volta, e isso pesa na hora de precificar aquele
+             contrato. */
+          '<div id="pj-ret-obs" class="sub"></div></div>' +
         '<div><label>Apelidos de busca</label><input id="pj-alias" value="' +
           U.esc(c ? (c.aliases || []).join(', ') : '') + '"></div></div>' +
         '<div id="pj-loc-bloco" style="display:' + (c && c.tipo_servico === 'locacao' ? 'block' : 'none') + '">' +
@@ -479,6 +486,41 @@ ERP.cadastros = (function () {
           '<input id="pj-prevrep" class="num" inputmode="decimal" value="' + U.num(c ? (c.prev_repasse || 0) : 0) + '"></div></div>' +
         (c ? '<label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-weight:400">' +
              '<input type="checkbox" id="pj-ativo" style="width:auto"' + (c.ativo ? ' checked' : '') + '> ativo</label>' : ''),
+      aposAbrir: function () {
+        /* Compara a retenção do órgão com a soma dos impostos e avisa
+           na hora. Retenção ACIMA do devido é dinheiro que não volta:
+           o excedente vira custo do contrato, e quem está cadastrando
+           precisa saber disso antes de fechar preço. */
+        const atualizarObs = function () {
+          const obs = U.el('pj-ret-obs');
+          if (!obs) return;
+          const ret = U.parseValor(U.val('pj-ret')) || 0;
+          let soma = 0;
+          IMP.forEach(function (i) {
+            /* O ISS do Ceará é alternativa ao ISS, não adicional: somar
+               os dois inventaria uma alíquota que ninguém recolhe. */
+            if (i[0] === 'iss_ce') return;
+            soma += U.parseValor(U.val('pj-' + i[0])) || 0;
+          });
+          if (!ret) { obs.innerHTML = '<span class="sub">o órgão não retém</span>'; return; }
+          if (ret > soma + 0.001) {
+            obs.innerHTML = '<span style="color:var(--red)">Retém ' + U.num(ret) +
+              '% sobre imposto de ' + U.num(soma) + '% — o excedente de ' +
+              U.num(ret - soma) + ' ponto(s) é custo do projeto, não volta.</span>';
+          } else if (ret < soma - 0.001) {
+            obs.innerHTML = '<span class="sub">Retém ' + U.num(ret) + '% de ' + U.num(soma) +
+              '% devidos — os outros ' + U.num(soma - ret) + ' ponto(s) saem por guia.</span>';
+          } else {
+            obs.innerHTML = '<span class="sub">retenção igual ao imposto devido</span>';
+          }
+        };
+        atualizarObs();
+        const campos = ['pj-ret'].concat(IMP.map(function (i) { return 'pj-' + i[0]; }));
+        campos.forEach(function (id) {
+          const e = U.el(id);
+          if (e) e.addEventListener('input', atualizarObs);
+        });
+      },
       acoes: [{ txt: c ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const nome = U.val('pj-nome');
         if (!nome) return ERP.app.aviso('Informe o nome do projeto.', 'erro');

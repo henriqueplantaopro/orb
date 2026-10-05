@@ -76,10 +76,17 @@ ERP.exportar = (function () {
            do tamanho do arquivo, o que a deixa nítida em tela de
            alta resolução. */
         const id = wb.addImage({ base64: ERP.timbre.png, extension: 'png' });
+        const escala = 0.3;
+        const alturaPx = ERP.timbre.pngAltura * escala;
         ws.addImage(id, { tl: { col: 0.2, row: 0.25 },
-          ext: { width: ERP.timbre.pngLargura * 0.3, height: ERP.timbre.pngAltura * 0.3 } });
-        ws.addRow([]); ws.addRow([]);
-        reservaTimbre = 2;
+          ext: { width: ERP.timbre.pngLargura * escala, height: alturaPx } });
+        /* As linhas reservadas vêm da ALTURA REAL da imagem (o Excel
+           usa ~20px por linha), e não de um número fixo: com duas
+           linhas fixas a marca cobria o cabeçalho da tabela, que é
+           justamente o que precisa ser lido. */
+        const linhasNecessarias = Math.ceil(alturaPx / 20) + 1;
+        for (let i = 0; i < linhasNecessarias; i++) ws.addRow([]);
+        reservaTimbre = linhasNecessarias;
       } catch (e) {
         /* Sem timbre a planilha ainda serve; sem dados, não. */
         console.warn('timbre não entrou na planilha:', e);
@@ -146,7 +153,17 @@ ERP.exportar = (function () {
     const rTit = ws.getRow(linhaTitulos);
     colunas.forEach(function (c, i) { rTit.getCell(i + 1).value = c.titulo; });
     linhas.forEach(function (l) {
-      ws.addRow(colunas.map(function (c) { return valorDe(c, l, false); }));
+      const r = ws.addRow(colunas.map(function (c) { return valorDe(c, l, false); }));
+      /* Alerta pintado na tela: a planilha recebe a mesma cor, para
+         quem abrir o arquivo ver o que quem olhou a tela viu. */
+      const cores = l.__cores;
+      if (cores) {
+        cores.forEach(function (cor, i) {
+          if (cor) {
+            r.getCell(i + 1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: cor } };
+          }
+        });
+      }
     });
     (rodape || []).forEach(function (linha) {
       const r = ws.addRow(Array.isArray(linha) ? linha : [linha]);
@@ -166,7 +183,9 @@ ERP.exportar = (function () {
       const par = (n - primeiraDados) % 2 === 1;
       for (let c = 1; c <= colunas.length; c++) {
         const cel = r.getCell(c);
-        if (par) {
+        /* A faixa alternada não cobre célula já pintada por alerta:
+           o alerta é informação, a zebra é só conforto de leitura. */
+        if (par && !cel.fill) {
           cel.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFEEF4FA' } };
         }
         cel.border = {
@@ -254,6 +273,25 @@ ERP.exportar = (function () {
      não têm uma lista de objetos por trás. Aqui a tabela renderizada
      vira colunas e linhas — e o que parece dinheiro vira número de
      verdade no Excel, senão a planilha chega sem poder somar. */
+  /* Cores de alerta que a TELA pintou, levadas para a planilha.
+     A regra do que é um desvio mora num lugar só (o store), a tela
+     pinta a partir dela, e aqui o Excel copia o que a tela pintou —
+     assim planilha e tela nunca discordam sobre o que está em
+     alerta. */
+  const ALERTAS = {
+    '#fbe9e7': 'FFFBE9E7',    // piorou
+    'rgb(251, 233, 231)': 'FFFBE9E7',
+    '#e3f2fd': 'FFE3F2FD',    // melhorou
+    'rgb(227, 242, 253)': 'FFE3F2FD'
+  };
+
+  function corDaCelula(td) {
+    if (!td) return null;
+    const inline = (td.getAttribute('style') || '').toLowerCase();
+    const achado = Object.keys(ALERTAS).find(function (c) { return inline.indexOf(c) > -1; });
+    return achado ? ALERTAS[achado] : null;
+  }
+
   function deTabela(tabela) {
     if (!tabela) return null;
     const ths = Array.prototype.slice.call(tabela.querySelectorAll('thead th'));
@@ -273,10 +311,16 @@ ERP.exportar = (function () {
       /* linha com menos células que o cabeçalho é subtotal/agrupamento
          e sairia deslocada uma coluna */
       if (celulas.length < ths.length) return null;
-      return usar.map(function (c) {
+      const valores = usar.map(function (c) {
         const td = celulas[c.i];
         return td ? td.innerText.replace(/\n+/g, ' ').trim() : '';
       });
+      /* As cores de alerta viajam junto com a linha, numa propriedade
+         à parte: o resto do código continua tratando a linha como um
+         array de textos. */
+      const cores = usar.map(function (c) { return corDaCelula(celulas[c.i]); });
+      if (cores.some(Boolean)) valores.__cores = cores;
+      return valores;
     }).filter(function (l) { return l && l.some(function (c) { return c; }); });
 
     const ehNumero = function (i) {

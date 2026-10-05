@@ -198,7 +198,37 @@ ERP.util = (function () {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sem-nome';
 
+  /* Liga um campo de DATA a uma ação, sem atrapalhar quem digita.
+
+     O navegador avisa de mudança assim que a data fica válida — e,
+     ao digitar 01012026, ele passa por 01/01/0002, que é uma data
+     válida. Se a tela se redesenha nesse instante, o campo é
+     recriado, o foco se perde e o ano congela em 0002. A pessoa
+     digitava certo e via a data errada.
+
+     Aqui a ação só roda quando o ano é plausível, ou quando o campo
+     perde o foco — o que cobre tanto quem digita quanto quem escolhe
+     no calendário. */
+  function ligarData(id, fn) {
+    const e = document.getElementById(id);
+    if (!e) return;
+    const vale = function (v) {
+      if (!v) return true;              // limpar o campo é uma ação legítima
+      const ano = parseInt(String(v).slice(0, 4), 10);
+      return ano >= 1900 && ano <= 2200;
+    };
+    e.addEventListener('change', function () {
+      if (vale(this.value)) fn.call(this);
+    });
+    e.addEventListener('blur', function () {
+      /* Saiu do campo com ano incompleto: a ação roda assim mesmo,
+         senão o filtro ficaria para trás do que está na tela. */
+      if (!vale(this.value)) fn.call(this);
+    });
+  }
+
   return {
+    ligarData: ligarData,
     slug,
     mesesEntre,
     diasUteis, brl, num, parseValor, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj };

@@ -15,10 +15,21 @@ ERP.relatorios = (function () {
       if (!dados || !dados.linhas.length) return ERP.app.aviso('Nada para exportar neste relatório.', 'erro');
       if (atual === 'faturamento') return exportarFaturamento();
       if (atual === 'aPagarReceber' || atual === 'pagasRecebidas') return exportarPeriodo();
-      const nomes = { dre: 'DRE por competência', empresas: 'Resultado por empresa',
-        centro: 'Total por centro de custo',
-        fluxo: 'Fluxo de caixa', projeto: 'Resultado por projeto', setortipo: 'Custos por setor/tipo' };
-      ERP.exportar.abrir(Object.assign({ nome: 'relatorio-' + atual, titulo: nomes[atual] || 'Relatório' }, dados));
+      /* LEGENDA EM TODO RELATÓRIO: nome, empresa e período. Os dois
+         relatórios de contas já tinham; os outros saíam como uma
+         tabela solta, e quem recebia não sabia de que empresa nem de
+         que período era aquilo. */
+      const e = D.empresa || {};
+      ERP.exportar.abrir(Object.assign({
+        nome: 'relatorio-' + atual,
+        titulo: NOMES[atual] || 'Relatório',
+        cabecalho: [
+          [NOMES[atual] || 'Relatório'],
+          [e.nome || '' + (e.cnpj ? ' · CNPJ ' + e.cnpj : '')],
+          [periodoTexto()],
+          ['Emitido em ' + U.fData(U.hoje()) + ' por ' + ((S.usuario() || {}).nome || '')]
+        ]
+      }, dados));
     });
     U.el('rel-imprimir').addEventListener('click', () => window.print());
   }
@@ -36,9 +47,17 @@ ERP.relatorios = (function () {
       atual === 'pagasRecebidas' ? timbrado('o que foi baixado no período') + pagasRecebidas() :
       atual === 'faturamento' ? timbrado('quais projetos foram faturados, quais não, e quanto deu') +
         filtrosFaturamento() + faturamentoPorProjeto() :
+      atual === 'fatEmissao' ? timbrado('as notas emitidas no período, por dia de emissão') +
+        filtrosPeriodo() + fatPorEmissao() :
+      atual === 'fatCompetencia' ? timbrado('o previsto, o faturado e o que falta faturar no mês') +
+        filtrosCompetencia() + fatPorCompetencia() :
+      atual === 'comparativoProd' ? timbrado('quanto a produtividade pesa sobre o faturamento, mês a mês') +
+        filtrosComparativo() + comparativo() :
                                timbrado('receita, custo e margem por projeto') + filtrosPeriodo() + projeto();
     if (atual === 'setortipo') ligarFiltrosSetorTipo();
     if (atual === 'faturamento') ligarFiltrosFaturamento();
+    if (atual === 'fatCompetencia') ligarFiltrosCompetencia();
+    if (atual === 'comparativoProd') ligarFiltrosComparativo();
     ligarPeriodo();   // o período vale pra todos os relatórios agora
     if (U.el('fd-dias')) {
       U.el('fd-dias').addEventListener('change', function () { fdDias = +this.value; render(); });
@@ -72,14 +91,23 @@ ERP.relatorios = (function () {
     fluxoDiario: 'Fluxo de caixa diário',
     dre: 'DRE por competência', empresas: 'Resultado por empresa', centro: 'Total por centro de custo',
     projeto: 'Resultado por projeto', fluxo: 'Fluxo de caixa', setortipo: 'Custos por setor/tipo',
-    faturamento: 'Faturamento por projeto'
+    faturamento: 'Faturamento por projeto',
+    fatEmissao: 'Faturamento por data de emissão',
+    fatCompetencia: 'Faturado x a faturar por competência',
+    comparativoProd: 'Produtividade sobre faturamento — comparativo'
   };
   /* No relatório de faturamento o recorte pode ser por competência —
      mostrar "Período: 01/10 a 31/10" ali confundiria com o filtro
      geral, que não é o que está valendo. */
-  const periodoTexto = () => (atual === 'faturamento' && fatModo === 'competencia')
-    ? 'Competência ' + U.fComp(fatComp)
-    : 'Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate);
+  const periodoTexto = () => {
+    if (atual === 'faturamento' && fatModo === 'competencia') return 'Competência ' + U.fComp(fatComp);
+    if (atual === 'fatCompetencia') return 'Competência ' + U.fComp(fatComp);
+    if (atual === 'comparativoProd') {
+      return 'Comparando ' + U.fComp(compA) + ' com ' + U.fComp(compB) +
+        ' · alerta acima de ' + U.num(limAlerta) + ' ponto(s)';
+    }
+    return 'Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate);
+  };
   function timbrado(sub) {
     const e = D.empresa || {};
     return '<div class="rel-timbre">' +
@@ -107,6 +135,12 @@ ERP.relatorios = (function () {
      20", que pode misturar competências). */
   let fatModo = 'competencia';
   let fatComp = U.mesAtual();
+  /* Comparativo: dois meses e o limite do alerta. O padrão compara o
+     mês atual com o anterior, que é a leitura que o financeiro faz
+     todo mês. */
+  let compA = U.compDe(U.addMeses(U.mesAtual() + '-01', -1));
+  let compB = U.mesAtual();
+  let limAlerta = 3;
   let fatUnidade = '';
 
   function filtrosFaturamento() {
@@ -137,13 +171,16 @@ ERP.relatorios = (function () {
   }
 
   function ligarFiltrosFaturamento() {
+    /* `liga` serve a selects e caixas; campos de DATA usam
+       `U.ligarData`, que não redesenha no meio da digitação. */
     const liga = (id, fn) => { const e = U.el(id); if (e) e.addEventListener('change', fn); };
+    const ligaData = (id, fn) => U.ligarData(id, fn);
     const clica = (id, fn) => { const e = U.el(id); if (e) e.addEventListener('click', fn); };
     liga('fat-modo', function () { fatModo = this.value; render(); });
     liga('fat-comp', function () { fatComp = this.value; render(); });
     liga('fat-unidade', function () { fatUnidade = this.value; render(); });
-    liga('fat-de', function () { per.de = this.value; render(); });
-    liga('fat-ate', function () { per.ate = this.value; render(); });
+    ligaData('fat-de', function () { per.de = this.value; render(); });
+    ligaData('fat-ate', function () { per.ate = this.value; render(); });
     clica('fat-mes-ant', function () {
       fatComp = U.compDe(U.addMeses(fatComp + '-01', -1)); render();
     });
@@ -286,6 +323,211 @@ ERP.relatorios = (function () {
           'de conferir contra o livro fiscal.') +
       ' Nota de grupo de faturamento entra em cada projeto pela parte do rateio; o total conta o ' +
       'documento uma vez só.</div>';
+  }
+
+
+  /* ── Faturamento por data de emissão ───────────────────────────
+     Responde "o que eu emiti entre tal e tal data". A competência
+     fica ao lado porque nota de novembro pode ser de outubro, e a
+     conferência com o contador empaca justamente aí. */
+  function fatPorEmissao() {
+    const r = S.faturamentoPorEmissao(per.de, per.ate);
+    if (!r.linhas.length) return vazio('Nenhuma nota emitida neste período.');
+
+    let html = '<table class="rel"><thead><tr>' +
+      '<th>Emissão</th><th>Documento</th><th>Projeto</th><th>Cliente</th>' +
+      '<th>Competência</th><th>Vencimento</th>' +
+      '<th class="num">Bruto</th><th class="num">Retido na fonte</th>' +
+      '<th class="num">Líquido</th><th>Situação</th></tr></thead><tbody>';
+
+    let diaAtual = '';
+    r.linhas.forEach(function (l) {
+      /* Uma linha de dia quando a data muda: o relatório é lido
+         procurando "o que saiu no dia tal". */
+      if (l.emissao !== diaAtual) {
+        diaAtual = l.emissao;
+        const doDia = r.linhas.filter(function (x) { return x.emissao === diaAtual; });
+        const somaDia = doDia.reduce(function (a, x) { return a + x.bruto; }, 0);
+        html += '<tr class="grupo"><td colspan="6"><b>' + U.fData(l.emissao) + '</b>' +
+          '<span class="sub"> · ' + doDia.length + ' nota(s)</span></td>' +
+          '<td class="num"><b>' + U.num(somaDia) + '</b></td><td colspan="3"></td></tr>';
+      }
+      html += '<tr><td class="sub">' + U.fData(l.emissao) + '</td>' +
+        '<td>' + U.esc(l.numero || '—') + '</td>' +
+        '<td>' + U.esc(l.projeto) + '</td>' +
+        '<td class="sub">' + U.esc(l.cliente || '—') + '</td>' +
+        '<td>' + U.esc(l.competencia ? U.fComp(l.competencia) : '—') + '</td>' +
+        '<td class="sub">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' +
+        '<td class="num">' + U.num(l.bruto) + '</td>' +
+        '<td class="num sub">' + (l.retido ? U.num(l.retido) : '—') + '</td>' +
+        '<td class="num">' + U.num(l.liquido) + '</td>' +
+        '<td>' + U.esc(l.status) + '</td></tr>';
+    });
+    html += '<tr class="total"><td colspan="6">Total — ' + r.linhas.length + ' nota(s)</td>' +
+      '<td class="num">' + U.num(r.bruto) + '</td>' +
+      '<td class="num">' + U.num(r.retido) + '</td>' +
+      '<td class="num">' + U.num(r.liquido) + '</td><td></td></tr>';
+    html += '</tbody></table>' +
+      '<div class="ajuda">Data de emissão é o que fecha com o livro fiscal. A competência ao lado ' +
+      'mostra a que mês o serviço pertence — e elas divergem sempre que a nota é emitida no mês ' +
+      'seguinte ao da prestação.</div>';
+    return html;
+  }
+
+  /* ── Faturado x a faturar, por competência ─────────────────────
+     O que importa não é o que saiu, é o que FALTA sair. Projeto sem
+     nota aparece primeiro, com o valor previsto. */
+  function fatPorCompetencia() {
+    const r = S.faturamentoPorCompetencia(fatComp);
+    if (!r.linhas.length) return vazio('Nenhum projeto com previsão ou nota nesta competência.');
+
+    const naoFaturados = r.linhas.filter(function (l) { return !l.faturado; });
+    let html = '';
+    if (naoFaturados.length) {
+      html += '<div class="aviso"><b>' + naoFaturados.length + ' projeto(s) sem nota nesta ' +
+        'competência</b>, somando ' + U.brl(r.a_faturar) + ' previstos. Eles aparecem no topo ' +
+        'da lista.</div>';
+    }
+    html += '<table class="rel"><thead><tr><th>Projeto</th>' +
+      '<th class="num">Previsto</th><th class="num">Faturado</th>' +
+      '<th class="num">Diferença</th><th class="num">Notas</th>' +
+      '<th>Última emissão</th><th>Situação</th><th>Etapa</th></tr></thead><tbody>';
+
+    r.linhas.forEach(function (l) {
+      const semNota = !l.faturado;
+      html += '<tr' + (semNota ? ' style="background:var(--amber-bg,#fdf6e3)"' : '') + '>' +
+        '<td>' + U.esc(l.projeto) + '</td>' +
+        '<td class="num">' + (l.previsto ? U.num(l.previsto) : '—') + '</td>' +
+        '<td class="num">' + (l.faturado ? U.num(l.faturado) : '—') + '</td>' +
+        '<td class="num"' + (Math.abs(l.diferenca) > 0.01 ? ' style="color:var(--red)"' : '') + '>' +
+          (Math.abs(l.diferenca) > 0.01 ? U.num(l.diferenca) : '—') + '</td>' +
+        '<td class="num sub">' + (l.notas || '—') + '</td>' +
+        '<td class="sub">' + (l.ultima_emissao ? U.fData(l.ultima_emissao) : '—') + '</td>' +
+        '<td>' + (semNota ? '<span class="badge b-aberto">não faturado</span>'
+          : '<span class="badge b-aprovado">' + U.esc(l.situacao) + '</span>') + '</td>' +
+        '<td class="sub">' + U.esc(l.etapa || '—') + '</td></tr>';
+    });
+    html += '<tr class="total"><td>Total</td>' +
+      '<td class="num">' + U.num(r.previsto) + '</td>' +
+      '<td class="num">' + U.num(r.faturado) + '</td>' +
+      '<td class="num">' + U.num(r.faturado - r.previsto) + '</td>' +
+      '<td colspan="4"></td></tr></tbody></table>' +
+      '<div class="ajuda">Previsto vem da previsão do mês; faturado é a soma das notas com aquela ' +
+      'competência. <b>A faturar: ' + U.brl(r.a_faturar) + '</b> — é o que ainda não virou nota ' +
+      'e precisa sair antes do fechamento.</div>';
+    return html;
+  }
+
+  /* ── Comparativo de produtividade sobre faturamento ────────────
+     A conta que interessa é o percentual. Faturamento sobe e desce
+     com o volume; o que diz se o projeto está indo bem é a fatia que
+     vai para os médicos. */
+  function comparativo() {
+    const r = S.comparativoProdutividade(compA, compB, limAlerta);
+    if (!r.linhas.length) return vazio('Nenhum projeto com movimento nas duas competências.');
+
+    let html = '';
+    if (r.com_alerta) {
+      html += '<div class="aviso"><b>' + r.com_alerta + ' projeto(s) com variação acima de ' +
+        U.num(limAlerta) + ' ponto(s)</b> entre ' + U.fComp(compA) + ' e ' + U.fComp(compB) +
+        '. Vermelho: a produtividade passou a pesar mais sobre o faturamento (margem menor). ' +
+        'Azul: passou a pesar menos — confira se há produtividade ainda não lançada.</div>';
+    }
+    /* Cabeçalho em UMA linha, com a competência dentro do título de
+       cada coluna. Duas linhas com `colspan` ficam bonitas na tela e
+       quebram na exportação — a planilha não tem como saber a que
+       mês pertence cada coluna. */
+    html += '<table class="rel"><thead><tr><th>Projeto</th>' +
+      '<th class="num">Faturamento ' + U.fComp(compA) + '</th>' +
+      '<th class="num">Produtividade ' + U.fComp(compA) + '</th>' +
+      '<th class="num">% ' + U.fComp(compA) + '</th>' +
+      '<th class="num">Faturamento ' + U.fComp(compB) + '</th>' +
+      '<th class="num">Produtividade ' + U.fComp(compB) + '</th>' +
+      '<th class="num">% ' + U.fComp(compB) + '</th>' +
+      '<th class="num">Variação</th></tr></thead><tbody>';
+
+    r.linhas.forEach(function (l) {
+      /* A cor sai da mesma regra que a planilha usa: nunca duas
+         definições do que é um desvio. */
+      const cor = l.alerta === 'piorou' ? 'background:#fbe9e7'
+        : l.alerta === 'melhorou' ? 'background:#e3f2fd' : '';
+      html += '<tr><td>' + U.esc(l.projeto) + '</td>' +
+        '<td class="num">' + (l.fat_a ? U.num(l.fat_a) : '—') + '</td>' +
+        '<td class="num">' + (l.prod_a ? U.num(l.prod_a) : '—') + '</td>' +
+        '<td class="num">' + (l.pct_a === null ? '—' : U.num(l.pct_a) + '%') + '</td>' +
+        '<td class="num">' + (l.fat_b ? U.num(l.fat_b) : '—') + '</td>' +
+        '<td class="num">' + (l.prod_b ? U.num(l.prod_b) : '—') + '</td>' +
+        '<td class="num"' + (cor ? ' style="' + cor + ';font-weight:650"' : '') + '>' +
+          (l.pct_b === null ? '—' : U.num(l.pct_b) + '%') + '</td>' +
+        '<td class="num"' + (cor ? ' style="' + cor + '"' : '') + '>' +
+          (l.dif_pct === null ? '—'
+            : (l.dif_pct > 0 ? '+' : '') + U.num(l.dif_pct) + ' p.p.') + '</td></tr>';
+    });
+    html += '<tr class="total"><td>Total</td>' +
+      '<td class="num">' + U.num(r.fat_a) + '</td><td class="num">' + U.num(r.prod_a) + '</td>' +
+      '<td class="num">' + (r.pct_a === null ? '—' : U.num(r.pct_a) + '%') + '</td>' +
+      '<td class="num">' + U.num(r.fat_b) + '</td><td class="num">' + U.num(r.prod_b) + '</td>' +
+      '<td class="num">' + (r.pct_b === null ? '—' : U.num(r.pct_b) + '%') + '</td>' +
+      '<td class="num">' + (r.pct_a === null || r.pct_b === null ? '—'
+        : (r.pct_b - r.pct_a > 0 ? '+' : '') + U.num(r.pct_b - r.pct_a) + ' p.p.') +
+      '</td></tr></tbody></table>' +
+      '<div class="ajuda">O percentual é produtividade dividida por faturamento. Projeto sem nota ' +
+      'no mês entra pelo valor previsto, senão a comparação ficaria vazia justamente no mês ' +
+      'corrente. Variação em pontos percentuais (p.p.): de 85% para 89% são 4 p.p.</div>';
+    return html;
+  }
+
+  /* ── Filtros das telas novas ───────────────────────────────── */
+  function filtrosCompetencia() {
+    return '<div class="filtros">' +
+      '<div class="f"><label for="fc-comp">Competência</label>' +
+        '<input type="month" id="fc-comp" value="' + fatComp + '"></div>' +
+      '<button class="btn-sm" id="fc-mes-ant">Mês anterior</button>' +
+      '<button class="btn-sm" id="fc-mes-atual">Mês atual</button>' +
+      '</div>';
+  }
+
+  function ligarFiltrosCompetencia() {
+    const e = U.el('fc-comp');
+    if (e) e.addEventListener('change', function () { fatComp = this.value; render(); });
+    const ant = U.el('fc-mes-ant');
+    if (ant) ant.addEventListener('click', function () {
+      fatComp = U.compDe(U.addMeses(fatComp + '-01', -1)); render();
+    });
+    const at = U.el('fc-mes-atual');
+    if (at) at.addEventListener('click', function () { fatComp = U.mesAtual(); render(); });
+  }
+
+  function filtrosComparativo() {
+    return '<div class="filtros">' +
+      '<div class="f"><label for="cp-a">Competência base</label>' +
+        '<input type="month" id="cp-a" value="' + compA + '"></div>' +
+      '<div class="f"><label for="cp-b">Comparar com</label>' +
+        '<input type="month" id="cp-b" value="' + compB + '"></div>' +
+      '<div class="f"><label for="cp-lim">Alerta acima de (p.p.)</label>' +
+        '<input class="num" id="cp-lim" inputmode="decimal" value="' + U.num(limAlerta) + '" ' +
+        'style="width:90px"></div>' +
+      '<button class="btn-sm" id="cp-trocar">Inverter os meses</button>' +
+      '</div>';
+  }
+
+  function ligarFiltrosComparativo() {
+    const a = U.el('cp-a');
+    if (a) a.addEventListener('change', function () { compA = this.value; render(); });
+    const b = U.el('cp-b');
+    if (b) b.addEventListener('change', function () { compB = this.value; render(); });
+    const l = U.el('cp-lim');
+    if (l) l.addEventListener('change', function () {
+      const v = U.parseValor(this.value);
+      /* Limite zero marcaria tudo e limite enorme não marcaria nada:
+         nos dois casos o relatório deixa de ajudar. */
+      limAlerta = (isFinite(v) && v > 0 && v <= 50) ? v : 3;
+      render();
+    });
+    const t = U.el('cp-trocar');
+    if (t) t.addEventListener('click', function () {
+      const x = compA; compA = compB; compB = x; render();
+    });
   }
 
   function filtrosPeriodo(extra) {
@@ -1104,12 +1346,33 @@ ERP.relatorios = (function () {
       a.recebido += (r.valor_recebido || 0);
     });
 
+    /* O imposto de cada projeto, pela regra do imposto efetivo. O
+       custo direto recebe o EXCEDENTE da retenção: quando o cliente
+       retém acima da alíquota devida, a diferença não volta e pesa
+       no resultado daquele contrato. */
+    Object.keys(acc).forEach(function (id) {
+      const v = acc[id];
+      const i = S.impostoSobreFaturamento(id, v.faturado, v.retido || 0);
+      v.imposto = i.imposto_efetivo;
+      v.excedente = i.excedente;
+      v.imposto_obs = i.obs;
+      if (i.excedente > 0) v.direto += i.excedente;
+    });
+
     const ids = Object.keys(acc);
     if (!ids.length) return vazio('Nenhum projeto com movimento.');
 
-    const t = { faturado: 0, retido: 0, direto: 0, indireto: 0, recebido: 0, depreciacao: 0 };
+    const t = { faturado: 0, retido: 0, imposto: 0, excedente: 0,
+      direto: 0, indireto: 0, recebido: 0, depreciacao: 0 };
     let html = '<table class="rel"><thead><tr><th>Projeto</th><th class="num">Faturado</th>' +
-      '<th class="num">Retido</th><th class="num">Custos diretos</th><th class="num">Outras despesas</th>' +
+      /* "Retido" respondia a pergunta errada: o que sai do caixa é o
+         imposto devido, e a retenção é só a forma de pagamento. O
+         total a recolher é o mesmo com ou sem retenção — e quando o
+         cliente retém mais que o devido, o excedente é custo do
+         projeto. */
+      '<th class="num" title="Imposto devido sobre o faturamento, retido ou por guia">' +
+      'Imposto s/ faturamento</th>' +
+      '<th class="num">Custos diretos</th><th class="num">Outras despesas</th>' +
       '<th class="num">Depreciação</th>' +
       '<th class="num">Resultado</th><th class="num">Margem de contribuição</th>' +
       '<th class="num">Recebido</th></tr></thead><tbody>';
@@ -1131,7 +1394,10 @@ ERP.relatorios = (function () {
       const margem = (v.faturado && !semCusto) ? Math.round(res / v.faturado * 1000) / 10 : null;
       html += '<tr><td>' + U.esc(c.curto || c.nome) + '</td>' +
         '<td class="num">' + (v.faturado ? U.num(v.faturado) : '—') + '</td>' +
-        '<td class="num">' + (v.retido ? U.num(v.retido) : '—') + '</td>' +
+        '<td class="num"' + (v.imposto_obs ? ' title="' + U.esc(v.imposto_obs) + '"' : '') + '>' +
+          (v.imposto ? U.num(v.imposto) : '—') +
+          (v.excedente ? '<div class="sub" style="color:var(--red)">retenção ' +
+            U.num(v.excedente) + ' acima</div>' : '') + '</td>' +
         '<td class="num">' + (v.direto ? U.num(v.direto) : '—') + '</td>' +
         '<td class="num">' + (v.indireto ? U.num(v.indireto) : '—') + '</td>' +
         '<td class="num sub">' + (v.depreciacao ? U.num(v.depreciacao) : '—') + '</td>' +
@@ -1145,17 +1411,13 @@ ERP.relatorios = (function () {
 
     const resT = Math.round((t.faturado - t.direto - t.indireto - t.depreciacao) * 100) / 100;
     html += '<tr class="total"><td>Total</td>' +
-      '<td class="num">' + U.num(t.faturado) + '</td><td class="num">' + U.num(t.retido) + '</td>' +
+      '<td class="num">' + U.num(t.faturado) + '</td><td class="num">' + U.num(t.imposto) + '</td>' +
       '<td class="num">' + U.num(t.direto) + '</td><td class="num">' + U.num(t.indireto) + '</td>' +
       '<td class="num">' + U.num(t.depreciacao) + '</td>' +
       '<td class="num">' + U.num(resT) + '</td>' +
       '<td class="num">' + (t.faturado ? U.num(Math.round(resT / t.faturado * 1000) / 10) + '%' : '—') + '</td>' +
       '<td class="num">' + U.num(t.recebido) + '</td></tr></tbody></table>' +
-      '<div class="ajuda">Faturado é o bruto da nota; o retido na fonte aparece à parte porque volta como ' +
-      'crédito de imposto. Notas rateadas entram em cada projeto pela sua fatia. ' +
-      'Despesa da matriz e da filial não é distribuída aqui — só o que foi lançado no projeto. ' +
-      'Depreciação é o equipamento alocado no projeto se pagando ao longo da vida útil ' +
-      '(padrão de 60 meses, ajustável por equipamento) — custo real, sem saída de caixa.</div>';
+      '<div class="ajuda">Faturado é o bruto da nota. <b>Imposto sobre faturamento</b> é o que a empresa recolhe sobre ele — o mesmo valor com ou sem retenção na fonte, porque a retenção é forma de pagamento, não desconto. Quando o cliente retém <b>acima</b> da alíquota devida, o excedente não volta: ele entra nos custos diretos do projeto e aparece marcado na coluna. Margem de contribuição é direta, sem rateio de estrutura.</div>';
     return html;
   }
 

@@ -4046,6 +4046,264 @@ ERP.store = (function () {
      `faturou: false` — a tela mostra o traço. Projeto nenhum fica de
      fora, que é justamente o ponto do relatório: o não faturado é a
      informação. */
+  /* NOTAS EMITIDAS NO PERÍODO, por dia de emissão.
+
+     Responde "o que eu emiti entre tal e tal data" — a pergunta do
+     contador, e a que fecha com o livro fiscal. Traz a competência
+     ao lado porque nota emitida em novembro pode ser de outubro, e é
+     aí que a conferência costuma empacar. */
+  function faturamentoPorEmissao(de, ate, centro) {
+    const linhas = [];
+    st.receber.forEach(function (r) {
+      if (['cancelado', 'substituido'].indexOf(r.status) > -1) return;
+      /* Só o que virou documento: previsão ainda não é faturamento. */
+      if (['nota', 'fatura'].indexOf(r.origem) < 0) return;
+      if (!r.emissao || r.emissao < de || r.emissao > ate) return;
+      if (centro && r.centro !== centro) return;
+      const c = D.centro(r.centro) || {};
+      const bruto = r.valor_bruto || 0;
+      /* O retido da NOTA: o que o cliente segura na fonte. Vem do
+         percentual do projeto quando a nota não traz valor próprio —
+         é assim que o resto do sistema calcula. */
+      const retido = r.retencao !== undefined && r.retencao !== null
+        ? Math.round((r.retencao || 0) * 100) / 100
+        : Math.round(bruto * ((c.retencao_pct || 0) / 100) * 100) / 100;
+      linhas.push({
+        emissao: r.emissao,
+        numero: r.numero || '',
+        cliente: r.cliente_nome || '',
+        projeto: c.curto || c.nome || r.centro || '',
+        centro: r.centro,
+        competencia: r.competencia || '',
+        vencimento: r.vencimento || '',
+        bruto: bruto,
+        retido: retido,
+        liquido: bruto - retido,
+        status: r.status || 'em aberto'
+      });
+    });
+    linhas.sort(function (a, b) {
+      if (a.emissao !== b.emissao) return a.emissao > b.emissao ? 1 : -1;
+      return String(a.numero) > String(b.numero) ? 1 : -1;
+    });
+    const soma = function (k) { return linhas.reduce(function (a, l) { return a + (l[k] || 0); }, 0); };
+    return { linhas: linhas, bruto: soma('bruto'), retido: soma('retido'), liquido: soma('liquido') };
+  }
+
+  /* O QUE FOI E O QUE NÃO FOI FATURADO numa competência.
+
+     A previsão diz quanto se espera de cada projeto no mês; as notas
+     dizem quanto saiu. O que interessa é a diferença — e ela some num
+     relatório que lista só o emitido. Projeto sem nota aparece aqui
+     com o valor previsto, que é justamente o que se quer ver antes de
+     fechar o mês. */
+  function faturamentoPorCompetencia(comp, centro) {
+    const linhas = [];
+    D.centros.filter(function (c) {
+      return c.tipo === 'projeto' && (!centro || c.id === centro);
+    }).forEach(function (c) {
+      const pv = previsaoDe(c.id, comp);
+      const previsto = pv ? (pv.faturamento || 0) : 0;
+
+      let faturado = 0, notas = 0, ultima = '';
+      st.receber.forEach(function (r) {
+        if (r.centro !== c.id || r.competencia !== comp) return;
+        if (['cancelado', 'substituido'].indexOf(r.status) > -1) return;
+        if (['nota', 'fatura'].indexOf(r.origem) < 0) return;
+        faturado += r.valor_bruto || 0;
+        notas++;
+        if (!ultima || (r.emissao || '') > ultima) ultima = r.emissao || '';
+      });
+
+      if (!previsto && !faturado) return;   // projeto sem movimento no mês
+      linhas.push({
+        projeto: c.curto || c.nome || c.id,
+        centro: c.id,
+        previsto: previsto,
+        faturado: faturado,
+        notas: notas,
+        ultima_emissao: ultima,
+        diferenca: faturado - previsto,
+        situacao: !faturado ? 'NÃO FATURADO'
+          : Math.abs(faturado - previsto) < 0.01 ? 'faturado'
+          : faturado < previsto ? 'faturado a menor' : 'faturado a maior',
+        etapa: pv ? etapaDaPrevisao(pv) : null
+      });
+    });
+    linhas.sort(function (a, b) {
+      /* O que falta faturar primeiro: é o que exige ação antes do
+         fechamento. */
+      if (!a.faturado !== !b.faturado) return a.faturado ? 1 : -1;
+      return a.projeto > b.projeto ? 1 : -1;
+    });
+    const soma = function (k) { return linhas.reduce(function (a, l) { return a + (l[k] || 0); }, 0); };
+    return {
+      linhas: linhas, competencia: comp,
+      previsto: soma('previsto'), faturado: soma('faturado'),
+      a_faturar: linhas.filter(function (l) { return !l.faturado; })
+        .reduce(function (a, l) { return a + l.previsto; }, 0)
+    };
+  }
+
+  /* COMPARATIVO entre duas competências: faturamento bruto,
+     produtividade e quanto a produtividade pesa sobre o faturamento.
+
+     A conta que interessa é a terceira. Faturamento sobe e desce com
+     o volume do mês; o que diz se o projeto está indo bem é a fatia
+     que vai para os médicos. Um projeto que passou de 85% para 89%
+     perdeu margem mesmo faturando mais — e é esse movimento que não
+     aparece olhando faturamento e repasse em telas separadas.
+
+     `alerta` sai pronto da regra, para a tela e a planilha pintarem
+     a mesma coisa: nunca duas definições do que é um desvio. */
+  /* IMPOSTO SOBRE O FATURAMENTO — o que a empresa vai recolher,
+     tenha o cliente retido ou não.
+
+     A coluna "retido" respondia a pergunta errada. O que sai do
+     caixa é o imposto devido, e a retenção é só a forma de
+     pagamento: cliente que retém antecipa; cliente que não retém
+     deixa a guia para a empresa. O total a recolher é o mesmo.
+
+     Com uma exceção que muda o custo do projeto: quando o cliente
+     retém MAIS do que a alíquota devida, o excedente não volta. Um
+     município que retém 5% de ISS sobre um serviço tributado a 2%
+     cobra 5% — e é esse o custo do projeto, não os 2%. O excedente
+     fica registrado à parte, porque é informação de negociação:
+     aparece na hora de decidir preço para aquele cliente.
+
+     `imposto_efetivo` é o maior entre devido e retido, tributo a
+     tributo. Somar os dois seria contar duas vezes; usar só o devido
+     esconderia o excedente. */
+  function impostoSobreFaturamento(centro, bruto, retidoInformado) {
+    const c = D.centro(centro) || {};
+    const imp = c.impostos || {};
+    const base = bruto || 0;
+
+    /* O ISS do projeto: a chave muda conforme o município da
+       prestação, e o cadastro traz as duas. */
+    const issPct = (c.uf === 'CE' || c.municipio_uf === 'CE') && imp.iss_ce !== undefined
+      ? imp.iss_ce : (imp.iss || 0);
+
+    const tributos = [
+      { nome: 'ISS', pct: issPct },
+      { nome: 'PIS/COFINS', pct: imp.pis_cofins || 0 },
+      { nome: 'IRPJ', pct: imp.irpj || 0 },
+      { nome: 'CSLL', pct: imp.csll || 0 }
+    ];
+    const devidoPct = tributos.reduce(function (a2, t) { return a2 + t.pct; }, 0);
+    const devido = Math.round(base * devidoPct / 100 * 100) / 100;
+
+    const retidoPct = c.retencao_pct || 0;
+    const retido = retidoInformado !== undefined && retidoInformado !== null
+      ? retidoInformado : Math.round(base * retidoPct / 100 * 100) / 100;
+
+    /* Tributo a tributo seria o ideal, mas o cadastro guarda a
+       retenção como um percentual único. Com um número só, a
+       comparação honesta é no total. */
+    const efetivo = Math.max(devido, retido);
+    const excedente = Math.max(0, retido - devido);
+
+    return {
+      base: base,
+      devido: devido, devido_pct: devidoPct,
+      retido: retido, retido_pct: retidoPct,
+      imposto_efetivo: efetivo,
+      excedente: excedente,
+      /* O aviso que o financeiro precisa ver: retenção acima do
+         devido é custo a mais nesse contrato. */
+      obs: excedente > 0
+        ? 'Retenção de ' + U.num(retidoPct) + '% acima do imposto devido de ' +
+          U.num(devidoPct) + '% — o excedente de ' + U.brl(excedente) + ' é custo do projeto'
+        : (retido > 0 && retido < devido
+          ? 'Retido ' + U.num(retidoPct) + '%; faltam ' + U.brl(devido - retido) + ' por guia'
+          : ''),
+      tributos: tributos
+    };
+  }
+
+  function comparativoProdutividade(compA, compB, limite) {
+    const lim = limite === undefined ? 3 : limite;
+
+    const dados = function (comp) {
+      const m = {};
+      D.centros.filter(function (c) { return c.tipo === 'projeto'; }).forEach(function (c) {
+        let fat = 0;
+        st.receber.forEach(function (r) {
+          if (r.centro !== c.id || r.competencia !== comp) return;
+          if (['cancelado', 'substituido'].indexOf(r.status) > -1) return;
+          if (['nota', 'fatura'].indexOf(r.origem) < 0) return;
+          fat += r.valor_bruto || 0;
+        });
+        /* Sem nota, vale a previsão: o mês corrente ainda não faturou
+           e a comparação ficaria falsamente vazia. */
+        let previsto = 0;
+        const pv = previsaoDe(c.id, comp);
+        if (pv) previsto = pv.faturamento || 0;
+
+        let prod = 0;
+        st.titulos.forEach(function (t) {
+          if (t.centro !== c.id) return;
+          if ((t.origem || '') !== 'produtividade' && (t.origem || '') !== 'plantao') return;
+          const parc = parcelasDe(t.id);
+          const compT = t.competencia || (parc[0] || {}).comp || '';
+          if (compT !== comp) return;
+          prod += parc.reduce(function (a2, p) { return a2 + (p.valor || 0); }, 0);
+        });
+        (st.lotesProdutividade || []).forEach(function (l) {
+          if (l.centro !== c.id || l.competencia !== comp) return;
+          if (l.cancelado) return;
+          if (!prod) prod = l.valor_total || 0;
+        });
+
+        const base = fat || previsto;
+        m[c.id] = {
+          projeto: c.curto || c.nome || c.id, centro: c.id,
+          faturamento: base, faturado_de_fato: fat > 0,
+          produtividade: prod,
+          pct: base > 0 ? (prod / base) * 100 : null
+        };
+      });
+      return m;
+    };
+
+    const a1 = dados(compA), b1 = dados(compB);
+    const linhas = [];
+    Object.keys(a1).concat(Object.keys(b1)).forEach(function (id) {
+      if (linhas.some(function (l) { return l.centro === id; })) return;
+      const x = a1[id] || { faturamento: 0, produtividade: 0, pct: null };
+      const y = b1[id] || { faturamento: 0, produtividade: 0, pct: null };
+      if (!x.faturamento && !y.faturamento && !x.produtividade && !y.produtividade) return;
+      const nome = (a1[id] || b1[id]).projeto;
+      const dif = (x.pct !== null && y.pct !== null) ? y.pct - x.pct : null;
+      linhas.push({
+        projeto: nome, centro: id,
+        fat_a: x.faturamento, prod_a: x.produtividade, pct_a: x.pct,
+        fat_b: y.faturamento, prod_b: y.produtividade, pct_b: y.pct,
+        dif_pct: dif,
+        dif_faturamento: y.faturamento - x.faturamento,
+        /* Acima do limite, a fatia do médico cresceu — margem caiu.
+           Abaixo, sobrou mais. Os dois lados merecem atenção: o
+           segundo costuma ser produtividade que ainda não entrou. */
+        alerta: dif === null ? null : dif > lim ? 'piorou' : dif < -lim ? 'melhorou' : null
+      });
+    });
+    linhas.sort(function (p, q) {
+      const vp = p.dif_pct === null ? -1 : Math.abs(p.dif_pct);
+      const vq = q.dif_pct === null ? -1 : Math.abs(q.dif_pct);
+      return vq - vp;      // maiores desvios primeiro
+    });
+
+    const soma = function (k) { return linhas.reduce(function (acc, l) { return acc + (l[k] || 0); }, 0); };
+    const fatA = soma('fat_a'), fatB = soma('fat_b');
+    return {
+      linhas: linhas, limite: lim, competencia_a: compA, competencia_b: compB,
+      fat_a: fatA, fat_b: fatB, prod_a: soma('prod_a'), prod_b: soma('prod_b'),
+      pct_a: fatA > 0 ? (soma('prod_a') / fatA) * 100 : null,
+      pct_b: fatB > 0 ? (soma('prod_b') / fatB) * 100 : null,
+      com_alerta: linhas.filter(function (l) { return l.alerta; }).length
+    };
+  }
+
   function relatorioFaturamento(f) {
     f = f || {};
     if (!veFinanceiro('faturamento') && !pode('faturar') && !pode('admin')) {
@@ -16147,6 +16405,8 @@ ERP.store = (function () {
     lancarProcedimento, editarProcedimento, cancelarProcedimento, listarProcedimentos,
     medicoDuplo,
     resumoFechamentoProcedimentos, fecharProcedimentos, relatorioFaturamento, enviarFaturamentoProcedimentos,
+    faturamentoPorEmissao, faturamentoPorCompetencia, comparativoProdutividade,
+    impostoSobreFaturamento,
     cancelarFechamentoProcedimentos, fechamentosProcedimentos, fechamentoProcedimentosDe,
     travaDeProcedimento,
     atualizarPrevisoesProcedimentos,
