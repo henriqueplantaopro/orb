@@ -317,7 +317,7 @@ ERP.persistencia = (function () {
   const OBRIGATORIAS = {
     estoque_movimentos: { estornado: false },
     procedimentos: { cancelado: false },
-    previsoes: { status: 'estimada' },
+    previsoes: { status: 'estimada', autorizacoes_anteriores: [], substitui: [] },
     receber: { origem: 'avulso', status: 'aberto', baixas: [], retencoes: [],
       valor_recebido: 0, substitui: [] },
     parcelas: { status: 'aberto' },

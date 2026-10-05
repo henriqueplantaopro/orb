@@ -1167,10 +1167,18 @@ begin
        and c.is_nullable = 'NO'
        and c.column_default is null
        and c.column_name not in ('id', 'created_at', 'criado_em', 'lancado_em')
-       and c.data_type in ('jsonb', 'boolean', 'numeric', 'integer', 'bigint', 'text')
+       /* `ARRAY` é o tipo de colunas como `autorizacoes_anteriores`:
+          ficou de fora da primeira versão e derrubou a gravação de
+          previsões. Os numéricos menos comuns entram pelo mesmo
+          motivo — a varredura só serve se cobrir tudo. */
+       and c.data_type in ('jsonb', 'boolean', 'numeric', 'integer', 'bigint', 'text',
+                           'ARRAY', 'double precision', 'real', 'smallint', 'json')
   loop
     begin
-      if r.data_type = 'jsonb' then
+      if r.data_type = 'ARRAY' then
+        execute format('alter table %I alter column %I set default ''{}''',
+                       r.table_name, r.column_name);
+      elsif r.data_type in ('jsonb', 'json') then
         /* Campos cujo nome é plural guardam lista; os demais, objeto.
            Errar aqui não quebra: o sistema sobrescreve na primeira
            gravação. */
@@ -1184,7 +1192,7 @@ begin
       elsif r.data_type = 'boolean' then
         execute format('alter table %I alter column %I set default false',
                        r.table_name, r.column_name);
-      elsif r.data_type in ('numeric', 'integer', 'bigint') then
+      elsif r.data_type in ('numeric', 'integer', 'bigint', 'double precision', 'real', 'smallint') then
         execute format('alter table %I alter column %I set default 0',
                        r.table_name, r.column_name);
       elsif r.data_type = 'text' then
