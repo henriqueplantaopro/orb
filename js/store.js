@@ -4221,6 +4221,57 @@ ERP.store = (function () {
     };
   }
 
+  /* SUGESTÃO DE PREVISÃO a partir do histórico.
+
+     A previsão inicial de cada projeto foi digitada à mão, e no
+     grupo do HGB foi dividida em partes iguais entre os setores —
+     um chute honesto, já que não havia histórico. Assim que houver
+     meses faturados, o chute deixa de ser necessário: o que o setor
+     faturou de fato é a melhor estimativa do que ele vai faturar.
+
+     Usa a média dos últimos meses COM nota, não dos últimos meses
+     corridos: mês sem faturamento costuma ser mês sem fechamento,
+     não mês de faturamento zero, e entrar com zero na média puxaria
+     a previsão para baixo sem motivo. */
+  function sugerirPrevisao(centro, meses) {
+    const qtd = meses || 3;
+    const hoje = U.mesAtual();
+    const historico = [];
+    for (let i = 1; i <= 12 && historico.length < qtd; i++) {
+      const comp = U.compDe(U.addMeses(hoje + '-01', -i));
+      let valor = 0;
+      st.receber.forEach(function (r) {
+        if (r.centro !== centro || r.competencia !== comp) return;
+        if (['cancelado', 'substituido'].indexOf(r.status) > -1) return;
+        if (['nota', 'fatura'].indexOf(r.origem) < 0) return;
+        valor += r.valor_bruto || 0;
+      });
+      if (valor > 0) historico.push({ competencia: comp, valor: valor });
+    }
+    if (!historico.length) {
+      const c = D.centro(centro) || {};
+      return { sugerido: c.prev_faturamento || 0, base: 'cadastro',
+        historico: [], obs: 'sem mês faturado ainda — vale o valor do cadastro' };
+    }
+    const soma = historico.reduce(function (a2, h) { return a2 + h.valor; }, 0);
+    const media = Math.round(soma / historico.length * 100) / 100;
+    const ultimo = historico[0];
+    /* Diferença grande entre o último mês e a média é sinal de
+       tendência ou de mês atípico — quem decide é quem conhece o
+       contrato, então o sistema aponta em vez de escolher. */
+    const desvio = media > 0 ? Math.abs(ultimo.valor - media) / media * 100 : 0;
+    return {
+      sugerido: media,
+      base: historico.length + ' mês(es) faturado(s)',
+      historico: historico,
+      ultimo: ultimo.valor,
+      obs: desvio > 15
+        ? 'o último mês (' + U.brl(ultimo.valor) + ') difere ' + U.num(desvio) +
+          '% da média — confira se foi atípico'
+        : ''
+    };
+  }
+
   function comparativoProdutividade(compA, compB, limite) {
     const lim = limite === undefined ? 3 : limite;
 
@@ -16405,7 +16456,7 @@ ERP.store = (function () {
     lancarProcedimento, editarProcedimento, cancelarProcedimento, listarProcedimentos,
     medicoDuplo,
     resumoFechamentoProcedimentos, fecharProcedimentos, relatorioFaturamento, enviarFaturamentoProcedimentos,
-    faturamentoPorEmissao, faturamentoPorCompetencia, comparativoProdutividade,
+    faturamentoPorEmissao, faturamentoPorCompetencia, comparativoProdutividade, sugerirPrevisao,
     impostoSobreFaturamento,
     cancelarFechamentoProcedimentos, fechamentosProcedimentos, fechamentoProcedimentosDe,
     travaDeProcedimento,
