@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 150 150" role="img" aria-label="ORB">
+  <defs>
+    <linearGradient id="s-esfera" x1=".2" y1="0" x2=".9" y2="1">
+      <stop offset="0" stop-color="#8FDEFF"/><stop offset="1" stop-color="#009FE3"/>
+    </linearGradient>
+    <linearGradient id="s-orbita" x1="0" y1="1" x2="1" y2="0">
+      <stop offset="0" stop-color="#00B4FF"/><stop offset="1" stop-color="#6FD2FF"/>
+    </linearGradient>
+    <mask id="s-corte">
+      <rect width="150" height="150" fill="#fff"/>
+      <path d="M31 97 L97 25 L111 37 L45 109 Z" fill="#000"/>
+    </mask>
+  </defs>
+  <circle cx="75" cy="75" r="45" fill="none" stroke="currentColor"
+          stroke-width="15" mask="url(#s-corte)"/>
+  <g transform="rotate(-40 75 75)">
+    <path d="M16 75 a59 27 0 0 0 118 0" fill="none"
+          stroke="url(#s-orbita)" stroke-width="8.5" stroke-linecap="round"/>
+  </g>
+  <circle cx="119" cy="34" r="12" fill="url(#s-esfera)"/>
+</svg>

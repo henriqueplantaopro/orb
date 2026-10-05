@@ -93,8 +93,11 @@ ERP.pdf = (function () {
 
       linha: function (x1, y1, x2, y2, o) {
         o = o || {};
-        const cor = o.cinza !== undefined ? o.cinza : 0.6;
-        atual.push(cor.toFixed(2) + ' ' + cor.toFixed(2) + ' ' + cor.toFixed(2) + ' RG ' +
+        /* `cor` aceita [r,g,b]; `cinza` continua valendo para o resto
+           do documento, que é todo em escala de cinza. */
+        const cz = o.cinza !== undefined ? o.cinza : 0.6;
+        const rgb = o.cor || [cz, cz, cz];
+        atual.push(rgb.map(function (v) { return v.toFixed(3); }).join(' ') + ' RG ' +
           (o.espessura || 0.5) + ' w ' +
           (o.tracejada ? '[3 2] 0 d ' : '[] 0 d ') +
           x1.toFixed(2) + ' ' + y2pdf(y1).toFixed(2) + ' m ' + x2.toFixed(2) + ' ' + y2pdf(y2).toFixed(2) + ' l S');
@@ -109,6 +112,52 @@ ERP.pdf = (function () {
           (o.borda !== false ? '0.6 0.6 0.6 RG 0.5 w ' : '') +
           x.toFixed(2) + ' ' + y2pdf(y + h).toFixed(2) + ' ' + w.toFixed(2) + ' ' + h.toFixed(2) + ' re ' +
           (preenche && o.borda !== false ? 'B' : preenche ? 'f' : 'S'));
+        return api;
+      },
+
+      /* Círculo por quatro curvas de Bézier. O PDF não tem primitiva
+         de círculo; 0.5523 é a constante que faz a curva passar pelo
+         arco com erro invisível a olho nu. Serve à marca e a
+         qualquer gráfico futuro. */
+      circulo: function (cx, cy, r, o) {
+        o = o || {};
+        const k = r * 0.5523;
+        const y = y2pdf(cy);
+        const cor = o.cor || [0, 0, 0];
+        const c = cor.map(function (v) { return v.toFixed(3); }).join(' ');
+        atual.push(
+          (o.preencher ? c + ' rg ' : c + ' RG ' + (o.espessura || 1).toFixed(2) + ' w ') +
+          (cx + r).toFixed(2) + ' ' + y.toFixed(2) + ' m ' +
+          (cx + r).toFixed(2) + ' ' + (y + k).toFixed(2) + ' ' +
+          (cx + k).toFixed(2) + ' ' + (y + r).toFixed(2) + ' ' +
+          cx.toFixed(2) + ' ' + (y + r).toFixed(2) + ' c ' +
+          (cx - k).toFixed(2) + ' ' + (y + r).toFixed(2) + ' ' +
+          (cx - r).toFixed(2) + ' ' + (y + k).toFixed(2) + ' ' +
+          (cx - r).toFixed(2) + ' ' + y.toFixed(2) + ' c ' +
+          (cx - r).toFixed(2) + ' ' + (y - k).toFixed(2) + ' ' +
+          (cx - k).toFixed(2) + ' ' + (y - r).toFixed(2) + ' ' +
+          cx.toFixed(2) + ' ' + (y - r).toFixed(2) + ' c ' +
+          (cx + k).toFixed(2) + ' ' + (y - r).toFixed(2) + ' ' +
+          (cx + r).toFixed(2) + ' ' + (y - k).toFixed(2) + ' ' +
+          (cx + r).toFixed(2) + ' ' + y.toFixed(2) + ' c ' +
+          (o.preencher ? 'f' : 'S'));
+        return api;
+      },
+
+      /* A marca no alto do documento. Desenhada, não embutida como
+         imagem: PDF com imagem externa sai sem timbre quando ela não
+         carrega, e timbre é justamente o que não pode faltar num
+         documento que vai para hospital ou órgão público. */
+      marca: function (x, y) {
+        const AZUL = [0.122, 0.227, 0.302];     // #1F3A4D
+        const ACENTO = [0.0, 0.706, 1.0];       // #00B4FF
+        api.circulo(x + 7, y + 7, 5.6, { cor: AZUL, espessura: 1.9 });
+        api.linha(x + 1.4, y + 12.4, x + 12.6, y + 1.6,
+          { cor: ACENTO, espessura: 1.5 });
+        api.circulo(x + 12.6, y + 1.9, 1.5, { cor: ACENTO, preencher: true });
+        api.texto(x + 17, y + 8.8, 'ORB', { tam: 15, negrito: true });
+        api.texto(x + 17.6, y + 13.2, 'SISTEMA DE GESTÃO INTEGRADA',
+          { tam: 4.6, cinza: 0.45 });
         return api;
       },
 
@@ -184,6 +233,10 @@ ERP.pdf = (function () {
     let y = d.margem;
 
     function cabecalho() {
+      d.marca(d.margem, y);
+      /* Espaço entre a marca e o título: sem isto os dois se tocam e
+         o documento parece amassado. */
+      y += 23;
       d.texto(d.margem, y + 10, opcoes.titulo || '', { tam: 13, negrito: true });
       if (opcoes.subtitulo) d.texto(d.largura - d.margem, y + 10, opcoes.subtitulo, { tam: 8, cinza: 0.4, alinhar: 'direita' });
       y += 26;

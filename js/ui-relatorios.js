@@ -83,6 +83,11 @@ ERP.relatorios = (function () {
   function timbrado(sub) {
     const e = D.empresa || {};
     return '<div class="rel-timbre">' +
+      /* A marca encabeça todo relatório. Documento que sai da
+         empresa sem identificação vira papel solto na mesa de quem
+         recebe — e esses relatórios vão para hospital, contador e
+         órgão público. */
+      '<div class="marca-doc">' + ERP.marca.svg({ altura: 34, id: 'rel' }) + '</div>' +
       '<div class="rel-emp">' + U.esc(e.nome || 'HJM Dom Pedro') +
         (e.cnpj ? '<span class="sub"> · CNPJ ' + U.esc(e.cnpj) + '</span>' : '') + '</div>' +
       '<h2 style="margin:2px 0 0">' + U.esc(NOMES[atual] || 'Relatório') +

@@ -603,3 +603,64 @@ table.compacta th, table.compacta td { padding: 3px 8px; font-size: 12px; }
   line-height: 1.45;
 }
 #faixa-nao-salvo b { color: #fff; }
+
+/* ── Marca ──────────────────────────────────────────────────────
+   O SVG usa `currentColor` no anel e no texto, então a cor vem do
+   contexto: branco sobre o topo escuro, azul institucional sobre
+   papel. Só o traço da órbita e a esfera têm cor própria — são o
+   acento da identidade. */
+.marca { display:flex; align-items:center; text-decoration:none; color:#fff;
+  flex:0 0 auto; margin-right:4px; }
+.marca-svg { height:30px; width:auto; display:block; }
+.marca:focus-visible { outline:2px solid #fff; outline-offset:3px; border-radius:3px; }
+
+/* Em tela estreita, só o símbolo: a assinatura ficaria ilegível e
+   roubaria a largura de que o nome da empresa precisa. */
+@media (max-width:620px) {
+  .marca-svg { height:26px; }
+  .marca-svg text { display:none; }
+  .marca-svg { width:46px; }
+}
+
+/* A marca no papel: relatórios, PDF e impressão. Fundo branco, então
+   a cor é a institucional. */
+.marca-doc { color:var(--brand); display:flex; align-items:center;
+  gap:10px; margin-bottom:10px; }
+.marca-doc svg { height:34px; width:auto; }
+
+/* ── Topo com a marca ───────────────────────────────────────────
+   O gradiente é sutil de propósito: dá profundidade sem virar
+   enfeite numa barra que fica na frente da pessoa o dia inteiro. */
+header {
+  background: linear-gradient(100deg, var(--brand-ink) 0%, var(--brand) 46%, #27465c 100%);
+  box-shadow: 0 1px 0 rgba(0,0,0,.12);
+  gap: 14px;
+}
+header .tag {
+  background: rgba(255,255,255,.1);
+  border: 1px solid rgba(255,255,255,.16);
+  border-radius: 3px; padding: 2px 8px; font-size: 11.5px;
+}
+header .sessao { margin-left: auto; }
+
+/* A barra de módulo ganha um fio na cor de acento, ligando a
+   identidade ao corpo da tela sem pintar nada de azul-claro. */
+.barra-modulo { box-shadow: inset 0 2px 0 -1px var(--acento, #00B4FF); }
+
+:root { --acento: #00B4FF; }
+
+/* Foco visível na cor de acento — era azul do navegador, destoando
+   do resto. */
+input:focus, select:focus, textarea:focus {
+  border-color: var(--acento);
+  box-shadow: 0 0 0 2px rgba(0,180,255,.18);
+}
+
+/* No topo entra só o símbolo e o nome: a assinatura, a 30px de
+   altura, vira um borrão cinza que ninguém lê e ainda rouba largura
+   do nome da empresa. Ela aparece onde há espaço — relatórios,
+   PDF, tela de login. */
+header .marca-svg { height: 32px; }
+header .marca-svg text:last-of-type { display: none; }
+header .sessao { white-space: nowrap; }
+header .sessao > span { display: none; }
