@@ -167,7 +167,16 @@ ERP.ativos = (function () {
         '<div class="row3">' +
           '<div class="resumo-linha"><span>Situação</span><span class="v">' + badge(at.status) + '</span></div>' +
           '<div class="resumo-linha"><span>Onde está</span><span class="v">' + U.esc(at.local || '—') + '</span></div>' +
-          '<div class="resumo-linha"><span>Custodiante</span><span class="v">' + U.esc(at.custodiante || '—') + '</span></div>' +
+          '<div class="resumo-linha"><span>Custodiante</span><span class="v">' +
+            U.esc(at.custodiante || '—') +
+            /* O contato ao lado do nome: é na ficha que alguém procura
+               quando precisa do equipamento de volta. */
+            (at.custodiante_telefone || at.custodiante_email
+              ? '<div class="sub">' +
+                [at.custodiante_telefone, at.custodiante_email].filter(Boolean)
+                  .map(function (x) { return U.esc(x); }).join(' · ') + '</div>'
+              : '') +
+          '</span></div>' +
         '</div>' +
         '<div class="row3">' +
           '<div class="resumo-linha"><span>Projeto</span><span class="v">' + U.esc(at.projeto ? nomeProjeto(at.projeto) : '—') + '</span></div>' +
@@ -325,13 +334,29 @@ ERP.ativos = (function () {
             '" placeholder="quem responde pelo equipamento"></div>' +
           '<div><label>Documento de remessa</label><input id="mv-doc" placeholder="nº da remessa, e-mail, termo"></div>' +
         '</div>' +
+        /* Contato do custodiante, tudo opcional. Quando o
+           equipamento precisa voltar — fim de contrato, manutenção,
+           troca — o nome sozinho não resolve: alguém tem de ligar.
+           Procurar esse telefone depois custa mais do que anotar
+           agora. */
+        '<div class="row2">' +
+          '<div><label>Telefone do custodiante</label>' +
+            '<input id="mv-cust-fone" value="' + U.esc(at.custodiante_telefone || '') +
+            '" placeholder="opcional"></div>' +
+          '<div><label>E-mail do custodiante</label>' +
+            '<input id="mv-cust-email" type="email" value="' + U.esc(at.custodiante_email || '') +
+            '" placeholder="opcional"></div>' +
+        '</div>' +
         '<label>Observação</label><input id="mv-obs">' +
         '<div class="ajuda">O evento é o que prova a devolução: guarda de onde saiu, para onde foi, ' +
           'quem autorizou e o documento. O cadastro do equipamento não é alterado.</div>',
       acoes: [{ txt: 'Registrar movimentação', cls: 'btn-aprovar', fn: function () {
         const r = S.movimentarAtivo({ ativo: id, status: U.val('mv-status'), data: U.val('mv-data'),
           destino: U.val('mv-destino'), projeto: U.val('mv-projeto') || null,
-          custodiante: U.val('mv-cust'), documento: U.val('mv-doc'), observacao: U.val('mv-obs') });
+          custodiante: U.val('mv-cust'),
+          custodiante_telefone: U.val('mv-cust-fone'),
+          custodiante_email: U.val('mv-cust-email'),
+          documento: U.val('mv-doc'), observacao: U.val('mv-obs') });
         if (r.erro) return ERP.app.aviso(r.erro, 'erro');
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Movimentação registrada.', 'ok');
@@ -397,10 +422,30 @@ ERP.ativos = (function () {
             '</select></div></div>' +
           '<div class="row2">' +
             '<div><label>Onde está</label><input id="av-local" placeholder="ex.: Sede - Rio de Janeiro"></div>' +
-            '<div><label>Custodiante</label><input id="av-cust"></div></div>' : '') +
+            '<div></div></div>' : '') +
+        /* CUSTODIANTE entra também na EDIÇÃO, diferente de local e
+           situação. Trocar o lugar do equipamento é um fato que
+           precisa de data, origem e documento — por isso só por
+           movimentação. Já corrigir o nome de quem responde, ou
+           acrescentar o telefone que ninguém tinha anotado, não é
+           fato novo: é o cadastro ficando certo. Exigir uma
+           movimentação para isso faria inventarem movimentação que
+           não houve, e aí o histórico passa a mentir. */
+        '<div class="row2">' +
+          '<div><label>Custodiante</label><input id="av-cust" value="' +
+            U.esc(a ? a.custodiante || '' : '') + '" placeholder="quem responde pelo equipamento"></div>' +
+          '<div><label>Telefone</label><input id="av-cust-fone" value="' +
+            U.esc(a ? a.custodiante_telefone || '' : '') + '" placeholder="opcional"></div>' +
+        '</div>' +
+        '<div class="row2">' +
+          '<div><label>E-mail do custodiante</label><input id="av-cust-email" type="email" value="' +
+            U.esc(a ? a.custodiante_email || '' : '') + '" placeholder="opcional"></div>' +
+          '<div></div>' +
+        '</div>' +
         '<label>Observação</label><input id="av-obs" value="' + U.esc(a ? a.observacao || '' : '') + '">' +
         '<div class="ajuda">Local e situação mudam por MOVIMENTAÇÃO, não por edição — é o que mantém o ' +
-          'histórico confiável. Aqui só entra o que é do próprio equipamento.</div>',
+          'histórico confiável. Custodiante e contato podem ser corrigidos aqui: acertar quem responde ' +
+          'não é um fato novo, é o cadastro ficando certo.</div>',
       acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
         const r = S.salvarAtivo({
           id: a ? a.id : undefined, tag: U.val('av-tag'), categoria: U.val('av-cat-i'),
@@ -411,6 +456,8 @@ ERP.ativos = (function () {
           observacao: U.val('av-obs'),
           local: U.el('av-local') ? U.val('av-local') : undefined,
           custodiante: U.el('av-cust') ? U.val('av-cust') : undefined,
+          custodiante_telefone: U.el('av-cust-fone') ? U.val('av-cust-fone') : undefined,
+          custodiante_email: U.el('av-cust-email') ? U.val('av-cust-email') : undefined,
           patrimonio: U.el('av-patrimonio') ? U.val('av-patrimonio') : undefined,
           contratante_nome: U.el('av-contratante') ? U.val('av-contratante') : undefined,
           status: U.el('av-status') ? U.val('av-status') : undefined,

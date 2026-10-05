@@ -6855,3 +6855,32 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v54 — a rede de obrigatórias só cita colunas que existem',
     invalidos.length === 0, invalidos.join(', '));
 })();
+
+// ── ERP teste2 v62: custodiante se corrige sem movimentar ──
+(function () {
+  S.setUsuario('u5');
+  const a = S.st.ativos[0];
+  if (!a) return;
+  const localAntes = a.local, statusAntes = a.status;
+
+  /* Corrigir quem responde pelo equipamento não é movimentação: é o
+     cadastro ficando certo. Exigir uma movimentação para isso faria
+     inventarem movimentação que não houve — e aí o histórico, que
+     existe para provar onde o bem esteve, passa a mentir. */
+  const r = S.salvarAtivo({ id: a.id, tag: a.tag, descricao: a.descricao,
+    categoria: a.categoria, valor: a.valor,
+    custodiante: 'QA Custodiante', custodiante_telefone: '(21) 90000-0000',
+    custodiante_email: 'qa@teste.br' });
+  verificar('v62 — custodiante é corrigido pela edição', r.ok, r.erro || '');
+
+  const b = S.st.ativos.find(function (x) { return x.id === a.id; });
+  verificar('v62 — com telefone e e-mail junto',
+    b.custodiante === 'QA Custodiante' && b.custodiante_telefone === '(21) 90000-0000' &&
+    b.custodiante_email === 'qa@teste.br', b.custodiante);
+
+  /* O que NÃO pode acontecer: a edição mexer em onde o bem está. */
+  verificar('v62 — e sem mexer em local nem situação',
+    b.local === localAntes && b.status === statusAntes,
+    b.local + ' / ' + b.status);
+  S.setUsuario('u8');
+})();

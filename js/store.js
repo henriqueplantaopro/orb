@@ -14676,10 +14676,19 @@ ERP.store = (function () {
     const ult = evs[evs.length - 1];
     if (!ult) {
       return { status: a.status || 'sede', local: a.local || '', projeto: a.projeto || null,
-        custodiante: a.custodiante || '', desde: a.aquisicao || null, eventos: 0 };
+        custodiante: a.custodiante || '',
+        custodiante_telefone: a.custodiante_telefone || '',
+        custodiante_email: a.custodiante_email || '',
+        desde: a.aquisicao || null, eventos: 0 };
     }
+    /* O contato vem do último movimento, e cai para o do cadastro
+       quando o movimento não trouxe: trocar de custodiante sem
+       informar telefone não deve apagar o que já se sabia. */
     return { status: ult.status, local: ult.destino, projeto: ult.projeto || null,
-      custodiante: ult.custodiante || '', desde: ult.data, eventos: evs.length };
+      custodiante: ult.custodiante || '',
+      custodiante_telefone: ult.custodiante_telefone || a.custodiante_telefone || '',
+      custodiante_email: ult.custodiante_email || a.custodiante_email || '',
+      desde: ult.data, eventos: evs.length };
   }
 
   /* Nome de quem contratou o equipamento — é diferente de onde ele
@@ -14762,6 +14771,18 @@ ERP.store = (function () {
       });
       if (mesmaTag) return { erro: 'Já existe equipamento com a tag ' + d.tag + '.' };
     }
+    /* CUSTODIANTE e contato também na EDIÇÃO. Local, situação e
+       projeto continuam só por movimentação — são fatos, e fato
+       precisa de data e documento. Quem responde pelo equipamento é
+       cadastro: exigir uma movimentação para corrigir um nome faria
+       inventarem movimentação que não houve, e o histórico passaria
+       a mentir sobre onde o bem esteve. */
+    if (!novo) {
+      if (d.custodiante !== undefined) a.custodiante = d.custodiante || '';
+      if (d.custodiante_telefone !== undefined) a.custodiante_telefone = d.custodiante_telefone || '';
+      if (d.custodiante_email !== undefined) a.custodiante_email = d.custodiante_email || '';
+    }
+
     if (novo) {
       /* Numerar por "quantidade + 1" repetia a tag assim que alguém
          cadastrava uma fora da sequência: agora segue o maior número já
@@ -14771,6 +14792,10 @@ ERP.store = (function () {
       a.local = d.local || '';
       a.projeto = d.projeto || null;
       a.custodiante = d.custodiante || '';
+      /* Contato do custodiante: opcional, mas guardado junto do nome
+         — é o que falta quando o equipamento precisa voltar. */
+      a.custodiante_telefone = d.custodiante_telefone || '';
+      a.custodiante_email = d.custodiante_email || '';
       a.qtd = d.qtd || 1;
       st.ativos.push(a);
     }
@@ -14834,6 +14859,8 @@ ERP.store = (function () {
       projeto: d.status === 'alocado' ? d.projeto
         : (d.status === 'manutencao' || d.status === 'devolucao' ? (d.projeto || null) : null),
       custodiante: d.custodiante || d.responsavel || '',
+      custodiante_telefone: d.custodiante_telefone || '',
+      custodiante_email: d.custodiante_email || '',
       autorizado_por: d.autorizado_por || usuario().nome,
       documento: d.documento || '', observacao: d.observacao || '',
       registrado_por: usuario().nome, registrado_em: new Date()
