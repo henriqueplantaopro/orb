@@ -317,7 +317,10 @@ ERP.persistencia = (function () {
   const OBRIGATORIAS = {
     estoque_movimentos: { estornado: false },
     procedimentos: { cancelado: false },
-    previsoes: { status: 'estimada', autorizacoes_anteriores: [], substitui: [] },
+    /* `substitui` é de `receber`, não daqui: preencher um campo que
+       a tabela não tem derruba a gravação inteira, com uma mensagem
+       pior que a do campo faltando. */
+    previsoes: { status: 'estimada', autorizacoes_anteriores: [] },
     receber: { origem: 'avulso', status: 'aberto', baixas: [], retencoes: [],
       valor_recebido: 0, substitui: [] },
     parcelas: { status: 'aberto' },
@@ -326,11 +329,12 @@ ERP.persistencia = (function () {
     ordens_servico: { status: 'aberta' },
     /* Listas que o banco exige preenchidas. Vazio é o estado natural
        de quase todas no nascimento — o que faltava era dizer isso. */
-    titulos: { retencoes: [], rateio: [] },
+    /* Só campos que a tabela REALMENTE tem: preencher um campo
+       inexistente derruba a gravação com "could not find the column",
+       que é pior que o erro original. Há um teste conferindo isso. */
     estoque_camadas: { qtd: 0 },
     fechamentos_procedimentos: { cancelado: false, procedimento_ids: [], titulo_ids: [] },
-    lotes_produtividade: { cancelado: false },
-    folhas: { cancelado: false }
+    lotes_produtividade: { cancelado: false }
   };
 
   function completarObrigatorias(linha, tabela) {

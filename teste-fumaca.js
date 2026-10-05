@@ -6819,3 +6819,39 @@ function liberarParaFaturar(centro, competencia) {
   });
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v54: a rede de obrigatórias só cita campos reais ──
+(function () {
+  /* Preencher um campo que a tabela NÃO tem derruba a gravação
+     inteira com "could not find the column" — erro pior que o
+     original, porque some com tudo que ia junto no mesmo ciclo.
+
+     Aconteceu com `previsoes.substitui` (o campo é de `receber`),
+     e a mesma varredura encontrou outros três que eu tinha
+     inventado. Este teste lê o arquivo e confere campo a campo. */
+  const fs = require('fs');
+  const txt = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  const mapa = {};
+  const re = /(\w+): \{ tabela: '(\w+)', colunas: \[([^\]]*)\]/g;
+  let m;
+  while ((m = re.exec(txt))) {
+    mapa[m[2]] = m[3].split(',').map(function (x) { return x.trim().replace(/'/g, ''); });
+  }
+
+  const bloco = (txt.match(/const OBRIGATORIAS = \{([\s\S]*?)\n  \};/) || [])[1] || '';
+  const re2 = /^\s*(\w+): \{([^}]*)\}/gm;
+  const invalidos = [];
+  let m2;
+  while ((m2 = re2.exec(bloco))) {
+    const tabela = m2[1];
+    const cols = mapa[tabela];
+    if (!cols) continue;      // tabela fora do mapa: nada a conferir
+    m2[2].split(',').map(function (x) { return x.split(':')[0].trim(); })
+      .filter(Boolean).forEach(function (campo) {
+        if (cols.indexOf(campo) < 0) invalidos.push(tabela + '.' + campo);
+      });
+  }
+  verificar('v54 — a rede de obrigatórias só cita colunas que existem',
+    invalidos.length === 0, invalidos.join(', '));
+})();
