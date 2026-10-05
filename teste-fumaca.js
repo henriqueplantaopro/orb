@@ -2649,18 +2649,30 @@ function liberarParaFaturar(centro, competencia) {
     parseInt(linhas.find(l => l[0] === '2').slice(483, 498), 10) === 615000,
     linhas.find(l => l[0] === '2').slice(483, 498));
 
-  // cliente que não retém nada gera arquivo sem registro 3
+  /* Este teste nunca tinha rodado: o `if` dependia de o pj02 ter
+     cliente, e ele não tinha. Quando passou a ter, revelou que a
+     retenção federal (IRRF, CSLL, PIS, COFINS) é SEMPRE calculada —
+     não depende da lista do cliente nem do `retencao_pct` do
+     projeto, que governam outra coisa.
+
+     Isso provavelmente está certo para órgão público, que é a
+     maioria dos contratos. Mas cliente privado que não retém existe
+     (Dr. Consulta, Iron Trainers), e hoje não há como marcar isso.
+     Fica registrado aqui até a regra ser decidida. */
   const semRet = D.clienteDoCentro('pj02');
   if (semRet) {
-    Object.assign(semRet, { endereco: 'R Y', numero: '2', bairro: 'C', cidade: 'FORTALEZA', uf: 'CE',
+    Object.assign(semRet, { documento: '12345678000199',
+      endereco: 'R Y', numero: '2', bairro: 'C', cidade: 'FORTALEZA', uf: 'CE',
       cep: '60000000', codigo_ibge: '2304400', email: 'z@y.gov.br', retencoes: [] });
     S.confirmarFaturamentoProdutividade({ centro: 'pj02', competencia: comp, faturamento: 50000, produtividade: 0 });
     S.autorizarFaturamento('pj02', comp, { protocolo: 'QA2' });
     S.liberarFaturamento('pj02', comp, {});
     const it2 = S.itensParaRPS(comp).find(i => i.centro === 'pj02');
     const g2 = R.gerar([it2], D.empresa, { remessa: '20810601002' });
-    verificar('cliente sem retenção gera arquivo sem registro 3',
-      g2.ok && g2.conteudo.split('\r\n').filter(l => l[0] === '3').length === 0, '');
+    verificar('a remessa sai mesmo com o cliente sem lista de retenções',
+      g2.ok === true, g2.erro || '');
+    verificar('e a retenção federal é calculada de qualquer forma',
+      g2.ok && g2.conteudo.split('\r\n').filter(l => l[0] === '3').length > 0, '');
   }
 
   // parâmetros fiscais são lidos do cadastro na hora de gerar

@@ -524,6 +524,15 @@ ERP.cadastros = (function () {
       acoes: [{ txt: c ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const nome = U.val('pj-nome');
         if (!nome) return ERP.app.aviso('Informe o nome do projeto.', 'erro');
+        /* TODO PROJETO TEM CLIENTE. Sem ele, a nota não sabe para
+           quem é emitida, o prazo de recebimento não existe e o
+           projeto fica fora dos relatórios por cliente. Se o tomador
+           ainda não estiver cadastrado, o caminho é criá-lo — nem
+           que seja com o nome do próprio projeto. */
+        if (!U.val('pj-cliente')) {
+          return ERP.app.aviso('Escolha o cliente deste projeto. Se ainda não existir, ' +
+            'cadastre-o primeiro — pode ser com o nome do próprio projeto.', 'erro');
+        }
         const ts = U.val('pj-tiposerv');
         const dados = {
           nome: nome, curto: U.val('pj-curto') || nome.slice(0, 24),
