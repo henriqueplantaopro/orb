@@ -99,14 +99,20 @@ ERP.previsoes = (function () {
           const p2 = S.previsaoDe(id, comp);
           return a2 + (p2 ? p2.faturamento : ((D.centro(id) || {}).prev_faturamento || 0));
         }, 0);
+        /* A previsão é DIGITADA POR ESPECIALIDADE, e esta linha mostra
+           a soma. Antes era o contrário: um valor para o conjunto,
+           rateado para baixo. Mas a produtividade e o pedido de
+           faturamento vêm por especialidade — só a NOTA é única —, e
+           quem conhece o contrato sabe quanto cada setor fatura,
+           não uma proporção calculada. */
         cab += '<tr style="background:#f8fafb"><td class="desc"><b>' + U.esc(grupoAtual) + '</b>' +
-          '<div class="sub">faturamento único — digite o valor do conjunto</div></td>' +
+          '<div class="sub">nota única — a soma das especialidades abaixo</div></td>' +
           '<td class="sub">—</td>' +
-          '<td><input class="num" data-pv-grupo="' + U.esc(grupoAtual) + '" inputmode="decimal" value="' +
-            U.num(Math.round(total * 100) / 100) + '"></td>' +
+          '<td class="num"><b>' + U.num(Math.round(total * 100) / 100) + '</b>' +
+            '<div class="sub">soma do grupo</div></td>' +
           '<td class="sub">produtividade é por projeto</td><td colspan="6" class="sub">' +
-          'o valor é rateado entre as ' + S.projetosDoGrupo(grupoAtual).length +
-          ' especialidades abaixo</td></tr>';
+          'uma nota só para as ' + S.projetosDoGrupo(grupoAtual).length +
+          ' especialidades, rateada pelo que cada uma previu</td></tr>';
       }
       /* Bruto contra bruto. A coluna do previsto é digitada sem
          retenção; comparar com o líquido das notas dava, como desvio,
@@ -133,7 +139,7 @@ ERP.previsoes = (function () {
         /* Projeto que faz parte de um grupo de faturamento não tem
            previsão própria: o valor é do grupo, digitado uma vez na
            linha dele e rateado aqui. */
-        (c.grupo_faturamento
+        (false
           ? '<td class="num sub">' + U.num(pv.faturamento) + '<div class="sub">rateio do grupo</div></td>'
           : '<td><input class="num" data-pv-fat="' + c.id + '" inputmode="decimal" value="' +
             U.num(pv.faturamento) + '"></td>') +
@@ -394,16 +400,9 @@ ERP.previsoes = (function () {
       }
     });
     projetos().forEach(function (c) {
-      if (c.grupo_faturamento) {
-        /* faturamento já veio do grupo; aqui só a produtividade */
-        const pe2 = U.el('pv-saida').querySelector('[data-pv-prod="' + c.id + '"]');
-        if (pe2) {
-          const atual = S.previsaoDe(c.id, comp);
-          S.salvarPrevisao({ centro: c.id, competencia: comp,
-            faturamento: atual ? atual.faturamento : 0, produtividade: U.parseValor(pe2.value), forcar: true });
-        }
-        return;
-      }
+      /* Projeto de grupo salva como qualquer outro: o faturamento é
+         digitado na linha dele. O que o grupo define é a NOTA — uma
+         só para todas as especialidades —, não a previsão. */
       const fat = U.parseValor((U.el('pv-saida').querySelector('[data-pv-fat="' + c.id + '"]') || {}).value);
       const pe = U.el('pv-saida').querySelector('[data-pv-prod="' + c.id + '"]');
       const prod = pe ? U.parseValor(pe.value) : 0;
