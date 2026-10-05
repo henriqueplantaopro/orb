@@ -80,14 +80,16 @@ ERP.faturamento = (function () {
         '</select></div>' +
         '<div class="f"><label for="st-status">Status</label><select id="st-status">' +
           '<option value="">todos</option>' +
-          ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado', 'recebido_parcial', 'recebido']
+          ['sem_previsao', 'previsao', 'confirmado', 'autorizado', 'liberado', 'faturado', 'recebido_parcial', 'recebido']
             .map(function (s) {
               return '<option value="' + s + '"' + (s === stStatus ? ' selected' : '') + '>' +
                 U.esc(S.NOME_STATUS_FAT[s]) + '</option>'; }).join('') +
         '</select></div>' +
       '</div>' +
       '<div class="pr-confere">' +
-        ['liberado', 'autorizado', 'confirmado', 'previsao', 'faturado', 'recebido'].map(function (s) {
+        /* "Sem previsão" entra no contador: é o número que diz
+           quanto falta lançar antes de o mês poder fechar. */
+        ['sem_previsao', 'previsao', 'confirmado', 'autorizado', 'liberado', 'faturado', 'recebido'].map(function (s) {
           return '<span>' + U.esc(S.NOME_STATUS_FAT[s]) + ' <b>' + conta(s) + '</b></span>';
         }).join('') +
       '</div>' +
@@ -96,7 +98,8 @@ ERP.faturamento = (function () {
           '<th>Status do faturamento</th><th class="num">Valor</th><th>Notas</th>' +
           '<th class="num">Recebido</th><th class="num">Parado há</th></tr></thead><tbody>' +
           lista.map(function (l) {
-            const badge = { liberado: 'b-aprovado', autorizado: 'b-aguardando', confirmado: 'b-aguardando',
+            const badge = { sem_previsao: 'b-cancelado',
+              liberado: 'b-aprovado', autorizado: 'b-aguardando', confirmado: 'b-aguardando',
               previsao: 'b-pendente', faturado: 'b-pago', recebido: 'b-pago',
               recebido_parcial: 'b-parcial' }[l.status] || 'b-pendente';
             return '<tr><td class="desc">' + U.esc(l.projeto.curto || l.projeto.nome) +
@@ -104,7 +107,12 @@ ERP.faturamento = (function () {
                   ' especialidades</div>' : '') + '</td>' +
               '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
               '<td><span class="badge ' + badge + '">' + U.esc(S.NOME_STATUS_FAT[l.status] || l.status) + '</span></td>' +
-              '<td class="num">' + U.brl(l.faturado_bruto || l.valor) + '</td>' +
+              /* Sem previsão lançada, mostra a estimativa do cadastro
+                 em cinza: é o valor que a pessoa provavelmente vai
+                 lançar, e tê-lo à vista poupa a consulta. */
+              '<td class="num">' + (l.status === 'sem_previsao'
+                ? '<span class="sub">' + (l.estimado ? U.brl(l.estimado) + ' estimado' : '—') + '</span>'
+                : U.brl(l.faturado_bruto || l.valor)) + '</td>' +
               '<td class="sub">' + U.esc((l.notas || []).join(', ') || '—') + '</td>' +
               '<td class="num">' + (l.recebido ? U.brl(l.recebido) : '—') + '</td>' +
               '<td class="num sub">' + (['faturado', 'recebido'].indexOf(l.status) > -1 ? '—' : l.dias + ' dias') +
@@ -399,6 +407,10 @@ ERP.faturamento = (function () {
   let fEst = { pendentes: true, competencia: '', etapa: '' };
   const ETAPAS_NOME = { previsao: 'Previsão', confirmado: 'Valor confirmado',
     autorizado: 'Autorizado pelo órgão', liberado: 'Liberado p/ faturar', faturado: 'Faturado' };
+  /* Versão curta para o cabeçalho da esteira, que tem oito colunas e
+     precisa caber na tela sem rolagem lateral. */
+  const ETAPAS_CURTO = { previsao: 'Previsto', confirmado: 'Confirm.',
+    autorizado: 'Autoriz.', liberado: 'Liberado', faturado: 'Faturado' };
   const ORDEM_ETAPAS = ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado'];
 
   function renderEsteira() {
@@ -441,10 +453,19 @@ ERP.faturamento = (function () {
           conta[e] + '</b></span>';
       }).join('') + '</div>' +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
-        '<th>Projeto</th><th>Competência</th><th>Status prod.</th><th class="num">Valor prod.</th>' +
-        '<th class="num">Valor</th>' +
-        ORDEM_ETAPAS.slice(1).map(function (e) { return '<th class="num">' + ETAPAS_NOME[e] + '</th>'; }).join('') +
-        '<th class="num">Parado há</th><th></th></tr></thead><tbody>' +
+        /* Cabeçalhos curtos e colunas de etapa estreitas: eram quatro
+           títulos longos ("Autorizado pelo órgão", "Liberado p/
+           faturar") empurrando a tabela para fora da tela, e cada um
+           guarda só uma data ou um visto. O nome completo fica no
+           `title`, para quem passar o mouse. */
+        '<th>Projeto</th><th class="col-comp">Comp.</th>' +
+        '<th class="col-prod">Prod.</th><th class="num col-val">Valor prod.</th>' +
+        '<th class="num col-val">Valor</th>' +
+        ORDEM_ETAPAS.slice(1).map(function (e) {
+          return '<th class="num col-etapa" title="' + ETAPAS_NOME[e] + '">' +
+            ETAPAS_CURTO[e] + '</th>';
+        }).join('') +
+        '<th class="num col-parado">Parado</th><th class="col-acoes"></th></tr></thead><tbody>' +
         (lista.length ? lista.map(function (l) {
           const atrasado = l.etapa !== 'faturado' && l.dias > 15;
           return '<tr' + (atrasado ? ' style="background:#fff4f2"' : '') + '>' +

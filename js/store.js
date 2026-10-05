@@ -12985,7 +12985,11 @@ ERP.store = (function () {
       const bruto = Math.round(notas.reduce(function (t, r) { return t + (r.valor_bruto || 0); }, 0) * 100) / 100;
       const recebido = Math.round(notas.reduce(function (t, r) { return t + (r.valor_recebido || 0); }, 0) * 100) / 100;
       let status = l.etapa;
-      if (l.etapa === 'faturado' && bruto > 0 && recebido >= bruto - 0.05) status = 'recebido';
+      /* Sem previsão lançada é o estado mais acionável desta tela —
+         alguém precisa lançar. Antes aparecia como "previsão", igual
+         a quem já tinha lançado e aguardava a etapa seguinte. */
+      if (l.sem_previsao && !bruto) status = 'sem_previsao';
+      else if (l.etapa === 'faturado' && bruto > 0 && recebido >= bruto - 0.05) status = 'recebido';
       else if (l.etapa === 'faturado' && recebido > 0) status = 'recebido_parcial';
       return Object.assign({}, l, {
         status: status, faturado_bruto: bruto, recebido: recebido,
@@ -12996,7 +13000,8 @@ ERP.store = (function () {
   }
 
   const NOME_STATUS_FAT = {
-    previsao: 'previsto', confirmado: 'valor confirmado', autorizado: 'autorizado pelo órgão',
+    sem_previsao: 'sem previsão', previsao: 'previsto',
+    confirmado: 'valor confirmado', autorizado: 'autorizado pelo órgão',
     liberado: 'autorizado para faturar', faturado: 'faturado',
     recebido_parcial: 'recebido em parte', recebido: 'recebido'
   };
@@ -13063,6 +13068,13 @@ ERP.store = (function () {
       linhas.push({
         centro: centro, projeto: c, competencia: competencia, previsao: pv || null,
         etapa: etapa, indice: ETAPAS.indexOf(etapa),
+        /* Projeto SEM PREVISÃO salva no mês é um estado em si, e o
+           mais acionável da tela: é o que alguém precisa lançar. Sem
+           distinguir, ele se confundia com quem já tem previsão e
+           aguarda a etapa seguinte. `estimado` traz o valor do
+           cadastro, que serve de ponto de partida. */
+        sem_previsao: !pv,
+        estimado: pv ? null : (c.prev_faturamento || 0),
         prod: statusProdutividade(centro, competencia),
         valor: docs.length ? Math.round(docs.reduce(function (a, r) { return a + r.valor_bruto; }, 0) * 100) / 100
           : (pv ? pv.faturamento : 0),
@@ -13088,6 +13100,19 @@ ERP.store = (function () {
         comps[r.centro + '|' + r.competencia] = true;
       }
     });
+    /* TODO PROJETO ATIVO aparece na competência pedida, mesmo sem
+       previsão salva e sem nota. Antes a lista vinha só do que já
+       tinha movimento — e projeto esquecido no mês ficava invisível
+       justamente na tela que existe para encontrá-lo. Quem não tem
+       nada entra com status "sem previsão", que é a informação mais
+       útil dessa tela. */
+    if (f.competencia) {
+      D.centros.forEach(function (c) {
+        if (c.tipo !== 'projeto' || c.ativo === false) return;
+        comps[c.id + '|' + f.competencia] = true;
+      });
+    }
+
     Object.keys(comps).forEach(function (k) {
       const partes = k.split('|');
       add(partes[0], partes[1]);

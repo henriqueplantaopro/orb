@@ -670,3 +670,17 @@ header .sessao > span { display: none; }
    para ser lida nesse conjunto. */
 .marca-img { height: 32px; width: auto; display: block; }
 @media (max-width: 620px) { .marca-img { height: 26px; } }
+
+/* ── Esteira do faturamento: cabe na tela ───────────────────────
+   Eram oito colunas com títulos longos, e a pessoa tinha de rolar
+   para o lado para ver o fim da linha — numa tela cujo propósito é
+   justamente bater o olho e ver onde cada projeto parou. */
+.col-comp   { width: 74px; }
+.col-prod   { width: 92px; }
+.col-val    { width: 104px; }
+.col-etapa  { width: 76px; font-size: 11px; }
+.col-parado { width: 62px; }
+.col-acoes  { width: 1%; white-space: nowrap; }
+/* As colunas de etapa guardam data ou visto: texto menor e centrado
+   lê melhor que número alinhado à direita. */
+table td.col-etapa, table th.col-etapa { text-align: center; }

@@ -3484,13 +3484,17 @@ function liberarParaFaturar(centro, competencia) {
   const esteira = S.esteiraFaturamento({ competencia: compG });
   const grupo = esteira.find(l => l.eh_grupo);
   verificar('o GHC-HGB aparece como uma linha só', !!grupo, esteira.map(l => l.projeto.curto).join(','));
-  verificar('com as especialidades dentro', grupo && grupo.especialidades.length === 3,
+  /* Sete, não três: a esteira passou a listar TODO projeto ativo na
+     competência, com ou sem previsão salva — projeto esquecido no
+     mês era invisível justamente na tela feita para encontrá-lo. O
+     grupo do HGB tem sete especialidades, então são sete. */
+  verificar('com as especialidades dentro', grupo && grupo.especialidades.length === 7,
     grupo && grupo.especialidades.length);
   verificar('e as especialidades não aparecem soltas',
     !esteira.some(l => !l.eh_grupo && l.projeto.grupo_faturamento), '');
   verificar('sem_agrupar devolve uma linha por especialidade',
     S.esteiraFaturamento({ competencia: compG, sem_agrupar: true })
-      .filter(l => l.projeto.grupo_faturamento).length === 3, '');
+      .filter(l => l.projeto.grupo_faturamento === 'GHC - HGB').length === 7, '');
 
   // confirmar + autorizar num passo, com aviso de produtividade
   const compA = Ut.compDe(Ut.addMeses(Ut.hoje(), -5));
