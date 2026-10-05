@@ -87,7 +87,7 @@ ERP.relatorios = (function () {
          empresa sem identificação vira papel solto na mesa de quem
          recebe — e esses relatórios vão para hospital, contador e
          órgão público. */
-      '<div class="marca-doc">' + ERP.marca.img({ altura: 38 }) + '</div>' +
+      '<div class="marca-doc">' + ERP.marca.img({ altura: 23 }) + '</div>' +
       '<div class="rel-emp">' + U.esc(e.nome || 'HJM Dom Pedro') +
         (e.cnpj ? '<span class="sub"> · CNPJ ' + U.esc(e.cnpj) + '</span>' : '') + '</div>' +
       '<h2 style="margin:2px 0 0">' + U.esc(NOMES[atual] || 'Relatório') +

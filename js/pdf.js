@@ -163,7 +163,9 @@ ERP.pdf = (function () {
          documentos vão para hospital, contador e órgão público. */
       marca: function (x, y) {
         if (ERP.timbre && ERP.timbre.jpeg) {
-          const alturaMarca = 15;
+          /* Timbre discreto: identifica o documento sem roubar a
+             área onde os dados precisam caber. */
+          const alturaMarca = 9;
           const largMarca = alturaMarca * (ERP.timbre.largura / ERP.timbre.altura);
           api.imagem(x, y, largMarca, alturaMarca);
           return api;

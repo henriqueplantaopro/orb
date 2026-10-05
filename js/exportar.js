@@ -76,10 +76,10 @@ ERP.exportar = (function () {
            do tamanho do arquivo, o que a deixa nítida em tela de
            alta resolução. */
         const id = wb.addImage({ base64: ERP.timbre.png, extension: 'png' });
-        ws.addImage(id, { tl: { col: 0.2, row: 0.3 },
-          ext: { width: ERP.timbre.pngLargura / 2, height: ERP.timbre.pngAltura / 2 } });
-        ws.addRow([]); ws.addRow([]); ws.addRow([]); ws.addRow([]);
-        reservaTimbre = 4;
+        ws.addImage(id, { tl: { col: 0.2, row: 0.25 },
+          ext: { width: ERP.timbre.pngLargura * 0.3, height: ERP.timbre.pngAltura * 0.3 } });
+        ws.addRow([]); ws.addRow([]);
+        reservaTimbre = 2;
       } catch (e) {
         /* Sem timbre a planilha ainda serve; sem dados, não. */
         console.warn('timbre não entrou na planilha:', e);
