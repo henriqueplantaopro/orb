@@ -230,6 +230,24 @@ ERP.persistencia = (function () {
     }
   }
 
+  /* Chamados abertos pelo QR das etiquetas. Leitura e fechamento
+     exigem o módulo de Ativos — as políticas do banco garantem
+     isso; aqui é só o caminho. */
+  async function listarChamados(limite) {
+    const c = cliente();
+    if (!c) return [];
+    const { data, error } = await c.from('chamados')
+      .select('*').order('criado_em', { ascending: false }).limit(limite || 200);
+    return error ? [] : (data || []);
+  }
+
+  async function responderChamado(id, dados) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const { error } = await c.from('chamados').update(dados).eq('id', id);
+    return error ? { erro: error.message } : { ok: true };
+  }
+
   async function statusLogins() {
     const c = cliente();
     if (!c) return [];
@@ -912,6 +930,7 @@ ERP.persistencia = (function () {
            salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,
+           listarChamados: listarChamados, responderChamado: responderChamado,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
            degradadas: () => degradadas.slice() };

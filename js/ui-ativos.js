@@ -58,6 +58,7 @@ ERP.ativos = (function () {
     if (cont) { cont.textContent = nOS; cont.style.display = nOS ? '' : 'none'; }
 
     U.el('av-saida').innerHTML =
+      aba === 'chamados'   ? telaChamados() :
       aba === 'os'         ? telaOS() :
       aba === 'preventiva' ? telaPreventiva() :
       aba === 'ociosos'    ? telaOciosos() :
@@ -735,6 +736,77 @@ ERP.ativos = (function () {
 
   /* ── ordens de serviço ──────────────────────────────────*/
   let mostrarCanceladas = false;
+  /* ── Chamados abertos pelo QR da etiqueta ─────────────────
+     Quem está com o equipamento na mão não tem acesso ao sistema:
+     aponta a câmera, descreve, envia. É aqui que esse chamado
+     aparece — e é daqui que ele vira ordem de serviço, que é o
+     documento que registra o conserto. */
+  let chamados = [];
+  let chamadosLidos = false;
+
+  function carregarChamados() {
+    if (!ERP.persistencia || !ERP.persistencia.listarChamados) return;
+    ERP.persistencia.listarChamados().then(function (lista) {
+      chamados = lista || [];
+      chamadosLidos = true;
+      const n = chamados.filter(function (c) { return c.situacao === 'aberto'; }).length;
+      const el = U.el('av-ch-n');
+      if (el) { el.textContent = n; el.style.display = n ? '' : 'none'; }
+      if (aba === 'chamados') render();
+    });
+  }
+
+  const URGENCIA = { critica: ['Crítica', 'b-reprovado'], alta: ['Alta', 'b-aberto'],
+    normal: ['Normal', 'b-aguardando'] };
+
+  function telaChamados() {
+    if (!chamadosLidos) {
+      carregarChamados();
+      return '<div class="card"><div class="ajuda">Carregando os chamados…</div></div>';
+    }
+    const abertos = chamados.filter(function (c) { return c.situacao === 'aberto'; });
+    if (!chamados.length) {
+      return '<div class="card"><div class="ajuda">Nenhum chamado ainda. ' +
+        'Eles chegam quando alguém lê o QR da etiqueta de um equipamento e descreve um problema — ' +
+        'sem precisar de acesso ao sistema.</div></div>';
+    }
+    let html = '';
+    if (abertos.length) {
+      html += '<div class="aviso"><b>' + abertos.length + ' chamado(s) em aberto.</b> ' +
+        'Cada um virou um pedido de alguém que está com o equipamento na mão.</div>';
+    }
+    html += '<table class="rel"><thead><tr><th>Quando</th><th>Equipamento</th>' +
+      '<th>Urgência</th><th>Problema</th><th>Quem abriu</th><th>Situação</th><th></th></tr></thead><tbody>';
+    chamados.forEach(function (c) {
+      const u = URGENCIA[c.urgencia] || URGENCIA.normal;
+      const fechado = c.situacao !== 'aberto';
+      html += '<tr' + (c.urgencia === 'critica' && !fechado ? ' style="background:#fbe9e7"' : '') + '>' +
+        '<td class="sub">' + U.fData(String(c.criado_em || '').slice(0, 10)) + '</td>' +
+        '<td><b>' + U.esc(c.tag || '—') + '</b>' +
+          (c.local_informado ? '<div class="sub">' + U.esc(c.local_informado) + '</div>' : '') + '</td>' +
+        '<td><span class="badge ' + u[1] + '">' + u[0] + '</span></td>' +
+        '<td class="desc">' + U.esc(c.descricao || '') + '</td>' +
+        '<td class="sub">' + U.esc(c.contato_nome || '—') +
+          (c.contato_fone ? '<div class="sub">' + U.esc(c.contato_fone) + '</div>' : '') + '</td>' +
+        '<td>' + (fechado
+          ? '<span class="badge b-pago">' + U.esc(c.situacao) + '</span>' +
+            (c.resposta ? '<div class="sub">' + U.esc(c.resposta) + '</div>' : '')
+          : '<span class="badge b-aberto">aberto</span>') + '</td>' +
+        /* `podeMover` é a verificação certa: `pode` testa AÇÃO
+           nomeada, e movimentar ativos vem do nível M na matriz. Com
+           a verificação errada, os botões sumiam para todo mundo. */
+        '<td>' + (!fechado && S.podeMover('ativos')
+          ? '<button class="btn-sm" data-ch-os="' + c.id + '">Abrir OS</button> ' +
+            '<button class="btn-sm" data-ch-fechar="' + c.id + '">Encerrar</button>'
+          : '') + '</td></tr>';
+    });
+    html += '</tbody></table>' +
+      '<div class="ajuda">O chamado é o pedido; a <b>ordem de serviço</b> é o conserto. ' +
+      'Abrir OS a partir daqui já leva o equipamento e o problema descritos — e o chamado fica ' +
+      'amarrado a ela, para quem abriu saber o que aconteceu.</div>';
+    return html;
+  }
+
   function telaOS() {
     const lista = S.ordensServico({ incluir_canceladas: mostrarCanceladas });
     const abertas = lista.filter(function (o) { return o.status !== 'fechada'; });
@@ -1036,6 +1108,54 @@ ERP.ativos = (function () {
   }
 
   function ligar() {
+    /* Chamado vira ORDEM DE SERVIÇO: é a OS que registra o conserto,
+       com custo, técnico e data. O chamado sozinho é só o pedido. */
+    document.querySelectorAll('[data-ch-os]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const ch = chamados.find(function (x) { return String(x.id) === b2.dataset.chOs; });
+        if (!ch) return;
+        const r = S.abrirOS({ ativo: ch.ativo, tipo: 'corretiva',
+          descricao: ch.descricao,
+          solicitante: ch.contato_nome || 'chamado pela etiqueta',
+          abertura: U.hoje() });
+        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        ERP.persistencia.responderChamado(ch.id, {
+          situacao: 'em_atendimento',
+          resposta: 'OS ' + (r.os ? r.os.numero || r.os.id : '') + ' aberta',
+          atendido_por: (S.usuario() || {}).nome || '',
+          atendido_em: new Date().toISOString()
+        }).then(function () {
+          chamadosLidos = false;
+          ERP.app.aviso('Ordem de serviço aberta a partir do chamado.', 'ok');
+          render();
+        });
+      });
+    });
+    document.querySelectorAll('[data-ch-fechar]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const id = b2.dataset.chFechar;
+        ERP.app.modal({
+          titulo: 'Encerrar chamado', fecharTxt: 'Cancelar',
+          corpo: '<label for="ch-resp">O que foi feito</label>' +
+            '<input id="ch-resp" placeholder="ex.: equipamento reiniciado, sem defeito">' +
+            '<div class="ajuda">Quem abriu o chamado não vê esta resposta hoje — ela fica no ' +
+            'registro, para a próxima vez que alguém olhar o histórico do equipamento.</div>',
+          acoes: [{ txt: 'Encerrar', cls: 'btn-aprovar', fn: function () {
+            ERP.persistencia.responderChamado(id, {
+              situacao: 'encerrado', resposta: U.val('ch-resp'),
+              atendido_por: (S.usuario() || {}).nome || '',
+              atendido_em: new Date().toISOString()
+            }).then(function (r) {
+              if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+              ERP.app.fecharModal();
+              chamadosLidos = false;
+              render();
+            });
+          } }]
+        });
+      });
+    });
+
     const box = U.el('av-saida');
     ['av-busca', 'av-status', 'av-projeto', 'av-cat'].forEach(function (id) {
       const el = U.el(id);
