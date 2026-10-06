@@ -9671,6 +9671,57 @@ ERP.store = (function () {
      Devolve os itens com `frete` preenchido por linha, que é o
      formato que `entrada()` já entende. O resto do sistema não
      precisa saber que houve rateio. */
+  /* CADASTRO RÁPIDO DE MATERIAL, usado pela requisição de compra.
+
+     Mora aqui, e não na tela, por dois motivos: a permissão é
+     verificada no mesmo lugar que todo o resto, e o material nasce
+     com os mesmos campos de um cadastro completo — só sem os que
+     dependem de quem controla o estoque.
+
+     `minimo` e `ideal` nascem ZERADOS de propósito, não em branco:
+     zero significa "ninguém definiu ainda" e não dispara alerta de
+     reposição. Um mínimo inventado por quem está com pressa faria
+     o sistema pedir compra de material que não falta. */
+  function cadastrarMaterial(d) {
+    if (!podeMover('cadastros')) return { erro: 'Seu perfil não cadastra material.' };
+    const desc = String((d && d.descricao) || '').trim();
+    if (!desc) return { erro: 'Informe a descrição do material.' };
+
+    const igual = D.produtos.find(function (p) {
+      return (p.descricao || '').trim().toLowerCase() === desc.toLowerCase();
+    });
+    if (igual) {
+      return { erro: 'Já existe o material ' + igual.codigo + ' · ' + igual.descricao + '.' };
+    }
+
+    /* O código segue o maior número já usado, não a contagem: com a
+       contagem, apagar um material faria o próximo repetir código de
+       outro. */
+    let maior = 0;
+    D.produtos.forEach(function (p) {
+      const n = parseInt(String(p.codigo || '').replace(/\D/g, ''), 10);
+      if (isFinite(n) && n > maior) maior = n;
+    });
+    const produto = {
+      id: 'pr' + Date.now().toString(36),
+      codigo: String((d.codigo || '')).trim() || ('MT-' + String(maior + 1).padStart(3, '0')),
+      descricao: desc,
+      unidade: String(d.unidade || 'UN').trim().toUpperCase(),
+      ncm: d.ncm || '',
+      minimo: 0, ideal: 0,
+      custo: 0,
+      conta: d.conta || '',
+      ativo: true,
+      /* Marca de onde veio: quem for completar o cadastro depois
+         precisa saber quais entraram pela pressa de uma requisição. */
+      cadastro_rapido: true
+    };
+    D.produtos.push(produto);
+    logar('produto', produto.id, 'cadastrou material pela requisição',
+      produto.codigo + ' · ' + produto.descricao);
+    return { ok: true, produto: produto };
+  }
+
   function ratearDespesasNota(itens, despesas, criterio) {
     const lista = (itens || []).filter(function (i) { return (Number(i.qtd) || 0) > 0; });
     const total = Math.round((Number(despesas) || 0) * 100) / 100;
@@ -16562,7 +16613,7 @@ ERP.store = (function () {
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
-    ajusteInventario, custoDeAquisicao, ratearDespesasNota,
+    ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     transferirEntreContas, transferenciasBanco, cancelarTransferenciaBanco,
     analisarNFSeImportacao, importarNFSe,
     recebidoNaConta, recebidoSemConta, ultimoInventario, checarDataInventario,

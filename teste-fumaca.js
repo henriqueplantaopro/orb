@@ -6928,3 +6928,47 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v75 — sem despesa, os itens passam intactos',
     semFrete.rateado === 0 && semFrete.itens.length === itens.length, '');
 })();
+
+// ── ERP teste2 v76: cadastrar material pela requisição ──
+(function () {
+  S.setUsuario('u5');
+  const antes = D.produtos.length;
+
+  /* Quem requisita descobre que o material não existe justamente na
+     hora de pedir. Mandar sair da janela, ir em Cadastros e voltar
+     faz perder a requisição pela metade — e, na prática, leva a
+     escolher um material parecido, que é pior que cadastrar um
+     novo. */
+  const r = S.cadastrarMaterial({ descricao: 'QA material novo v76', unidade: 'cx' });
+  verificar('v76 — material é cadastrado pela requisição', r.ok, r.erro || '');
+  verificar('v76 — com a unidade em maiúscula e código gerado',
+    r.ok && r.produto.unidade === 'CX' && /^MT-\d+$/.test(r.produto.codigo),
+    r.ok ? r.produto.codigo + ' / ' + r.produto.unidade : '');
+
+  /* Mínimo zerado é deliberado: um mínimo inventado por quem está
+     com pressa faz o sistema pedir compra de material que não
+     falta, e o alerta falso repete todo mês. */
+  verificar('v76 — nasce sem mínimo, para não disparar alerta falso',
+    r.ok && r.produto.minimo === 0 && r.produto.ideal === 0, '');
+
+  /* Material repetido é pior que material faltando: duas entradas
+     para a mesma coisa partem o saldo em dois e nenhuma mostra o
+     total. A comparação ignora maiúsculas e espaços. */
+  const dup = S.cadastrarMaterial({ descricao: '  QA MATERIAL NOVO V76 ' });
+  verificar('v76 — recusa repetido mesmo com outra grafia',
+    !!dup.erro && /já existe/i.test(dup.erro), dup.erro || 'PASSOU');
+
+  const vazio = S.cadastrarMaterial({ descricao: '   ' });
+  verificar('v76 — exige descrição', !!vazio.erro, vazio.erro || 'PASSOU');
+
+  /* Cadastrar é ato de quem tem o módulo: a requisição não vira
+     porta dos fundos para quem só consulta. */
+  S.setUsuario('u4');
+  const semPerm = S.cadastrarMaterial({ descricao: 'QA sem permissao v76' });
+  verificar('v76 — perfil sem Cadastros não cadastra',
+    !!semPerm.erro && /não cadastra/i.test(semPerm.erro), semPerm.erro || 'PASSOU');
+
+  verificar('v76 — só um material entrou no cadastro',
+    D.produtos.length === antes + 1, (D.produtos.length - antes) + '');
+  S.setUsuario('u8');
+})();
