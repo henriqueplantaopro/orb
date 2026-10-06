@@ -755,3 +755,10 @@ body.ambiente-teste .barra-modulo {
   font-weight: 700; font-size: 11px; letter-spacing: .06em;
   padding: 3px 9px; border-radius: 3px; text-transform: uppercase;
 }
+
+/* Busca de material: campo com a lista filtrando enquanto se
+   digita, e o botão de cadastrar ao lado — não no fim da lista
+   suspensa, onde seria preciso rolar cem itens para achá-lo. */
+.busca-mat { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.busca-mat input[list] { flex: 1 1 auto; min-width: 0; }
+.busca-mat .btn-sm { flex: 0 0 auto; white-space: nowrap; }

@@ -450,8 +450,14 @@ ERP.estoque = (function () {
      matriz de acesso. */
   const veCusto = () => S.veFinanceiro('estoque');
 
+  /* Agrupar por família ou listar item a item. Fica fora da função
+     porque a escolha tem de sobreviver ao redesenho. */
+  let agruparFamilia = false;
+  let familiasAbertas = {};
+
   function posicao() {
     if (casaSel()) return posicaoCasa(casaSel());
+    if (agruparFamilia) return posicaoFamilia();
     const am = armSel();
     /* Sempre em ordem alfabética: a lista é de conferência, e o
        operador procura pelo nome do material, não pela ordem em que
@@ -477,6 +483,7 @@ ERP.estoque = (function () {
           '<input id="es-busca" value="' + U.esc(buscaPosicao || '') +
           '" placeholder="digite parte do nome ou o código — ex.: seringa"></div>' +
         (q ? '<button class="btn-sm" id="es-busca-limpa">Limpar</button>' : '') +
+        '<button class="btn-sm" id="es-familia">Agrupar por família</button>' +
       '</div>' +
       '<div class="pr-confere">' +
         '<span>Itens em estoque <b>' + linhas.length + '</b>' +
@@ -558,6 +565,86 @@ ERP.estoque = (function () {
      Uma linha por material, com o saldo total e a quebra de onde ele
      está. É a visão de quem repõe: o total diz se falta no hospital,
      a quebra diz se falta só no setor que consome. */
+  /* ── Estoque agrupado por família ──────────────────────────
+     Cento e vinte lentes em vinte graus são vinte linhas, e nenhuma
+     responde "quantas lentes eu tenho". A família responde — e, ao
+     abrir, mostra os graus.
+
+     Os graus ZERADOS aparecem de propósito: saber que o +21,0
+     acabou é mais útil que não ver a linha, porque é justamente o
+     que precisa de reposição. */
+  function posicaoFamilia() {
+    const am = armSel();
+    const q = String(buscaPosicao || '').trim().toUpperCase();
+    const grupos = S.estoquePorFamilia(am || null).filter(function (g) {
+      if (!q) return true;
+      return (g.nome || '').toUpperCase().indexOf(q) >= 0 ||
+        g.itens.some(function (i) {
+          return (i.descricao + ' ' + (i.codigo || '')).toUpperCase().indexOf(q) >= 0;
+        });
+    });
+
+    const comFamilia = grupos.filter(function (g) { return g.familia; });
+    const valor = grupos.reduce(function (a2, g) { return a2 + g.valor; }, 0);
+
+    let html = '<div class="filtros">' +
+        '<div class="f" style="flex:1"><label for="es-busca">Buscar material ou família</label>' +
+          '<input id="es-busca" value="' + U.esc(buscaPosicao || '') +
+          '" placeholder="ex.: lente"></div>' +
+        (q ? '<button class="btn-sm" id="es-busca-limpa">Limpar</button>' : '') +
+        '<button class="btn-sm" id="es-familia">Ver item a item</button>' +
+      '</div>' +
+      '<div class="pr-confere">' +
+        '<span>Famílias <b>' + comFamilia.length + '</b></span>' +
+        '<span>Linhas <b>' + grupos.length + '</b></span>' +
+        (veCusto() ? '<span>Valor do estoque <b>' + U.brl(valor) + '</b></span>' : '') +
+      '</div>';
+
+    if (!grupos.length) {
+      return html + '<div class="card"><div class="ajuda">Nada em estoque' +
+        (q ? ' com esse texto' : '') + '. A família aparece quando os materiais têm o campo ' +
+        '<b>família</b> preenchido no cadastro — é ele que junta "Lente +18,0" e "Lente +21,0" ' +
+        'numa linha só.</div></div>';
+    }
+
+    html += '<table class="rel"><thead><tr><th>Material / família</th>' +
+      '<th class="num">Saldo</th>' + (veCusto() ? '<th class="num">Valor</th>' : '') +
+      '<th>Variações</th><th></th></tr></thead><tbody>';
+
+    grupos.forEach(function (g, ix) {
+      const chave = g.familia || g.itens[0].produto;
+      const aberta = !!familiasAbertas[chave];
+      const ehFamilia = !!g.familia && g.itens.length > 1;
+      html += '<tr' + (ehFamilia ? ' style="font-weight:600;cursor:pointer" data-fam="' +
+          U.esc(chave) + '"' : '') + '>' +
+        '<td>' + (ehFamilia ? (aberta ? '▾ ' : '▸ ') : '') + U.esc(g.nome) + '</td>' +
+        '<td class="num">' + U.num(g.total) + ' <span class="sub">' + U.esc(g.unidade) + '</span></td>' +
+        (veCusto() ? '<td class="num">' + U.num(g.valor) + '</td>' : '') +
+        '<td class="sub">' + (ehFamilia
+          ? g.itens.length + ' variação(ões)' +
+            (g.zerados ? ' · <span style="color:var(--red)">' + g.zerados + ' zerada(s)</span>' : '')
+          : '—') + '</td>' +
+        '<td class="sub">' + (ehFamilia ? (aberta ? 'fechar' : 'abrir') : '') + '</td></tr>';
+
+      if (ehFamilia && aberta) {
+        g.itens.forEach(function (i) {
+          html += '<tr style="background:var(--surface-2,#f8fafb)">' +
+            '<td style="padding-left:26px" class="' + (i.saldo ? '' : 'sub') + '">' +
+              U.esc(i.descricao) +
+              (i.saldo ? '' : ' <span class="badge b-cancelado">zerado</span>') + '</td>' +
+            '<td class="num' + (i.saldo ? '' : ' sub') + '">' + U.num(i.saldo) + '</td>' +
+            (veCusto() ? '<td class="num sub">' + U.num(i.saldo * i.medio) + '</td>' : '') +
+            '<td class="sub">' + U.esc(i.codigo || '') + '</td><td></td></tr>';
+        });
+      }
+    });
+    html += '</tbody></table>' +
+      '<div class="ajuda">Clique na família para abrir as variações. As <b>zeradas</b> continuam ' +
+      'na lista: material que já esteve em estoque e acabou é o que precisa de reposição — some ' +
+      'da tela é o que faz ninguém lembrar de repor.</div>';
+    return html;
+  }
+
   function posicaoCasa(paiId) {
     const linhas = S.posicaoConsolidada(paiId).slice().sort(function (a2, b2) {
       return a2.produto.descricao.localeCompare(b2.produto.descricao, 'pt-BR');
@@ -1344,9 +1431,32 @@ ERP.estoque = (function () {
     });
     if (r.erro) return ERP.app.aviso(r.erro, 'erro');
 
+    /* A NOTA COMPLETA O CADASTRO. Material criado às pressas numa
+       requisição nasce sem NCM; o XML tem esse dado, e a entrada é
+       o momento em que ele está disponível sem ninguém procurar.
+       Só preenche o que está vazio. */
+    let completados = 0;
+    if (notaLida && notaLida.itens) {
+      itensGravar.forEach(function (i) {
+        const daNota = notaLida.itens.find(function (x) {
+          return x.produto === i.produto || x.codigo === i.codigo_nf;
+        });
+        if (!daNota) return;
+        const c = S.completarCadastroPelaNota(i.produto, daNota);
+        if (c.ok && c.preenchidos.length) completados++;
+      });
+    }
+
+    /* Quem ficou sem NCM aparece ao final. A entrada NÃO é
+       bloqueada: travar a chegada da mercadoria por um campo fiscal
+       faria o material ficar fora do sistema, e aí o saldo mente —
+       o que é pior que um NCM em branco. */
+    const semNcm = S.materiaisSemNCM(itensGravar);
+
     // o mesmo evento vira despesa: é isso que fecha compras → estoque → financeiro
     let aviso = r.n + ' material(is) no estoque de ' + nomeArm(armSel) + ' · ' + U.brl(r.valor) +
-      '.' + avisoRateio;
+      '.' + avisoRateio +
+      (completados ? ' ' + completados + ' cadastro(s) completado(s) com os dados da nota.' : '');
     if (U.el('en-financeiro') && U.el('en-financeiro').checked && r.valor > 0) {
       const fin = lancarNoFinanceiro(armSel, r.valor);
       aviso += fin.erro ? ' Estoque atualizado, mas o financeiro não: ' + fin.erro
@@ -1358,6 +1468,45 @@ ERP.estoque = (function () {
     armEntrada = '';
     despesasNota = 0;
     ERP.app.aviso(aviso, 'ok');
+
+    if (semNcm.length) {
+      /* Modal, não aviso que some: NCM faltando trava a emissão de
+         nota de saída depois, e a hora de resolver é agora, com a
+         nota do fornecedor aberta na frente. */
+      ERP.app.modal({
+        titulo: semNcm.length + ' material(is) sem NCM',
+        fecharTxt: 'Depois',
+        corpo:
+          '<div class="ajuda">A entrada foi gravada. Estes materiais ficaram sem NCM — a nota ' +
+          'não trouxe, ou foram cadastrados às pressas. Sem NCM, a <b>nota de saída</b> desses ' +
+          'itens não sai quando precisar.</div>' +
+          semNcm.map(function (p, ix) {
+            return '<div class="row2" style="margin-top:8px;align-items:end">' +
+              '<div><label>' + U.esc(p.codigo + ' · ' + p.descricao) + '</label>' +
+                '<input id="ncm-' + ix + '" data-pid="' + p.id + '" inputmode="numeric" ' +
+                'maxlength="10" placeholder="8 dígitos — ex.: 90183919"></div>' +
+              '<div class="sub">da nota do fornecedor</div></div>';
+          }).join(''),
+        acoes: [{ txt: 'Salvar NCM', cls: 'btn-aprovar', fn: function () {
+          let n = 0;
+          semNcm.forEach(function (p, ix) {
+            const e = U.el('ncm-' + ix);
+            const v = e ? String(e.value).replace(/\D/g, '') : '';
+            if (v.length >= 8) {
+              S.completarCadastroPelaNota(p.id, { ncm: v });
+              n++;
+            }
+          });
+          ERP.app.fecharModal();
+          ERP.app.aviso(n ? n + ' NCM preenchido(s).'
+            : 'Nenhum NCM válido — são 8 dígitos. Os materiais seguem pendentes em Cadastros.',
+            n ? 'ok' : 'erro');
+          render();
+        } }]
+      });
+      return;
+    }
+
     aba = 'posicao';
     render();
   }
@@ -1785,6 +1934,21 @@ ERP.estoque = (function () {
         if (ev.key === 'Enter') { buscaPosicao = this.value; render(); }
       });
     }
+    if (U.el('es-familia')) {
+      U.el('es-familia').addEventListener('click', function () {
+        agruparFamilia = !agruparFamilia;
+        render();
+      });
+    }
+    /* Clicar na família abre as variações. A escolha fica guardada:
+       fechar a tela e voltar mantém aberto o que estava aberto. */
+    document.querySelectorAll('[data-fam]').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        const k = this.dataset.fam;
+        familiasAbertas[k] = !familiasAbertas[k];
+        render();
+      });
+    });
     if (U.el('es-busca-limpa')) {
       U.el('es-busca-limpa').addEventListener('click', function () { buscaPosicao = ''; render(); });
     }

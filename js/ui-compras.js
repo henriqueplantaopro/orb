@@ -165,7 +165,9 @@ ERP.compras = (function () {
               U.esc(a.codigo + ' · ' + a.nome) + '</option>'; }).join('') + '</select></div>' +
         '<div><label>Prazo desejado</label><input type="date" id="cp-prazo" value="' +
           (r ? (r.prazo || '') : '') + '"></div></div>' +
-        '<h2 style="font-size:12px;margin:14px 0 6px">Materiais e quantidades</h2><div id="cp-itens"></div>' +
+        '<h2 style="font-size:12px;margin:14px 0 6px">Materiais e quantidades</h2>' +
+        listaMateriais() +
+        '<div id="cp-itens"></div>' +
         '<label>Observação</label><textarea id="cp-obs">' + U.esc(r ? (r.observacao || '') : '') + '</textarea>' +
         '<div class="ajuda">Quem requisita pede material e quantidade. Fornecedor e preço são de quem ' +
         'compra: ele cota e define no pedido, e o custo só existe na entrada do estoque.</div>',
@@ -196,23 +198,65 @@ ERP.compras = (function () {
     });
   }
 
+  /* Uma `datalist` só para todas as linhas: repetir a lista em cada
+     linha multiplicaria o HTML por quantos itens a requisição
+     tiver. */
+  function listaMateriais() {
+    return '<datalist id="lista-materiais">' +
+      D.produtos.filter(function (x) { return x.ativo; })
+        .sort(function (a, b) {
+          return (a.descricao || '').localeCompare(b.descricao || '', 'pt-BR');
+        })
+        .map(function (x) {
+          return '<option value="' + U.esc(x.codigo + ' · ' + x.descricao) + '">';
+        }).join('') +
+      '</datalist>';
+  }
+
+  /* Do texto digitado para o id do material. Aceita o rótulo
+     inteiro, só o código ou só a descrição — quem digita não sabe
+     qual formato o sistema espera. */
+  function acharProduto(txt) {
+    const t = String(txt || '').trim().toLowerCase();
+    if (!t) return '';
+    const lista = D.produtos.filter(function (x) { return x.ativo; });
+    const exato = lista.find(function (x) {
+      return (x.codigo + ' · ' + x.descricao).toLowerCase() === t ||
+        (x.codigo || '').toLowerCase() === t ||
+        (x.descricao || '').toLowerCase() === t;
+    });
+    if (exato) return exato.id;
+    /* Sem correspondência exata, tenta a única que contém o texto:
+       com mais de uma, não adivinha — deixa vazio e a pessoa
+       escolhe. */
+    const contem = lista.filter(function (x) {
+      return (x.codigo + ' ' + x.descricao).toLowerCase().indexOf(t) > -1;
+    });
+    return contem.length === 1 ? contem[0].id : '';
+  }
+
   function renderItens() {
     const box = U.el('cp-itens');
     box.innerHTML = itens.map(function (i, ix) {
       const p = prod(i.produto);
       return '<div class="rateio-lin" style="grid-template-columns:1fr 90px 26px">' +
-        /* "Cadastrar material" dentro da própria lista. Quem requisita
-           descobre que o item não existe justamente na hora de pedir
-           — mandar sair da janela, ir em Cadastros e voltar faz
-           perder a requisição pela metade, e na prática leva a
-           escolher um material parecido, que é pior. */
-        '<select data-i="' + ix + '" data-c="produto"><option value="">Material…</option>' +
-          D.produtos.filter(function (x) { return x.ativo; }).map(function (x) {
-            return '<option value="' + x.id + '"' + (x.id === i.produto ? ' selected' : '') + '>' +
-              U.esc(x.codigo + ' · ' + x.descricao) + '</option>'; }).join('') +
+        /* CAMPO DE BUSCA, não lista suspensa. Com cem materiais
+           cadastrados, rolar a lista até achar "luva" é pior que
+           digitar — e a opção de cadastrar, se ficasse no fim da
+           lista, exigiria rolar tudo para encontrá-la.
+
+           `datalist` dá busca nativa: a pessoa digita "luv" e o
+           navegador filtra. Funciona em celular, não precisa de
+           biblioteca, e quem sabe o código digita o código. */
+        '<div class="busca-mat">' +
+          '<input list="lista-materiais" data-i="' + ix + '" data-c="produto-txt" ' +
+            'value="' + U.esc(i.produto ? (prod(i.produto).codigo + ' · ' + prod(i.produto).descricao) : '') + '" ' +
+            'placeholder="digite parte do nome ou o código" autocomplete="off">' +
+          '<input type="hidden" data-i="' + ix + '" data-c="produto" value="' + U.esc(i.produto || '') + '">' +
           (S.podeMover('cadastros')
-            ? '<option value="__novo" style="font-weight:600">+ cadastrar material…</option>' : '') +
-          '</select>' +
+            ? '<button type="button" class="btn-sm" data-novo="' + ix + '" ' +
+              'title="Cadastrar um material que ainda não existe">+ novo</button>' : '') +
+        '</div>' +
         '<input class="num" data-i="' + ix + '" data-c="qtd" inputmode="decimal" value="' + U.num(i.qtd) + '" ' +
           'title="quantidade em ' + U.esc(p.unidade || '') + '">' +
         '<button class="btn-ghost" data-rem="' + ix + '" type="button">✕</button>' +
@@ -228,14 +272,16 @@ ERP.compras = (function () {
            POR CIMA da requisição, sem fechá-la: ao terminar, o
            material novo já vem escolhido naquela linha e a pessoa
            continua de onde parou. */
-        if (e.dataset.c === 'produto' && e.value === '__novo') {
-          const linha = +e.dataset.i;
-          e.value = itens[linha] ? (itens[linha].produto || '') : '';
-          lerItens();
-          cadastrarMaterialRapido(linha);
-          return;
-        }
         lerItens(); renderItens();
+      });
+    });
+    /* O botão fica NA LINHA, não no fim da lista: com cem materiais,
+       uma opção no fim da lista suspensa exigiria rolar tudo para
+       ser encontrada. */
+    box.querySelectorAll('[data-novo]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        lerItens();
+        cadastrarMaterialRapido(+this.dataset.novo);
       });
     });
     box.querySelectorAll('[data-rem]').forEach(function (b) {
@@ -324,12 +370,18 @@ ERP.compras = (function () {
   function lerItens() {
     const box = U.el('cp-itens');
     if (!box) return;
-    ['produto', 'qtd'].forEach(function (campo) {
-      box.querySelectorAll('[data-c="' + campo + '"]').forEach(function (e) {
-        const i = +e.dataset.i;
-        if (!itens[i]) return;
-        itens[i][campo] = campo === 'produto' ? e.value : U.parseValor(e.value);
-      });
+    /* O texto digitado vira id aqui: o campo visível guarda o
+       rótulo, o escondido guarda o id, e é o id que o resto do
+       sistema usa. */
+    box.querySelectorAll('[data-c="produto-txt"]').forEach(function (e) {
+      const i = +e.dataset.i;
+      if (!itens[i]) return;
+      itens[i].produto = acharProduto(e.value);
+    });
+    box.querySelectorAll('[data-c="qtd"]').forEach(function (e) {
+      const i = +e.dataset.i;
+      if (!itens[i]) return;
+      itens[i].qtd = U.parseValor(e.value);
     });
   }
 
