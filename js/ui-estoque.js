@@ -1118,7 +1118,26 @@ ERP.estoque = (function () {
     const unidades = linhasEntrada.reduce(function (s, i) {
       return s + (i.qtd || 0) * (i.un_emb || 1); }, 0);
     const colunas = 'grid-template-columns:2fr 70px 90px 90px 80px 100px 26px';
+
+    /* PREENCHER TODAS DE UMA VEZ. Nota com trinta itens da mesma
+       caixa de cem exigia digitar "100" trinta vezes — e basta
+       errar uma para o saldo daquele item ficar cem vezes menor,
+       erro que só aparece no inventário. */
+    const semCadastro = linhasEntrada.filter(function (i) {
+      return !i.produto && (i.descricao_nf || i.codigo_nf);
+    }).length;
+
     box.innerHTML =
+      '<div class="filtros" style="margin-bottom:8px;align-items:flex-end">' +
+        '<div class="f"><label for="en-emb-todas">Unidades por embalagem</label>' +
+          '<input class="num" id="en-emb-todas" inputmode="decimal" ' +
+          'placeholder="ex.: 100" style="width:110px"></div>' +
+        '<button class="btn-sm" id="en-emb-aplicar">Aplicar em todas</button>' +
+        (semCadastro
+          ? '<button class="btn-sm" id="en-cadastrar-todos" style="margin-left:auto">' +
+            'Cadastrar os ' + semCadastro + ' materiais sem cadastro</button>'
+          : '') +
+      '</div>' +
       '<div class="parcelas"><div class="cab" style="' + colunas + '">' +
         '<span>Material</span><span>Qtd da nota</span><span>Unid. por emb.</span>' +
         '<span>' + (veCusto() ? 'Custo unit.' : 'Custo') +
@@ -1204,6 +1223,90 @@ ERP.estoque = (function () {
         renderItensEntrada();
       });
     });
+    /* Aplicar a mesma embalagem em todas as linhas. Só onde está
+       vazio ou em 1: quem já digitou um valor diferente tinha
+       motivo, e sobrescrever apagaria a exceção sem avisar. */
+    const bAplicar = U.el('en-emb-aplicar');
+    if (bAplicar) {
+      bAplicar.addEventListener('click', function () {
+        const v = U.parseValor(U.val('en-emb-todas'));
+        if (!v || v <= 0) {
+          return ERP.app.aviso('Informe quantas unidades vêm em cada embalagem.', 'erro');
+        }
+        lerItensEntrada();
+        let n = 0;
+        linhasEntrada.forEach(function (i) {
+          if (!i.un_emb || i.un_emb === 1) { i.un_emb = v; n++; }
+        });
+        const mantidas = linhasEntrada.length - n;
+        renderItensEntrada();
+        ERP.app.aviso(n + ' linha(s) com ' + U.num(v) + ' por embalagem.' +
+          (mantidas ? ' ' + mantidas + ' mantida(s): já tinham outro valor.' : ''), 'ok');
+      });
+    }
+
+    /* CADASTRAR TODOS OS SEM REFERÊNCIA de uma vez. A nota traz
+       descrição e unidade de cada item; o que falta é o cadastro.
+       Fazer um a um, com trinta itens, é meia hora de janela
+       abrindo e fechando — e no meio disso alguém escolhe um
+       material parecido só para seguir em frente. */
+    const bCad = U.el('en-cadastrar-todos');
+    if (bCad) {
+      bCad.addEventListener('click', function () {
+        lerItensEntrada();
+        const faltam = linhasEntrada.filter(function (i) {
+          return !i.produto && (i.descricao_nf || i.codigo_nf);
+        });
+        if (!faltam.length) return;
+
+        ERP.app.modal({
+          titulo: 'Cadastrar ' + faltam.length + ' material(is)',
+          fecharTxt: 'Cancelar',
+          corpo:
+            '<div class="ajuda">Vêm da nota: descrição, unidade e NCM. Mínimo de estoque fica ' +
+            'zerado — um mínimo inventado dispara alerta de reposição errado todo mês, e quem ' +
+            'controla o estoque define depois.</div>' +
+            '<table class="rel" style="margin-top:10px"><thead><tr><th>Descrição (da nota)</th>' +
+            '<th style="width:70px">Un.</th><th style="width:110px">NCM</th></tr></thead><tbody>' +
+            faltam.map(function (i, ix) {
+              return '<tr><td><input id="cl-desc-' + ix + '" value="' +
+                  U.esc(i.descricao_nf || '') + '"></td>' +
+                '<td><input id="cl-un-' + ix + '" value="' + U.esc(i.unidade_nf || 'UN') + '"></td>' +
+                '<td><input id="cl-ncm-' + ix + '" value="' + U.esc(i.ncm_nf || '') + '" ' +
+                  'inputmode="numeric" maxlength="10"></td></tr>';
+            }).join('') + '</tbody></table>',
+          acoes: [{ txt: 'Cadastrar todos', cls: 'btn-aprovar', fn: function () {
+            let criados = 0, repetidos = 0;
+            faltam.forEach(function (i, ix) {
+              const desc = U.val('cl-desc-' + ix).trim();
+              if (!desc) return;
+              const r = S.cadastrarMaterial({
+                descricao: desc,
+                unidade: U.val('cl-un-' + ix).trim() || 'UN',
+                ncm: String(U.val('cl-ncm-' + ix)).replace(/\D/g, '')
+              });
+              if (r.ok) {
+                i.produto = r.produto.id;
+                criados++;
+              } else {
+                /* Já existia: liga a linha ao que está no cadastro
+                   em vez de criar um segundo igual. */
+                const igual = D.produtos.find(function (p) {
+                  return (p.descricao || '').trim().toLowerCase() === desc.toLowerCase();
+                });
+                if (igual) { i.produto = igual.id; repetidos++; }
+              }
+            });
+            ERP.app.fecharModal();
+            renderItensEntrada();
+            ERP.app.aviso(criados + ' material(is) cadastrado(s)' +
+              (repetidos ? ' · ' + repetidos + ' já existia(m) e foi(ram) aproveitado(s)' : '') + '.',
+              'ok');
+          } }]
+        });
+      });
+    }
+
     U.el('en-add').addEventListener('click', function () {
       lerItensEntrada();
       linhasEntrada.push({ produto: '', qtd: 0, custo: 0, lote: '', validade: '', nome_nf: '' });
@@ -1276,6 +1379,13 @@ ERP.estoque = (function () {
             produto: aceita ? top.produto.id : '', qtd: i.qtd || 0,
             custo: i.valorUnit || (i.qtd ? Math.round(i.valor / i.qtd * 10000) / 10000 : 0),
             lote: '', validade: '', nome_nf: i.descricao,
+            /* O que a NOTA traz sobre o item, guardado para o
+               cadastro em lote: descrição, unidade e NCM vêm de lá,
+               e é o que evita digitar tudo de novo. */
+            descricao_nf: i.descricao || '',
+            codigo_nf: i.codigo || '',
+            unidade_nf: (i.unidade || 'UN').toUpperCase(),
+            ncm_nf: i.ncm || '',
             itemNf: i, sug: sug
           };
         });
