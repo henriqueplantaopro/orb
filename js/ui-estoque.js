@@ -1460,19 +1460,27 @@ ERP.estoque = (function () {
       acoes: [{ txt: 'Cadastrar e vincular', cls: 'btn-aprovar', fn: function () {
         const desc = U.val('np-desc');
         if (!desc) return ERP.app.aviso('Informe a descrição do material.', 'erro');
-        const p = {
-          id: 'pr' + Date.now().toString(36), codigo: U.val('np-cod') || prox,
-          descricao: desc, unidade: (U.val('np-un') || 'UN').toUpperCase(),
-          ncm: U.val('np-ncm'), ean: U.val('np-ean'),
-          codigo_fornecedor: U.val('np-codf'),
-          minimo: U.parseValor(U.val('np-min')), ideal: U.parseValor(U.val('np-ideal')),
-          custo: U.parseValor(U.val('np-custo')), conta: U.val('np-conta'),
-          origem: 'nota fiscal', ativo: true
-        };
-        if (D.produtos.some(function (x) { return String(x.codigo).toUpperCase() === p.codigo.toUpperCase(); })) {
-          return ERP.app.aviso('Já existe material com o código ' + p.codigo + '.', 'erro');
-        }
-        D.produtos.push(p);
+        /* Pelo MESMO caminho do cadastro em lote. Antes este
+           gravava direto em `dados.produtos`, sem verificação de
+           permissão nem de repetido, e o outro passava pelo store —
+           dois comportamentos para o mesmo ato, e a diferença só
+           aparecia quando um funcionava e o outro não. */
+        const r = S.cadastrarMaterial({
+          descricao: desc,
+          unidade: (U.val('np-un') || 'UN').toUpperCase(),
+          codigo: U.val('np-cod') || prox,
+          ncm: U.val('np-ncm'),
+          conta: U.val('np-conta')
+        });
+        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        const p = r.produto;
+        /* Os campos que só este caminho oferece. */
+        p.ean = U.val('np-ean');
+        p.codigo_fornecedor = U.val('np-codf');
+        p.minimo = U.parseValor(U.val('np-min'));
+        p.ideal = U.parseValor(U.val('np-ideal'));
+        p.custo = U.parseValor(U.val('np-custo'));
+        p.origem = 'nota fiscal';
         linhasEntrada[ix].produto = p.id;
         linhasEntrada[ix].cadastradoAgora = true;
         if (!linhasEntrada[ix].custo) linhasEntrada[ix].custo = p.custo;
@@ -1566,7 +1574,7 @@ ERP.estoque = (function () {
         const cr = {
           /* Id pela sequência do sistema, não pelo relógio: dois
              cadastros no mesmo milissegundo recebiam o mesmo id. */
-          id: S.proximoIdCredor ? S.proximoIdCredor() : ('cr' + Date.now().toString(36)),
+          id: S.proximoId('cr'),
           ativo: true, nome: nome,
           fantasia: U.val('nc-fant'), documento: U.val('nc-doc'), ie: U.val('nc-ie'),
           endereco: U.val('nc-end'), municipio: U.val('nc-mun'), uf: U.val('nc-uf'),
