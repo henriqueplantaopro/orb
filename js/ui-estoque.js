@@ -752,6 +752,12 @@ ERP.estoque = (function () {
   }
 
   /* ── entrada de material: XML, PDF ou manual ────────────*/
+  /* Despesas da nota e como dividi-las. Ficam fora da função
+     porque a tela se redesenha ao escolher pedido ou ler XML, e o
+     valor digitado não pode se perder nesse caminho. */
+  let despesasNota = 0;
+  let criterioRateio = 'quantidade';
+
   function telaEntrada() {
     return '<div class="pr-cab">' +
         '<div><label for="en-armazem">Armazém de destino *</label>' +
@@ -765,6 +771,25 @@ ERP.estoque = (function () {
           '<div class="ajuda">Começa igual à da nota e pode ser corrigida — a mercadoria chega ' +
           'depois da emissão. A data do lançamento no sistema é registrada sozinha.</div></div>' +
         '<div><label for="en-doc">Nota / documento</label><input id="en-doc" placeholder="nº da NF ou recibo"></div>' +
+        /* DESPESAS DA NOTA: frete, seguro, o que vier no total e não
+           por item. Sem ratear, o custo do estoque fica abaixo do
+           que a empresa pagou — e o efeito aparece longe, no custo
+           do material da cirurgia e na margem do projeto. */
+        '<div><label for="en-despesas">Frete e outras despesas da nota</label>' +
+          '<input class="num" id="en-despesas" inputmode="decimal" value="' +
+            U.num(despesasNota) + '">' +
+          '<div class="ajuda">Total da nota, não por item — o sistema divide entre os ' +
+          'materiais abaixo.</div></div>' +
+        '<div><label for="en-criterio">Dividir o frete por</label>' +
+          '<select id="en-criterio">' +
+            '<option value="quantidade"' + (criterioRateio === 'quantidade' ? ' selected' : '') +
+              '>Quantidade — cada unidade leva a mesma fatia</option>' +
+            '<option value="valor"' + (criterioRateio === 'valor' ? ' selected' : '') +
+              '>Valor — item caro leva mais frete</option>' +
+          '</select>' +
+          '<div class="ajuda">Por quantidade serve para material parecido em peso e volume. ' +
+          'Por valor, quando a nota mistura coisas de preço muito diferente — senão a gaze ' +
+          'barata carrega o mesmo frete do equipamento caro.</div></div>' +
         /* Pedido e armazém agora vêm do ESTADO, não do padrão: escolher
            o pedido redesenha a tela pra trazer os itens, e os dois
            campos voltavam a zero — a entrada gravava sem pedido, o
@@ -1290,6 +1315,23 @@ ERP.estoque = (function () {
   function gravarEntrada() {
     lerItensEntrada();
     const armSel = U.val('en-armazem');
+
+    /* As despesas da nota são divididas entre os itens ANTES de
+       gravar: o que chega ao estoque é o custo real de aquisição,
+       não o preço da mercadoria. Daqui pra frente o sistema inteiro
+       — custo do procedimento, margem do projeto, DRE — trabalha
+       com o número certo, sem saber que houve rateio. */
+    despesasNota = U.parseValor(U.val('en-despesas')) || 0;
+    criterioRateio = U.val('en-criterio') || 'quantidade';
+    let itensGravar = linhasEntrada;
+    let avisoRateio = '';
+    if (despesasNota > 0) {
+      const rt = S.ratearDespesasNota(linhasEntrada, despesasNota, criterioRateio);
+      itensGravar = rt.itens;
+      avisoRateio = ' ' + U.brl(rt.rateado) + ' de frete/despesas dividido(s) por ' +
+        (rt.criterio === 'valor' ? 'valor' : 'quantidade') + '.';
+    }
+
     const r = S.entradaLote({
       armazem: armSel, data: U.val('en-data'),
       data_nf: U.val('en-nf-data') || (notaLida ? notaLida.emissao : null),
@@ -1298,12 +1340,13 @@ ERP.estoque = (function () {
       origem: notaLida ? 'nota_fiscal' : 'manual',
       nota_chave: notaLida ? notaLida.chave : null,
       motivo: notaLida ? 'Entrada por nota' : 'Entrada manual',
-      itens: linhasEntrada
+      itens: itensGravar
     });
     if (r.erro) return ERP.app.aviso(r.erro, 'erro');
 
     // o mesmo evento vira despesa: é isso que fecha compras → estoque → financeiro
-    let aviso = r.n + ' material(is) no estoque de ' + nomeArm(armSel) + ' · ' + U.brl(r.valor) + '.';
+    let aviso = r.n + ' material(is) no estoque de ' + nomeArm(armSel) + ' · ' + U.brl(r.valor) +
+      '.' + avisoRateio;
     if (U.el('en-financeiro') && U.el('en-financeiro').checked && r.valor > 0) {
       const fin = lancarNoFinanceiro(armSel, r.valor);
       aviso += fin.erro ? ' Estoque atualizado, mas o financeiro não: ' + fin.erro
@@ -1313,6 +1356,7 @@ ERP.estoque = (function () {
     notaLida = null;
     pedidoSel = '';
     armEntrada = '';
+    despesasNota = 0;
     ERP.app.aviso(aviso, 'ok');
     aba = 'posicao';
     render();
@@ -1766,6 +1810,22 @@ ERP.estoque = (function () {
     if (U.el('en-arquivo')) {
       U.el('en-arquivo').addEventListener('change', lerArquivoEntrada);
       U.el('en-gravar').addEventListener('click', gravarEntrada);
+      /* As despesas ficam guardadas: a tela se redesenha ao escolher
+         pedido ou ler XML, e perder o valor digitado faria a pessoa
+         redigitar sem perceber que havia sumido. */
+      if (U.el('en-despesas')) {
+        U.el('en-despesas').addEventListener('change', function () {
+          despesasNota = U.parseValor(this.value) || 0;
+        });
+      }
+      if (U.el('en-criterio')) {
+        U.el('en-criterio').addEventListener('change', function () {
+          criterioRateio = this.value;
+          /* Redesenha para a prévia acompanhar a escolha. */
+          lerItensEntrada();
+          render();
+        });
+      }
       renderItensEntrada();
     }
     if (U.el('iv-gravar')) U.el('iv-gravar').addEventListener('click', gravarInventario);

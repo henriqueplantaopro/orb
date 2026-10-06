@@ -9649,6 +9649,68 @@ ERP.store = (function () {
 
      Mora no store de propósito: a mesma conta vale para o recebimento
      de pedido e para a entrada por XML. */
+  /* RATEIO DAS DESPESAS DA NOTA entre os itens.
+
+     Frete, seguro e outras despesas vêm no total da nota, não por
+     item — e sem rateá-las o custo do estoque fica abaixo do que a
+     empresa pagou de verdade. O efeito aparece longe: o custo do
+     material na cirurgia sai menor, a margem do projeto parece
+     melhor do que é, e a diferença só aparece no fechamento.
+
+     Dois critérios, porque nenhum serve sempre:
+
+     `quantidade` — cada unidade carrega a mesma fatia. É o certo
+     quando o frete depende de volume ou peso parecido entre os
+     itens, que é o caso da maior parte do material hospitalar.
+
+     `valor` — cada item carrega proporcional ao que custa. É o
+     certo quando a nota mistura coisas de preço muito diferente:
+     ratear por quantidade faria a gaze barata carregar o mesmo
+     frete que o equipamento caro.
+
+     Devolve os itens com `frete` preenchido por linha, que é o
+     formato que `entrada()` já entende. O resto do sistema não
+     precisa saber que houve rateio. */
+  function ratearDespesasNota(itens, despesas, criterio) {
+    const lista = (itens || []).filter(function (i) { return (Number(i.qtd) || 0) > 0; });
+    const total = Math.round((Number(despesas) || 0) * 100) / 100;
+    if (!lista.length || !(total > 0)) {
+      return { itens: itens || [], rateado: 0, criterio: criterio || 'quantidade' };
+    }
+
+    const modo = criterio === 'valor' ? 'valor' : 'quantidade';
+    const peso = function (i) {
+      return modo === 'valor'
+        ? (Number(i.qtd) || 0) * (Number(i.custo) || 0)
+        : (Number(i.qtd) || 0);
+    };
+    const somaPesos = lista.reduce(function (a2, i) { return a2 + peso(i); }, 0);
+    /* Nota com tudo a custo zero não tem como ratear por valor —
+       cai para quantidade em vez de dividir por zero. */
+    if (!(somaPesos > 0)) return ratearDespesasNota(itens, despesas, 'quantidade');
+
+    let distribuido = 0;
+    const out = lista.map(function (i, k) {
+      let parte;
+      if (k === lista.length - 1) {
+        /* O último fecha a conta: arredondar item a item deixa
+           centavos sobrando, e o total rateado tem de bater com o
+           total da nota — é esse número que vai para o financeiro. */
+        parte = Math.round((total - distribuido) * 100) / 100;
+      } else {
+        parte = Math.round(total * (peso(i) / somaPesos) * 100) / 100;
+        distribuido = Math.round((distribuido + parte) * 100) / 100;
+      }
+      return Object.assign({}, i, {
+        frete: Math.round(((Number(i.frete) || 0) + parte) * 100) / 100,
+        despesa_rateada: parte
+      });
+    });
+
+    return { itens: out, rateado: total, criterio: modo,
+      por_unidade: modo === 'quantidade' ? Math.round(total / somaPesos * 10000) / 10000 : null };
+  }
+
   function custoDeAquisicao(item, produto) {
     if (!item || !item.custo) return (produto && produto.custo) || 0;
     const total = Number(item.qtd) || 0;
@@ -16500,7 +16562,7 @@ ERP.store = (function () {
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
-    ajusteInventario, custoDeAquisicao,
+    ajusteInventario, custoDeAquisicao, ratearDespesasNota,
     transferirEntreContas, transferenciasBanco, cancelarTransferenciaBanco,
     analisarNFSeImportacao, importarNFSe,
     recebidoNaConta, recebidoSemConta, ultimoInventario, checarDataInventario,

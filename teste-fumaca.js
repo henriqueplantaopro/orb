@@ -6884,3 +6884,47 @@ function liberarParaFaturar(centro, competencia) {
     b.local + ' / ' + b.status);
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v75: frete da nota rateado entre os itens ──
+(function () {
+  /* Frete vem no total da nota, não por item. Sem ratear, o custo
+     do estoque fica abaixo do que a empresa pagou — e o efeito
+     aparece longe: custo menor na cirurgia, margem do projeto
+     parecendo melhor do que é, diferença só no fechamento. */
+  const itens = [
+    { produto: 'pr01', qtd: 100, custo: 1.00 },
+    { produto: 'pr02', qtd: 50, custo: 10.00 },
+    { produto: 'pr03', qtd: 10, custo: 0.50 }
+  ];
+
+  const porQtd = S.ratearDespesasNota(itens, 320, 'quantidade');
+  const somaQtd = porQtd.itens.reduce(function (a, i) { return a + i.despesa_rateada; }, 0);
+  verificar('v75 — rateio por quantidade fecha no total da nota',
+    Math.abs(somaQtd - 320) < 0.001, somaQtd);
+  verificar('v75 — e cada unidade leva a mesma fatia',
+    Math.abs(porQtd.itens[0].despesa_rateada / 100 -
+             porQtd.itens[1].despesa_rateada / 50) < 0.001,
+    porQtd.itens.map(function (i) { return i.despesa_rateada; }).join(' / '));
+
+  const porValor = S.ratearDespesasNota(itens, 320, 'valor');
+  const somaValor = porValor.itens.reduce(function (a, i) { return a + i.despesa_rateada; }, 0);
+  verificar('v75 — rateio por valor também fecha no centavo',
+    Math.abs(somaValor - 320) < 0.001, somaValor);
+  verificar('v75 — e o item caro carrega mais frete',
+    porValor.itens[1].despesa_rateada > porValor.itens[0].despesa_rateada,
+    porValor.itens[1].despesa_rateada + ' vs ' + porValor.itens[0].despesa_rateada);
+
+  /* Nota inteira a custo zero não pode dividir por zero: cai para
+     quantidade em vez de quebrar. */
+  const zerados = [{ produto: 'pr01', qtd: 10, custo: 0 }, { produto: 'pr02', qtd: 10, custo: 0 }];
+  const r0 = S.ratearDespesasNota(zerados, 100, 'valor');
+  verificar('v75 — custo zero não quebra o rateio por valor',
+    r0.criterio === 'quantidade' &&
+    Math.abs(r0.itens.reduce(function (a, i) { return a + i.despesa_rateada; }, 0) - 100) < 0.001,
+    r0.criterio);
+
+  /* Sem despesa, nada muda. */
+  const semFrete = S.ratearDespesasNota(itens, 0, 'quantidade');
+  verificar('v75 — sem despesa, os itens passam intactos',
+    semFrete.rateado === 0 && semFrete.itens.length === itens.length, '');
+})();
