@@ -84,7 +84,12 @@ ERP.app = (function () {
 
   /* ── modal ─────────────────────────────────────────────*/
   function modal(cfg) {
+    /* Fecha o anterior SEM disparar o `aoFechar` dele: abrir um
+       modal por cima de outro não é o mesmo que fechá-lo, e chamar
+       a volta aqui criaria um vai-e-vem sem fim. */
+    aoFecharModal = null;
     fecharModal();
+    aoFecharModal = cfg.aoFechar || null;
     const fundo = document.createElement('div');
     fundo.className = 'modal-fundo';
     fundo.id = 'modal-fundo';
@@ -123,10 +128,21 @@ ERP.app = (function () {
     if (cfg.aoAbrir) cfg.aoAbrir();
   }
   function escFecha(e) { if (e.key === 'Escape') fecharModal(); }
+  /* `aoFechar` roda quando o modal é fechado de QUALQUER jeito — X,
+     Esc, clique fora ou botão de cancelar. Serve para quem abriu um
+     modal por cima de outro: o sistema tem só um, e sem isso a
+     pessoa cai na lista em vez de voltar de onde veio. */
+  let aoFecharModal = null;
+
   function fecharModal() {
     const f = U.el('modal-fundo');
     if (f) f.remove();
     document.removeEventListener('keydown', escFecha);
+    const fn = aoFecharModal;
+    /* Limpa ANTES de chamar: a função costuma reabrir outro modal,
+       e o dela não pode herdar este. */
+    aoFecharModal = null;
+    if (typeof fn === 'function') fn();
   }
 
   /* ── módulos ───────────────────────────────────────────*/

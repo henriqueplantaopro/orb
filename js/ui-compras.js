@@ -142,10 +142,19 @@ ERP.compras = (function () {
   /* ── nova requisição à mão ──────────────────────────────*/
   let itens = [];
 
-  function nova(id) {
+  /* Qual requisição está aberta, para poder reabri-la depois do
+     cadastro de material. O sistema tem UM modal: abrir o cadastro
+     por cima substitui a requisição, e fechá-lo deixaria a pessoa
+     na tela de lista, com o que já tinha digitado perdido. */
+  let reqAberta = null;
+
+  function nova(id, manterItens) {
     const r = id ? S.compra(id) : null;
-    itens = r ? r.itens.map(function (i) { return { produto: i.produto, qtd: i.qtd }; })
-              : [{ produto: '', qtd: 0 }];
+    reqAberta = id || null;
+    if (!manterItens) {
+      itens = r ? r.itens.map(function (i) { return { produto: i.produto, qtd: i.qtd }; })
+                : [{ produto: '', qtd: 0 }];
+    }
     ERP.app.modal({
       titulo: r ? 'Requisição ' + r.numero : 'Nova requisição de compra',
       corpo:
@@ -192,10 +201,18 @@ ERP.compras = (function () {
     box.innerHTML = itens.map(function (i, ix) {
       const p = prod(i.produto);
       return '<div class="rateio-lin" style="grid-template-columns:1fr 90px 26px">' +
+        /* "Cadastrar material" dentro da própria lista. Quem requisita
+           descobre que o item não existe justamente na hora de pedir
+           — mandar sair da janela, ir em Cadastros e voltar faz
+           perder a requisição pela metade, e na prática leva a
+           escolher um material parecido, que é pior. */
         '<select data-i="' + ix + '" data-c="produto"><option value="">Material…</option>' +
           D.produtos.filter(function (x) { return x.ativo; }).map(function (x) {
             return '<option value="' + x.id + '"' + (x.id === i.produto ? ' selected' : '') + '>' +
-              U.esc(x.codigo + ' · ' + x.descricao) + '</option>'; }).join('') + '</select>' +
+              U.esc(x.codigo + ' · ' + x.descricao) + '</option>'; }).join('') +
+          (S.podeMover('cadastros')
+            ? '<option value="__novo" style="font-weight:600">+ cadastrar material…</option>' : '') +
+          '</select>' +
         '<input class="num" data-i="' + ix + '" data-c="qtd" inputmode="decimal" value="' + U.num(i.qtd) + '" ' +
           'title="quantidade em ' + U.esc(p.unidade || '') + '">' +
         '<button class="btn-ghost" data-rem="' + ix + '" type="button">✕</button>' +
@@ -206,7 +223,20 @@ ERP.compras = (function () {
       ' item(ns)</span></div>';
 
     box.querySelectorAll('select,input').forEach(function (e) {
-      e.addEventListener('change', function () { lerItens(); renderItens(); });
+      e.addEventListener('change', function () {
+        /* Escolher "cadastrar material" abre a janela de cadastro
+           POR CIMA da requisição, sem fechá-la: ao terminar, o
+           material novo já vem escolhido naquela linha e a pessoa
+           continua de onde parou. */
+        if (e.dataset.c === 'produto' && e.value === '__novo') {
+          const linha = +e.dataset.i;
+          e.value = itens[linha] ? (itens[linha].produto || '') : '';
+          lerItens();
+          cadastrarMaterialRapido(linha);
+          return;
+        }
+        lerItens(); renderItens();
+      });
     });
     box.querySelectorAll('[data-rem]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -219,6 +249,75 @@ ERP.compras = (function () {
       lerItens();
       itens.push({ produto: '', qtd: 0 });
       renderItens();
+    });
+  }
+
+  /* Cadastro de material sem sair da requisição.
+
+     Só o essencial: descrição, unidade e código. Mínimo, ideal,
+     NCM e conta contábil ficam para depois — pedir tudo agora faria
+     a pessoa abandonar no meio ou inventar número, e material com
+     mínimo inventado dispara alerta de reposição errado por meses.
+
+     Quem requisita costuma saber o que é e em que unidade compra;
+     o resto é de quem controla o estoque. */
+  function cadastrarMaterialRapido(linha) {
+    /* Desistir do cadastro devolve a requisição, não a lista: quem
+       cancelou quis desistir do material, não do pedido inteiro. */
+    const voltar = function () { nova(reqAberta, true); };
+    ERP.app.modal({
+      titulo: 'Cadastrar material',
+      fecharTxt: 'Voltar à requisição',
+      aoFechar: voltar,
+      corpo:
+        '<label for="np-desc">Descrição *</label>' +
+        '<input id="np-desc" placeholder="ex.: Luva cirúrgica estéril 7,5">' +
+        '<div class="row2" style="margin-top:8px">' +
+          '<div><label for="np-un">Unidade</label>' +
+            '<input id="np-un" value="UN" placeholder="UN, CX, PCT, PAR"></div>' +
+          '<div><label for="np-cod">Código</label>' +
+            '<input id="np-cod" placeholder="deixe vazio para gerar"></div>' +
+        '</div>' +
+        '<div class="ajuda">Só o essencial. Mínimo de estoque, NCM e conta contábil ficam para ' +
+        'quem controla o estoque completar depois — material com mínimo inventado dispara alerta ' +
+        'de reposição errado por meses.</div>' +
+        '<div id="np-erro"></div>',
+      acoes: [{ txt: 'Cadastrar e usar', cls: 'btn-aprovar', fn: function () {
+        const desc = U.val('np-desc').trim();
+        const erro = U.el('np-erro');
+        if (!desc) {
+          if (erro) erro.innerHTML = '<div class="login-erro">Informe a descrição.</div>';
+          return;
+        }
+        /* Material repetido é pior que material faltando: duas
+           entradas para a mesma coisa partem o saldo em dois e
+           nenhuma mostra o total. */
+        const igual = D.produtos.find(function (p) {
+          return (p.descricao || '').trim().toLowerCase() === desc.toLowerCase();
+        });
+        if (igual) {
+          if (erro) {
+            erro.innerHTML = '<div class="login-erro">Já existe: <b>' +
+              U.esc(igual.codigo + ' · ' + igual.descricao) + '</b>. Use esse na lista.</div>';
+          }
+          return;
+        }
+        const r = S.cadastrarMaterial({
+          descricao: desc,
+          unidade: U.val('np-un').trim() || 'UN',
+          codigo: U.val('np-cod').trim()
+        });
+        if (r.erro) {
+          if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+          return;
+        }
+        /* Já escolhido na linha de onde a pessoa veio, e a
+           requisição reabre com tudo que estava digitado. */
+        if (itens[linha]) itens[linha].produto = r.produto.id;
+        nova(reqAberta, true);
+        ERP.app.aviso('Material cadastrado e escolhido: ' + r.produto.codigo + ' · ' +
+          r.produto.descricao + '. Complete o mínimo de estoque em Cadastros quando puder.', 'ok');
+      } }]
     });
   }
 
