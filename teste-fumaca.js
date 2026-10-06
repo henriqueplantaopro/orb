@@ -7145,3 +7145,66 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v82 — e aponta para a mesma lista de dados, não uma cópia',
     duplicadas.length === 0, duplicadas.join(', '));
 })();
+
+// ── ERP teste2 v84: o mapa de gravação só cita colunas que existem ──
+(function () {
+  /* "Could not find the 'cest' column of 'produtos'" derruba o lote
+     inteiro: o lançamento não grava e a pessoa vê um erro que não
+     tem nada a ver com o que estava fazendo.
+
+     Aconteceu três vezes seguidas — 'extra', depois 'cest' — porque
+     eu corrigia a coluna que apareceu em vez da CLASSE. Este teste
+     compara o mapa inteiro com o schema e acusa antes de chegar ao
+     banco de alguém. */
+  const fs = require('fs');
+  const dir = __dirname + '/supabase/';
+  const arqs = fs.readdirSync(dir).filter(function (f) { return /\.sql$/.test(f); });
+  const todos = arqs.map(function (f) { return fs.readFileSync(dir + f, 'utf8'); }).join('\n');
+  const sch = fs.readFileSync(dir + '01-schema.sql', 'utf8');
+
+  function colunasDe(tab) {
+    const set = {};
+    const m = sch.match(new RegExp('create table ' + tab + ' \\(([\\s\\S]*?)\\n\\);'));
+    if (m) {
+      m[1].replace(/--[^\n]*/g, '').split(',').forEach(function (p) {
+        const t = p.trim();
+        if (!t) return;
+        const n = t.split(/\s+/)[0];
+        if (/^[a-z_][a-z0-9_]*$/.test(n) &&
+            ['primary', 'unique', 'check', 'foreign', 'constraint', 'references'].indexOf(n) < 0) {
+          set[n] = true;
+        }
+      });
+    }
+    /* Pega TODAS as colunas de um `alter table` — inclusive a
+       forma com várias de uma vez, separadas por vírgula, que é
+       como a etapa 34 as criou. A primeira versão deste teste só
+       via a primeira de cada comando e acusava divergência que não
+       existia. */
+    const reBloco = new RegExp('alter table ' + tab + '\\s+((?:add column if not exists[^;]*?))(?=;)', 'g');
+    let m2;
+    while ((m2 = reBloco.exec(todos))) {
+      const nomes = m2[1].match(/add column if not exists\s+(\w+)/g) || [];
+      nomes.forEach(function (n) {
+        set[n.replace(/add column if not exists\s+/, '')] = true;
+      });
+    }
+    return set;
+  }
+
+  const persist = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const re = /^\s*(\w+): \{ tabela: '(\w+)', colunas: \[([^\]]*)\]/gm;
+  const divergencias = [];
+  let m;
+  while ((m = re.exec(persist))) {
+    const tab = m[2];
+    const reais = colunasDe(tab);
+    if (!Object.keys(reais).length) continue;   // tabela fora do schema: nada a conferir
+    m[3].split(',').map(function (c) { return c.trim().replace(/'/g, ''); })
+      .forEach(function (c) {
+        if (c && !reais[c]) divergencias.push(tab + '.' + c);
+      });
+  }
+  verificar('v84 — o mapa de gravação só cita colunas que o banco tem',
+    divergencias.length === 0, divergencias.join(', '));
+})();

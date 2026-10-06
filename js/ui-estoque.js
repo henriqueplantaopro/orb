@@ -1123,8 +1123,13 @@ ERP.estoque = (function () {
        caixa de cem exigia digitar "100" trinta vezes — e basta
        errar uma para o saldo daquele item ficar cem vezes menor,
        erro que só aparece no inventário. */
+    /* Qualquer linha SEM VÍNCULO que tenha um nome vindo da nota.
+       Antes dependia de `descricao_nf`, preenchido só num dos
+       caminhos de leitura — e no outro o botão simplesmente não
+       aparecia, sem nada explicando. `nome_nf` é o campo que todos
+       os caminhos preenchem. */
     const semCadastro = linhasEntrada.filter(function (i) {
-      return !i.produto && (i.descricao_nf || i.codigo_nf);
+      return !i.produto && (i.descricao_nf || i.nome_nf || i.codigo_nf);
     }).length;
 
     box.innerHTML =
@@ -1255,7 +1260,7 @@ ERP.estoque = (function () {
       bCad.addEventListener('click', function () {
         lerItensEntrada();
         const faltam = linhasEntrada.filter(function (i) {
-          return !i.produto && (i.descricao_nf || i.codigo_nf);
+          return !i.produto && (i.descricao_nf || i.nome_nf || i.codigo_nf);
         });
         if (!faltam.length) return;
 
@@ -1270,9 +1275,11 @@ ERP.estoque = (function () {
             '<th style="width:70px">Un.</th><th style="width:110px">NCM</th></tr></thead><tbody>' +
             faltam.map(function (i, ix) {
               return '<tr><td><input id="cl-desc-' + ix + '" value="' +
-                  U.esc(i.descricao_nf || '') + '"></td>' +
-                '<td><input id="cl-un-' + ix + '" value="' + U.esc(i.unidade_nf || 'UN') + '"></td>' +
-                '<td><input id="cl-ncm-' + ix + '" value="' + U.esc(i.ncm_nf || '') + '" ' +
+                  U.esc(i.descricao_nf || i.nome_nf || '') + '"></td>' +
+                '<td><input id="cl-un-' + ix + '" value="' +
+                  U.esc(i.unidade_nf || (i.itemNf && i.itemNf.unidade) || 'UN') + '"></td>' +
+                '<td><input id="cl-ncm-' + ix + '" value="' +
+                  U.esc(i.ncm_nf || (i.itemNf && i.itemNf.ncm) || '') + '" ' +
                   'inputmode="numeric" maxlength="10"></td></tr>';
             }).join('') + '</tbody></table>',
           acoes: [{ txt: 'Cadastrar todos', cls: 'btn-aprovar', fn: function () {
@@ -1557,7 +1564,10 @@ ERP.estoque = (function () {
         const nome = U.val('nc-nome');
         if (!nome) return ERP.app.aviso('Informe a razão social.', 'erro');
         const cr = {
-          id: 'cr' + Date.now().toString(36), ativo: true, nome: nome,
+          /* Id pela sequência do sistema, não pelo relógio: dois
+             cadastros no mesmo milissegundo recebiam o mesmo id. */
+          id: S.proximoIdCredor ? S.proximoIdCredor() : ('cr' + Date.now().toString(36)),
+          ativo: true, nome: nome,
           fantasia: U.val('nc-fant'), documento: U.val('nc-doc'), ie: U.val('nc-ie'),
           endereco: U.val('nc-end'), municipio: U.val('nc-mun'), uf: U.val('nc-uf'),
           fone: U.val('nc-fone'), tipo: 'fornecedor',
@@ -1566,13 +1576,21 @@ ERP.estoque = (function () {
           banco_nome: U.val('nc-banco'), agencia: U.val('nc-ag'), conta: U.val('nc-conta-num'),
           pix: U.val('nc-pix') || null,
           tipo_chave: U.val('nc-pix') ? (/@/.test(U.val('nc-pix')) ? 'email' : 'CNPJ') : null,
-          origem: 'nota fiscal'
+          origem: 'nota fiscal',
+          /* PENDENTE DE APROVAÇÃO. Quem dá entrada de nota cadastra
+             o fornecedor — sem isso a entrada não grava —, mas quem
+             libera o pagamento é o financeiro. Conta bancária que
+             entrou junto com a mercadoria precisa de um segundo par
+             de olhos antes do primeiro pagamento. */
+          dados_aprovados: false
         };
         D.credores.push(cr);
         U.setVal('en-credor', cr.nome);
         ERP.app.fecharModal();
         ERP.app.aviso('Fornecedor cadastrado' +
-          (cr.pix || cr.agencia ? ' com dados de pagamento — confira antes do primeiro pagamento.' : '.'), 'ok');
+          (cr.pix || cr.agencia
+            ? ' com dados de pagamento — o financeiro precisa aprovar antes do primeiro pagamento.'
+            : ' — o financeiro completa os dados de pagamento.'), 'ok');
         renderCredorSugerido();
       } }]
     });
