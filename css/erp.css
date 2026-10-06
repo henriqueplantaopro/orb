@@ -738,3 +738,20 @@ label:has(> input[type="radio"]) {
   display: flex; align-items: flex-start; gap: 7px;
   font-weight: 400; line-height: 1.4;
 }
+
+/* ── Ambiente de teste: topo laranja ────────────────────────────
+   Dois sistemas idênticos em abas vizinhas é pedido de confusão.
+   A cor é o aviso que funciona sem ninguém ler nada — e no
+   financeiro, lançar no lugar errado só aparece no fechamento,
+   quando já virou retrabalho de dias. */
+body.ambiente-teste header {
+  background: linear-gradient(100deg, #8a4a00 0%, #b35c00 46%, #c76a0a 100%);
+}
+body.ambiente-teste .barra-modulo {
+  box-shadow: inset 0 2px 0 -1px #ff9800;
+}
+.selo-teste {
+  background: #fff; color: #8a4a00;
+  font-weight: 700; font-size: 11px; letter-spacing: .06em;
+  padding: 3px 9px; border-radius: 3px; text-transform: uppercase;
+}

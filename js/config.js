@@ -28,6 +28,18 @@ ERP.config = {
      uma atualização, é esta linha que voltou ao padrão. */
   funcaoCriarLogin: 'dynamic-responder',
 
+  /* AMBIENTE. 'producao' é o normal; 'teste' pinta o topo de
+     laranja e põe um selo no título da aba.
+
+     A cor existe para uma coisa só: impedir que alguém lance no
+     lugar errado. Dois sistemas idênticos em abas vizinhas é
+     pedido de confusão — e no financeiro a confusão só aparece no
+     fechamento, quando já virou retrabalho de dias.
+
+     O ambiente de teste tem BANCO PRÓPRIO: a `url` acima aponta
+     para outro projeto. Mesmo código, dados separados. */
+  ambiente: 'producao',
+
   /* Marcador da versão publicada. Serve para saber, em dois
      segundos, se o navegador está com o código novo ou com uma
      cópia velha em cache — pergunta que já custou duas rodadas de

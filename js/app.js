@@ -452,6 +452,21 @@ ERP.app = (function () {
     if (ERP.config && ERP.config.versao) {
       console.log('%cORB ' + ERP.config.versao, 'color:#00B4FF;font-weight:600');
     }
+    /* Ambiente de teste: topo laranja, selo no cabeçalho e aviso no
+       título da aba. Quem tem os dois abertos precisa distinguir
+       sem pensar. */
+    if (ERP.config && ERP.config.ambiente === 'teste') {
+      document.body.classList.add('ambiente-teste');
+      document.title = '[TESTE] ' + document.title;
+      const cab = document.querySelector('header .marca');
+      if (cab && !document.querySelector('.selo-teste')) {
+        const selo = document.createElement('span');
+        selo.className = 'selo-teste';
+        selo.textContent = 'Ambiente de teste';
+        selo.title = 'Nada aqui afeta o sistema real — os dados são de outro banco.';
+        cab.insertAdjacentElement('afterend', selo);
+      }
+    }
     if (iniciado) return;   // DOMContentLoaded pode disparar duas vezes
     iniciado = true;
     U.el('empresa-nome').textContent = D.empresa.nome;
