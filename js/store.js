@@ -9682,6 +9682,183 @@ ERP.store = (function () {
      zero significa "ninguém definiu ainda" e não dispara alerta de
      reposição. Um mínimo inventado por quem está com pressa faria
      o sistema pedir compra de material que não falta. */
+  /* MATERIAIS PADRÃO de um procedimento.
+
+     Toda facoemulsificação usa uma lente. Fazer quem lança escolher
+     isso do zero a cada cirurgia é pedir esquecimento — e material
+     esquecido não é custo que some: é custo que aparece no
+     inventário seguinte como diferença sem explicação.
+
+     Entra como sugestão já marcada; quem lança ajusta ou tira.
+
+     Quando o padrão aponta uma FAMÍLIA em vez de um produto, a
+     tela pede o item específico: a tabela sabe que vai uma lente,
+     não sabe qual grau — e nem deveria. */
+  function materiaisPadraoDe(procedimento) {
+    const lista = (st.materiaisPadrao || []).filter(function (m) {
+      return m.procedimento === procedimento;
+    });
+    return lista.map(function (m) {
+      const familia = m.familia || null;
+      /* Da família saem as opções; o produto exato fica em aberto
+         para quem lança escolher. */
+      const opcoes = familia
+        ? D.produtos.filter(function (p) { return p.ativo && p.familia === familia; })
+        : [];
+      return {
+        id: m.id,
+        produto: m.produto || null,
+        familia: familia,
+        opcoes: opcoes,
+        qtd: Number(m.qtd) || 1,
+        obrigatorio: m.obrigatorio !== false,
+        observacao: m.observacao || ''
+      };
+    });
+  }
+
+  function salvarMaterialPadrao(d) {
+    if (!podeMover('cadastros')) return { erro: 'Seu perfil não define material padrão.' };
+    if (!d || !d.procedimento) return { erro: 'Escolha o procedimento.' };
+    if (!d.produto && !d.familia) {
+      return { erro: 'Escolha o material ou a família — sem um dos dois, a linha não diz o que usar.' };
+    }
+    st.materiaisPadrao = st.materiaisPadrao || [];
+    const reg = {
+      id: d.id || ('mp' + novoId('mp').replace(/\D/g, '')),
+      procedimento: d.procedimento,
+      produto: d.produto || null,
+      familia: d.familia || null,
+      qtd: Number(d.qtd) || 1,
+      obrigatorio: d.obrigatorio !== false,
+      observacao: d.observacao || ''
+    };
+    const ix = st.materiaisPadrao.findIndex(function (m) { return m.id === reg.id; });
+    if (ix >= 0) st.materiaisPadrao[ix] = reg; else st.materiaisPadrao.push(reg);
+    logar('procedimento', reg.procedimento, 'definiu material padrão',
+      (reg.familia || reg.produto) + ' · ' + U.num(reg.qtd));
+    return { ok: true, padrao: reg };
+  }
+
+  /* ESTOQUE AGRUPADO POR FAMÍLIA.
+
+     Cento e vinte lentes em vinte graus diferentes são vinte linhas
+     na tela, e nenhuma responde "quantas lentes eu tenho". A
+     família responde — e, ao abrir, mostra os graus.
+
+     Os ZERADOS aparecem de propósito: saber que o grau +21,0 acabou
+     é mais útil que não ver a linha. Material que já esteve em
+     estoque e zerou é justamente o que precisa de reposição. */
+  function estoquePorFamilia(armazem) {
+    const grupos = {};
+    D.produtos.forEach(function (p) {
+      if (!p.ativo && !p.familia) return;
+      const chave = p.familia || ('__' + p.id);
+      /* Sem armazém informado, soma todos: é a visão "quantas lentes
+         a empresa tem", independente de onde estejam. */
+      const saldo = armazem
+        ? saldoEstoque(p.id, armazem)
+        : D.armazens.reduce(function (t, am) { return t + saldoEstoque(p.id, am.id); }, 0);
+      /* Já teve movimento? É o que separa "acabou" de "nunca
+         existiu" — e só o primeiro interessa na lista. */
+      const jaTeve = (st.estoqueMov || []).some(function (m) {
+        return m.produto === p.id && (!armazem || m.armazem === armazem);
+      });
+      if (!saldo && !jaTeve) return;
+
+      if (!grupos[chave]) {
+        grupos[chave] = {
+          familia: p.familia || null,
+          nome: p.familia || p.descricao,
+          unidade: p.unidade || 'UN',
+          total: 0, valor: 0, itens: [], zerados: 0
+        };
+      }
+      const g = grupos[chave];
+      /* Sem armazém informado, o custo é a MÉDIA PONDERADA entre os
+         armazéns, não o custo de cadastro: material novo nasce com
+         custo zero no cadastro, e usar esse número fazia a coluna
+         de valor mostrar R$ 0,00 para estoque que vale dezenas de
+         milhares. */
+      let medio;
+      if (armazem) {
+        medio = custoMedio(p.id, armazem);
+      } else {
+        let q = 0, v = 0;
+        D.armazens.forEach(function (am) {
+          const sa = saldoEstoque(p.id, am.id);
+          if (sa > 0) { q += sa; v += sa * custoMedio(p.id, am.id); }
+        });
+        medio = q > 0 ? v / q : (p.custo || 0);
+      }
+      g.total += saldo;
+      g.valor += Math.round(saldo * medio * 100) / 100;
+      if (!saldo) g.zerados++;
+      g.itens.push({ produto: p.id, descricao: p.descricao, codigo: p.codigo,
+        saldo: saldo, medio: medio, ja_teve: jaTeve });
+    });
+
+    return Object.keys(grupos).map(function (k) {
+      const g = grupos[k];
+      g.itens.sort(function (a, b) {
+        /* Com saldo primeiro; dentro de cada grupo, pela descrição —
+           que nas lentes é o próprio grau, então sai em ordem. */
+        if ((a.saldo > 0) !== (b.saldo > 0)) return a.saldo > 0 ? -1 : 1;
+        return (a.descricao || '').localeCompare(b.descricao || '', 'pt-BR', { numeric: true });
+      });
+      g.valor = Math.round(g.valor * 100) / 100;
+      return g;
+    }).sort(function (a, b) { return a.nome.localeCompare(b.nome, 'pt-BR'); });
+  }
+
+  /* Exposto para a tela de cadastro completo usar o MESMO gerador:
+     dois caminhos criando id de jeitos diferentes é como nascem ids
+     repetidos. */
+  function proximoIdProduto() { return novoId('pr'); }
+
+  /* COMPLETA O CADASTRO do material com o que a nota traz.
+
+     Material cadastrado às pressas numa requisição nasce sem NCM.
+     A nota fiscal tem esse dado — e a entrada é o momento certo de
+     aproveitá-lo: o material está na mão, a nota está aberta, e
+     ninguém precisa procurar depois.
+
+     Só preenche o que está VAZIO: o que alguém já informou tem
+     precedência sobre o que veio do XML, porque a nota do
+     fornecedor às vezes classifica diferente do que a empresa usa. */
+  function completarCadastroPelaNota(produtoId, dadosNota) {
+    const p = D.produtos.find(function (x) { return x.id === produtoId; });
+    if (!p || !dadosNota) return { ok: false };
+    const campos = ['ncm', 'cest', 'unidade'];
+    const preenchidos = [];
+    campos.forEach(function (c) {
+      const valor = String(dadosNota[c] || '').trim();
+      if (valor && !String(p[c] || '').trim()) {
+        p[c] = c === 'unidade' ? valor.toUpperCase() : valor;
+        preenchidos.push(c);
+      }
+    });
+    /* O material deixa de ser "cadastro rápido" quando ganha o que
+       faltava: é o sinal de que não precisa mais de revisão. */
+    if (p.cadastro_rapido && p.ncm) delete p.cadastro_rapido;
+    if (preenchidos.length) {
+      logar('produto', p.id, 'completou cadastro pela nota',
+        p.codigo + ' · ' + preenchidos.join(', '));
+    }
+    return { ok: true, preenchidos: preenchidos };
+  }
+
+  /* Quais materiais da entrada ainda estão sem NCM. A entrada não
+     é bloqueada por isso — travar a chegada da mercadoria por um
+     campo fiscal faria o material ficar fora do sistema, que é
+     pior. Mas quem dá entrada precisa ver a lista. */
+  function materiaisSemNCM(itens) {
+    return (itens || []).map(function (i) {
+      const p = D.produtos.find(function (x) { return x.id === i.produto; });
+      return p && !String(p.ncm || '').trim() ? p : null;
+    }).filter(Boolean);
+  }
+
   function cadastrarMaterial(d) {
     if (!podeMover('cadastros')) return { erro: 'Seu perfil não cadastra material.' };
     const desc = String((d && d.descricao) || '').trim();
@@ -9703,7 +9880,11 @@ ERP.store = (function () {
       if (isFinite(n) && n > maior) maior = n;
     });
     const produto = {
-      id: 'pr' + Date.now().toString(36),
+      /* O id segue a SEQUÊNCIA do sistema, não o relógio: dois
+         cadastros no mesmo milissegundo — o que acontece ao
+         cadastrar vários materiais seguidos — recebiam o mesmo id,
+         e aí as entradas de um iam para o saldo do outro. */
+      id: novoId('pr'),
       codigo: String((d.codigo || '')).trim() || ('MT-' + String(maior + 1).padStart(3, '0')),
       descricao: desc,
       unidade: String(d.unidade || 'UN').trim().toUpperCase(),
@@ -16614,6 +16795,8 @@ ERP.store = (function () {
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
+    materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
+    completarCadastroPelaNota, materiaisSemNCM,
     transferirEntreContas, transferenciasBanco, cancelarTransferenciaBanco,
     analisarNFSeImportacao, importarNFSe,
     recebidoNaConta, recebidoSemConta, ultimoInventario, checarDataInventario,

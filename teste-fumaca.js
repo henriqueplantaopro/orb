@@ -6972,3 +6972,106 @@ function liberarParaFaturar(centro, competencia) {
     D.produtos.length === antes + 1, (D.produtos.length - antes) + '');
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v77: família, material padrão e id sem colisão ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+
+  /* IDS: o gerador usava o relógio, e dois cadastros no mesmo
+     milissegundo recebiam o MESMO id — as entradas de um iam para o
+     saldo do outro. Cadastrar cinco materiais seguidos, que é o que
+     acontece ao lançar uma família de lentes, reproduzia sempre. */
+  const ids = [];
+  ['A', 'B', 'C', 'D', 'E'].forEach(function (g) {
+    const r = S.cadastrarMaterial({ descricao: 'QA lente v77 ' + g });
+    if (r.ok) { r.produto.familia = 'QA lente v77'; ids.push(r.produto.id); }
+  });
+  verificar('v77 — cinco cadastros seguidos geram cinco ids distintos',
+    new Set(ids).size === 5, ids.join(','));
+
+  /* FAMÍLIA: 120 lentes em 20 graus são 20 linhas, e nenhuma
+     responde "quantas lentes eu tenho". */
+  const am = D.armazens[0].id;
+  S.entrada({ produto: ids[0], armazem: am, qtd: 40, custo: 400, data: Ut.hoje(),
+    motivo: 'QA', origem: 'nota' });
+  S.entrada({ produto: ids[1], armazem: am, qtd: 30, custo: 410, data: Ut.hoje(),
+    motivo: 'QA', origem: 'nota' });
+  S.entrada({ produto: ids[2], armazem: am, qtd: 10, custo: 420, data: Ut.hoje(),
+    motivo: 'QA', origem: 'nota' });
+  S.saida({ produto: ids[2], armazem: am, qtd: 10, data: Ut.hoje(), motivo: 'QA' });
+
+  const fam = S.estoquePorFamilia(am).find(function (g) { return g.familia === 'QA lente v77'; });
+  verificar('v77 — a família soma os graus numa linha só',
+    fam && Math.abs(fam.total - 70) < 0.001, fam ? fam.total : '(não achou)');
+
+  /* O grau que ZEROU continua na lista: saber que acabou é mais
+     útil que não ver a linha — é justamente o que precisa de
+     reposição. */
+  verificar('v77 — o grau zerado aparece, porque já teve estoque',
+    fam && fam.zerados === 1 &&
+    fam.itens.some(function (i) { return i.saldo === 0 && i.ja_teve; }),
+    fam ? fam.zerados : '');
+
+  /* O que nunca teve movimento NÃO entra: lista cheia de material
+     que nunca existiu esconde o que importa. */
+  verificar('v77 — material sem histórico nenhum fica fora',
+    fam && fam.itens.length === 3, fam ? fam.itens.length : '');
+
+  /* MATERIAL PADRÃO: toda faco usa uma lente. Escolher do zero a
+     cada cirurgia é pedir esquecimento — e material esquecido vira
+     diferença sem explicação no inventário seguinte. */
+  const mp = S.salvarMaterialPadrao({ procedimento: 'pa08', familia: 'QA lente v77', qtd: 1 });
+  verificar('v77 — material padrão por família é aceito', mp.ok, mp.erro || '');
+
+  const vazio = S.salvarMaterialPadrao({ procedimento: 'pa08', qtd: 1 });
+  verificar('v77 — sem produto nem família, recusa',
+    !!vazio.erro, vazio.erro || 'PASSOU');
+
+  const sug = S.materiaisPadraoDe('pa08').find(function (m) { return m.familia === 'QA lente v77'; });
+  verificar('v77 — a sugestão traz as opções para escolher o grau',
+    sug && sug.opcoes.length === 5, sug ? sug.opcoes.length : '(não achou)');
+  S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v78: NCM pela nota e valor da família ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+
+  /* Material cadastrado às pressas numa requisição nasce sem NCM.
+     A nota tem esse dado, e a entrada é o momento em que ele está
+     disponível sem ninguém procurar. */
+  const m = S.cadastrarMaterial({ descricao: 'QA material v78 sem ncm' });
+  verificar('v78 — material novo nasce marcado como cadastro rápido',
+    m.ok && m.produto.cadastro_rapido === true, '');
+  verificar('v78 — e aparece na lista de pendentes de NCM',
+    S.materiaisSemNCM([{ produto: m.produto.id }]).length === 1, '');
+
+  const c = S.completarCadastroPelaNota(m.produto.id, { ncm: '90183919' });
+  verificar('v78 — a nota completa o NCM', m.produto.ncm === '90183919', m.produto.ncm);
+  verificar('v78 — e o material deixa de ser cadastro rápido',
+    !m.produto.cadastro_rapido, '');
+  verificar('v78 — some da lista de pendentes',
+    S.materiaisSemNCM([{ produto: m.produto.id }]).length === 0, '');
+
+  /* O que já estava preenchido tem precedência: a nota do
+     fornecedor às vezes classifica diferente do que a empresa usa,
+     e sobrescrever apagaria a decisão de quem cadastrou. */
+  S.completarCadastroPelaNota(m.produto.id, { ncm: '11111111' });
+  verificar('v78 — a nota NÃO sobrescreve NCM já informado',
+    m.produto.ncm === '90183919', m.produto.ncm);
+
+  /* VALOR DA FAMÍLIA sem armazém escolhido: usava o custo de
+     cadastro, que é zero em material novo — e a coluna mostrava
+     R$ 0,00 para estoque que vale dezenas de milhares. */
+  const id = S.cadastrarMaterial({ descricao: 'QA lente valor v78' }).produto;
+  id.familia = 'QA familia valor';
+  const am = D.armazens[0].id;
+  S.entrada({ produto: id.id, armazem: am, qtd: 10, custo: 400, data: Ut.hoje(),
+    motivo: 'QA', origem: 'nota' });
+  const geral = S.estoquePorFamilia(null).find(function (g) { return g.familia === 'QA familia valor'; });
+  verificar('v78 — na visão de todos os armazéns, o valor é o real',
+    geral && Math.abs(geral.valor - 4000) < 0.01, geral ? geral.valor : '(não achou)');
+  S.setUsuario('u8');
+})();

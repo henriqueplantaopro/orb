@@ -793,7 +793,10 @@ ERP.cadastros = (function () {
           S.logarCadastro('cadastro', p.id, 'editou cadastro', (p.nome || p.descricao || p.codigo || ''));
           p.ativo = U.el('pd-ativo') ? U.el('pd-ativo').checked : true;
         } else {
-          dados.id = 'pr' + Date.now().toString(36);
+          /* Pelo gerador do store, não pelo relógio: dois cadastros
+             no mesmo milissegundo recebiam o mesmo id, e as
+             entradas de um iam para o saldo do outro. */
+          dados.id = S.proximoIdProduto();
           dados.ativo = true;
           D.produtos.push(dados);
           S.logarCadastro('produto', dados.id, 'cadastrou material', dados.nome || dados.descricao || dados.codigo || '');

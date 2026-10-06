@@ -104,8 +104,19 @@ ERP.procedimentos = (function () {
         for (let i = 0; i < fontes.length && !medio; i++) medio = S.custoMedio(p.id, fontes[i]);
       }
       return { p: p, saldo: naSala, hospital: un.saldo, medio: medio || 0 };
-    }).filter(function (x) { return x.hospital > 0; })
-      .sort(function (a, b) { return a.p.descricao.localeCompare(b.p.descricao, 'pt-BR'); });
+    })
+      /* Mostra TODO material ativo, com ou sem saldo. Antes só
+         aparecia o que tinha estoque — e com o estoque zerado a
+         lista ficava vazia, dando a impressão de que o sistema não
+         conhecia os materiais. Quem lança sabe o que usou; se o
+         saldo não cobre, o sistema avisa na hora de gravar, que é
+         onde o aviso serve. */
+      .sort(function (a, b) {
+        /* Com saldo primeiro: é o que a pessoa procura na maioria
+           das vezes, e o resto fica abaixo sem sumir. */
+        if ((a.hospital > 0) !== (b.hospital > 0)) return a.hospital > 0 ? -1 : 1;
+        return a.p.descricao.localeCompare(b.p.descricao, 'pt-BR');
+      });
   }
 
   function previa() {
@@ -123,6 +134,63 @@ ERP.procedimentos = (function () {
     if (form.repasse !== '' && form.repasse !== null) base.repasse = Number(form.repasse) || 0;
     if (base.repasse === null || base.repasse === undefined) base.repasse = 0;
     return S.calcularProcedimento(base, Math.round(material * 100) / 100, form.qtd);
+  }
+
+  /* Marca os materiais padrão do procedimento escolhido.
+
+     Quando o padrão aponta um PRODUTO, já entra marcado com a
+     quantidade. Quando aponta uma FAMÍLIA — o caso da lente, que
+     varia por grau —, fica registrado como pendente: a tela pede o
+     item específico, porque a tabela sabe que vai uma lente mas
+     não sabe qual.
+
+     O que a pessoa já tinha marcado à mão não é apagado: ela pode
+     ter começado pelo material e escolhido o procedimento depois. */
+  function aplicarPadroes(procedimento) {
+    form.pendentes = [];
+    if (!procedimento || !S.materiaisPadraoDe) return;
+    S.materiaisPadraoDe(procedimento).forEach(function (m) {
+      if (m.produto) {
+        if (!form.materiais[m.produto]) form.materiais[m.produto] = m.qtd;
+        return;
+      }
+      /* Família: a escolha do item fica para quem lança. */
+      form.pendentes.push({ familia: m.familia, qtd: m.qtd,
+        opcoes: m.opcoes, obrigatorio: m.obrigatorio, escolhido: '' });
+    });
+  }
+
+  /* As linhas de família pendente, no alto da lista de materiais:
+     é o que falta decidir, e o que não pode passar batido. */
+  function blocoPendentes() {
+    const pend = form.pendentes || [];
+    if (!pend.length) return '';
+    return '<div class="aviso" style="margin:10px 0">' +
+      '<b>Este procedimento usa ' + pend.length + ' material(is) que variam.</b> ' +
+      'Escolha qual foi usado:' +
+      pend.map(function (p, ix) {
+        const comSaldo = p.opcoes.filter(function (o) {
+          return form.armazem ? S.saldoNaUnidade(o.id, form.armazem).saldo > 0 : true;
+        });
+        const lista = comSaldo.length ? comSaldo : p.opcoes;
+        return '<div class="row2" style="margin-top:8px;align-items:end">' +
+          '<div><label>' + U.esc(p.familia) + ' · ' + U.num(p.qtd) + ' un</label>' +
+            '<select data-pend="' + ix + '">' +
+              '<option value="">Escolher…</option>' +
+              lista.map(function (o) {
+                const saldo = form.armazem ? S.saldoNaUnidade(o.id, form.armazem).saldo : 0;
+                return '<option value="' + o.id + '"' +
+                  (p.escolhido === o.id ? ' selected' : '') + '>' +
+                  U.esc(o.descricao) + (saldo ? ' (' + U.num(saldo) + ' em estoque)' : ' (sem saldo)') +
+                  '</option>';
+              }).join('') +
+            '</select></div>' +
+          '<div class="sub">' + (comSaldo.length < p.opcoes.length
+            ? 'mostrando as ' + comSaldo.length + ' com saldo'
+            : '') + '</div>' +
+        '</div>';
+      }).join('') +
+      '</div>';
   }
 
   function telaLancar() {
@@ -177,6 +245,7 @@ ERP.procedimentos = (function () {
       (pate ? fichaProcedimento(pate) : '') +
       '<h3 style="font-size:12px;margin:14px 0 4px">Material usado' +
         (form.armazem ? ' — ' + U.esc(nomeArm(form.armazem)) : '') + '</h3>' +
+      blocoPendentes() +
       (!form.armazem
         ? '<div class="vazio"><strong>Escolha a especialidade.</strong> O material que aparece é o ' +
           'da sala daquela cirurgia.</div>'
@@ -285,7 +354,33 @@ ERP.procedimentos = (function () {
       form.materiais = {};
       render();
     });
-    liga('pc-proc', 'procedimento');
+    /* Escolher o procedimento já traz os MATERIAIS PADRÃO marcados.
+       Toda faco usa uma lente; fazer quem lança lembrar disso a
+       cada cirurgia é pedir esquecimento — e material esquecido
+       vira diferença sem explicação no inventário seguinte. */
+    /* Escolher o grau da família move o item para a lista de usados:
+       a partir daí ele é material como outro qualquer. */
+    document.querySelectorAll('[data-pend]').forEach(function (sel) {
+      sel.addEventListener('change', function () {
+        const p = (form.pendentes || [])[+this.dataset.pend];
+        if (!p) return;
+        /* Troca de escolha: o anterior sai, senão os dois ficariam
+           marcados e a cirurgia consumiria duas lentes. */
+        if (p.escolhido) delete form.materiais[p.escolhido];
+        p.escolhido = this.value;
+        if (this.value) form.materiais[this.value] = p.qtd;
+        render();
+      });
+    });
+
+    const sp = U.el('pc-proc');
+    if (sp) {
+      sp.addEventListener('change', function () {
+        form.procedimento = this.value;
+        aplicarPadroes(this.value);
+        render();
+      });
+    }
     liga('pc-repasse', 'repasse');
     /* Texto não redesenha a tela a cada tecla: guarda e segue. */
     ['pc-medico', 'pc-paciente', 'pc-obs'].forEach(function (id) {
