@@ -3741,8 +3741,17 @@ ERP.store = (function () {
      tanto pela grade da tela quanto pelo alerta — o alerta é só o
      mesmo cálculo, aplicado à última competência que já devia estar
      fechada. */
-  function coberturaProdutividade(competencia) {
-    const projetos = D.centros.filter(function (c) { return c.ativo && c.produtividade; });
+  function coberturaProdutividade(competencia, todos) {
+    /* `todos` traz TODO projeto ativo, não só os marcados com
+       produtividade. A marcação é um cadastro que alguém precisa
+       ter feito — e projeto esquecido na marcação simplesmente não
+       aparecia nesta tela, que é justamente a que existe para
+       encontrar o que falta. Com a lista completa, a ausência fica
+       visível em vez de invisível. */
+    const projetos = D.centros.filter(function (c) {
+      if (!c.ativo || c.tipo !== 'projeto') return false;
+      return todos ? true : !!c.produtividade;
+    });
     /* Vários lotes no mesmo projeto/competência (fechamento
        complementar) são a regra, não a exceção: a cobertura mostrava só
        o último e escondia o resto. Agora vai a lista e o total. */
@@ -3753,6 +3762,10 @@ ERP.store = (function () {
       const lotes = lancados[c.id] || [];
       return {
         centro: c.id, lote: lotes[0] || null, lotes: lotes,
+        /* Se este projeto DEVERIA ter produtividade. Sem isso, a
+           lista completa misturaria locação com serviço médico e a
+           contagem de "faltando" perderia o sentido. */
+        esperado: !!c.produtividade,
         qtd_lotes: lotes.length,
         valor: Math.round(lotes.reduce(function (a2, l) { return a2 + l.valor; }, 0) * 100) / 100,
         medicos: lotes.reduce(function (a2, l) { return a2 + l.medicos; }, 0)

@@ -67,13 +67,36 @@ ERP.produtividade = (function () {
     desenharCobertura();
   }
 
+  function ligarCobertura() {
+    const b2 = U.el('pr-cob-todos');
+    if (b2) {
+      b2.addEventListener('click', function () {
+        cobTodos = !cobTodos;
+        desenharCobertura();
+      });
+    }
+  }
+
+  let cobTodos = false;
+
   function desenharCobertura() {
     const comp = U.val('pr-cob-comp');
-    const linhas = S.coberturaProdutividade(comp);
-    const faltando = linhas.filter(function (x) { return !x.lote; }).length;
+    const linhas = S.coberturaProdutividade(comp, cobTodos);
+    /* Falta = esperado e não lançado. Projeto de locação não entra
+       na conta, senão o número "faltando" assusta sem motivo. */
+    const faltando = linhas.filter(function (x) { return x.esperado && !x.lote; }).length;
+    const extras = linhas.filter(function (x) { return !x.esperado && x.lote; }).length;
     U.el('pr-cob-tabela').innerHTML =
-      '<div class="ajuda" style="margin:6px 0">' + linhas.length + ' projeto(s) com produtividade — ' +
-      (faltando ? faltando + ' sem arquivo lançado nesta competência.' : 'todos lançados nesta competência.') + '</div>' +
+      '<div class="filtros" style="margin:6px 0">' +
+        '<button class="btn-sm" id="pr-cob-todos">' +
+          (cobTodos ? 'Ver só os com produtividade' : 'Ver TODOS os projetos') + '</button>' +
+      '</div>' +
+      '<div class="ajuda" style="margin:6px 0">' + linhas.length + ' projeto(s)' +
+      (cobTodos ? ' (todos os ativos)' : ' com produtividade') + ' — ' +
+      (faltando ? '<b>' + faltando + ' sem produtividade lançada</b> nesta competência.'
+                : 'todos os esperados já lançados nesta competência.') +
+      (extras ? ' ' + extras + ' projeto(s) lançaram sem estar marcados como de produtividade — ' +
+        'vale conferir a marcação no cadastro.' : '') + '</div>' +
       /* A autorização do órgão fica AQUI, ao lado do fechamento: quem
          lança a produtividade é quem fala com o hospital e recebe o
          ofício. Antes só existia na esteira do faturamento, que é a
@@ -87,18 +110,25 @@ ERP.produtividade = (function () {
       '<th>Faturamento</th></tr></thead><tbody>' +
       linhas.map(function (x) {
         const c = D.centro(x.centro) || {};
-        return '<tr' + (!x.lote ? ' style="background:#fff4f2"' : '') + '>' +
+        /* Vermelho só no que é falta de verdade: esperado e não
+           lançado. Pintar projeto de locação de vermelho faria a
+           tela parecer cheia de problema todo mês. */
+        return '<tr' + (x.esperado && !x.lote ? ' style="background:#fff4f2"' : '') + '>' +
           '<td class="desc">' + U.esc(c.curto || c.nome) + '</td>' +
           '<td class="sub">' + U.esc(c.unidade || '—') + '</td>' +
-          '<td>' + (x.lote ? '<span class="badge b-pago">lançado</span>' +
-            (x.qtd_lotes > 1 ? ' <span class="sub">' + x.qtd_lotes + ' fechamentos</span>' : '')
-            : '<span class="badge b-reprovado">sem produtividade</span>') + '</td>' +
+          '<td>' + (x.lote
+            ? '<span class="badge b-pago">lançado</span>' +
+              (x.qtd_lotes > 1 ? ' <span class="sub">' + x.qtd_lotes + ' fechamentos</span>' : '')
+            : x.esperado
+              ? '<span class="badge b-reprovado">sem produtividade</span>'
+              : '<span class="badge b-aguardando">não tem produtividade</span>') + '</td>' +
           '<td class="num">' + (x.lote ? x.medicos : '—') + '</td>' +
           '<td class="num">' + (x.lote ? U.brl(x.valor) : '—') + '</td>' +
           '<td>' + etapaFat(x.centro, comp) + '</td></tr>';
       }).join('') + '</tbody></table>' +
       '<div class="ajuda">A autorização do órgão e a liberação para emitir a NF ficam em ' +
         '<b>Faturamento › Esteira</b>.</div>';
+    ligarCobertura();
   }
 
   const ETAPA_TXT = {
@@ -123,8 +153,29 @@ ERP.produtividade = (function () {
      aqui reunida pelo lote inteiro, não por título avulso. */
   /* Situação do repasse ao médico, em três níveis (o gestor quer ver de
      relance quem ainda não recebeu): lançado, pago em parte, pago. */
-  function situacaoParcela(p) {
+  /* Qual bloqueio pega esta parcela. O bloqueio é lançado por
+     MÉDICO no fechamento, e a parcela é do médico — mas a situação
+     só olhava o pagamento, então quem foi bloqueado aparecia como
+     "lançado", igual a quem vai receber. É o oposto do que a tela
+     precisa mostrar: o bloqueado é justamente o que exige
+     decisão. */
+  function bloqueioDa(p, l) {
+    if (!l || !l.bloqueios) return null;
+    const nome = (ERP.lancamento.nomeCredor(p.credor) || '').trim().toLowerCase();
+    return l.bloqueios.find(function (b) {
+      if (b.liberado_em) return null;
+      return (b.credor && b.credor === p.credor) ||
+        String(b.medico || '').trim().toLowerCase() === nome;
+    }) || null;
+  }
+
+  function situacaoParcela(p, l) {
     if (p.status === 'cancelado') return { cls: 'sit-cancelado', txt: 'cancelado' };
+    const bl = bloqueioDa(p, l);
+    if (bl) {
+      return { cls: 'sit-bloqueado', txt: 'bloqueado', bloqueio: bl,
+        motivo: bl.motivo || '' };
+    }
     const pago = S.pagoDe(p.id);
     if (p.status === 'pago' || S.saldoDe(p) <= 0.004) return { cls: 'sit-pago', txt: 'pago' };
     if (pago > 0.004) return { cls: 'sit-parcial', txt: 'pago em parte' };
@@ -287,15 +338,25 @@ ERP.produtividade = (function () {
         const itens = p.itens || [];
         const qtd = itens.reduce(function (s, i) { return s + (i.qtd || 0); }, 0);
         const min = itens.reduce(function (s, i) { return s + (i.minutos || 0); }, 0);
-        const s = situacaoParcela(p);
+        const s = situacaoParcela(p, l);
         const pago = S.pagoDe(p.id);
         return '<tr><td class="desc">' + U.esc(ERP.lancamento.nomeCredor(p.credor) || '—') + '</td>' +
           '<td class="num">' + qtd + '</td>' +
           '<td class="num">' + Math.floor(min / 60) + 'h' + String(min % 60).padStart(2, '0') + '</td>' +
           '<td class="num">' + U.brl(p.valor) + '</td>' +
           '<td class="num">' + (pago > 0.004 ? U.brl(pago) : '—') + '</td>' +
-          '<td><span class="badge ' + s.cls + '">' + s.txt + '</span></td>' +
-          '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">Plantões</button></td></tr>';
+          '<td><span class="badge ' + s.cls + '">' + s.txt + '</span>' +
+            (s.motivo ? '<div class="sub">' + U.esc(s.motivo) + '</div>' : '') + '</td>' +
+          '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">Plantões</button>' +
+            /* DESBLOQUEAR AQUI. Quem confere o fechamento é quem
+               descobre que o bloqueio já não se aplica — mandar
+               procurar a tela onde o bloqueio foi posto significa,
+               na prática, o médico esperando mais um dia. */
+            (s.bloqueio && S.podeMover('produtividade')
+              ? ' <button class="btn-sm btn-aprovar" data-lp-liberar="' + p.id + '" ' +
+                'data-lote="' + l.id + '">Liberar</button>'
+              : '') +
+          '</td></tr>';
       }).join('') + '</tbody></table></td></tr>';
   }
 
@@ -331,6 +392,42 @@ ERP.produtividade = (function () {
   }
 
   function ligarLotes() {
+    /* Liberar o pagamento do médico direto na conferência. */
+    document.querySelectorAll('[data-lp-liberar]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const pid = this.dataset.lpLiberar;
+        const loteId = this.dataset.lote;
+        const p = S.todasParcelas().find(function (x) { return x.id === pid; });
+        if (!p) return;
+        const nome = ERP.lancamento.nomeCredor(p.credor) || 'o médico';
+        ERP.app.modal({
+          titulo: 'Liberar pagamento de ' + nome,
+          fecharTxt: 'Cancelar',
+          corpo: '<label for="lb-motivo">Por que está liberando?</label>' +
+            '<input id="lb-motivo" placeholder="ex.: documento entregue, escala conferida">' +
+            '<div class="ajuda">Fica na trilha junto com o motivo do bloqueio: quem olhar ' +
+            'depois precisa entender por que o pagamento foi travado e por que foi solto.</div>' +
+            '<div id="lb-erro"></div>',
+          acoes: [{ txt: 'Liberar', cls: 'btn-aprovar', fn: function () {
+            const motivo = U.val('lb-motivo').trim();
+            const erro = U.el('lb-erro');
+            if (!motivo) {
+              if (erro) erro.innerHTML = '<div class="login-erro">Informe o motivo.</div>';
+              return;
+            }
+            const r = S.liberarPagamentoMedico(loteId, p.titulo_id, motivo);
+            if (r.erro) {
+              if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+              return;
+            }
+            ERP.app.fecharModal();
+            ERP.app.aviso('Pagamento de ' + nome + ' liberado.', 'ok');
+            render();
+          } }]
+        });
+      });
+    });
+
     ['lp-f-comp', 'lp-f-proj', 'lp-f-de', 'lp-f-ate', 'lp-f-sit', 'lp-f-busca'].forEach(function (id) {
       const el = U.el(id);
       if (!el) return;

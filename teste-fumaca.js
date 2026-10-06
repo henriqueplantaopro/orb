@@ -7285,3 +7285,31 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v87 — nenhum id de cadastro é gerado pelo relógio',
     ruins.length === 0, ruins.join(', '));
 })();
+
+// ── ERP teste2 v88: bloqueio aparece na conferência ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  /* Dois médicos lançados como bloqueados apareciam como
+     "lançado", igual a quem vai receber. O bloqueio mora no lote e
+     a situação só olhava a parcela — e aí o que mais exige decisão
+     some no meio dos outros, até o dia do pagamento. */
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
+
+  verificar('v88 — a situação da parcela considera o bloqueio do lote',
+    /function bloqueioDa\(/.test(ui) && /situacaoParcela\(p, l\)/.test(ui), '');
+  verificar('v88 — bloqueado tem marca visual própria',
+    /sit-bloqueado/.test(ui) &&
+    /sit-bloqueado/.test(fs.readFileSync(__dirname + '/css/erp.css', 'utf8')), '');
+  verificar('v88 — e dá para liberar na própria conferência',
+    /data-lp-liberar/.test(ui) && /liberarPagamentoMedico/.test(ui), '');
+
+  /* COBERTURA: projeto esquecido na marcação de produtividade não
+     aparecia justamente na tela feita para encontrar o que falta. */
+  const todos = S.coberturaProdutividade(Ut.mesAtual(), true);
+  const soMarcados = S.coberturaProdutividade(Ut.mesAtual());
+  verificar('v88 — a cobertura mostra TODOS os projetos quando pedido',
+    todos.length >= soMarcados.length, todos.length + ' vs ' + soMarcados.length);
+  verificar('v88 — e marca quais deveriam ter produtividade',
+    todos.every(function (x) { return typeof x.esperado === 'boolean'; }), '');
+})();
