@@ -251,6 +251,11 @@ ERP.auth = (function () {
         telaLogin('Entrou, mas não foi possível carregar os cadastros: ' + r.erro);
         return;
       }
+      /* A partir daqui a tela se mantém atualizada sozinha: sem
+         isso, a sessão trabalha para sempre com o retrato do
+         momento em que entrou, e quem dá entrada de material não
+         aparece para quem está com a tela aberta. */
+      if (ERP.dadosRemoto.ligarRecargaAutomatica) ERP.dadosRemoto.ligarRecargaAutomatica();
     }
 
     // 2. a tela
@@ -326,7 +331,39 @@ ERP.auth = (function () {
       }
       return;
     }
-    if (tag) tag.textContent = 'conectado ao banco';
+    if (tag) {
+      /* A etiqueta vira BOTÃO de atualizar e mostra há quanto tempo
+         os dados foram lidos. Duas pessoas no sistema ao mesmo
+         tempo veem coisas diferentes por minutos — e sem nada na
+         tela dizendo isso, cada uma acha que a outra não lançou. */
+      tag.textContent = 'conectado ao banco';
+      tag.style.cursor = 'pointer';
+      tag.title = 'Clique para buscar o que mudou agora';
+      if (!tag.dataset.ligado) {
+        tag.dataset.ligado = '1';
+        tag.addEventListener('click', function () {
+          if (!ERP.dadosRemoto || !ERP.dadosRemoto.recarregar) return;
+          tag.textContent = 'atualizando…';
+          ERP.dadosRemoto.recarregar(false).then(function () { atualizarEtiqueta(); });
+        });
+        setInterval(atualizarEtiqueta, 30000);
+      }
+      atualizarEtiqueta();
+    }
+  }
+
+  function atualizarEtiqueta() {
+    const tag = ERP.util.el('tag-modo');
+    if (!tag || !ERP.dadosRemoto || !ERP.dadosRemoto.minutosDesdeALeitura) return;
+    const m = ERP.dadosRemoto.minutosDesdeALeitura();
+    if (m === null) { tag.textContent = 'conectado ao banco'; return; }
+    tag.textContent = m < 1 ? 'dados de agora'
+      : m === 1 ? 'dados de 1 minuto atrás'
+      : 'dados de ' + m + ' minutos atrás';
+    /* Passou muito tempo sem leitura — conexão caiu, aba
+       hibernou — a cor avisa antes que alguém decida por um saldo
+       velho. */
+    tag.style.color = m >= 15 ? 'var(--amber, #8a6d00)' : '';
   }
 
   /* EXPIRAÇÃO DIÁRIA à meia-noite.

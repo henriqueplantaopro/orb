@@ -121,6 +121,109 @@ ERP.dadosRemoto = (function () {
     return m;
   }
 
+  /* Quando os dados na tela foram lidos do banco. Sem isso, a
+     sessão trabalha para sempre com o retrato do momento em que
+     entrou — e duas pessoas no sistema ao mesmo tempo veem coisas
+     diferentes sem nenhum aviso. */
+  let lidoEm = null;
+
+  function minutosDesdeALeitura() {
+    if (!lidoEm) return null;
+    return Math.floor((Date.now() - lidoEm) / 60000);
+  }
+
+  /* RECARGA EM SEGUNDO PLANO.
+
+     O estoque, os lançamentos e as compras mudam enquanto a pessoa
+     está com a tela aberta: a compradora dá entrada, o financeiro
+     lança um título, e quem está do outro lado não vê nada até
+     recarregar a página. No estoque isso é pior que inconveniente —
+     a pessoa decide uma compra olhando um saldo que não existe
+     mais.
+
+     Recarrega sozinho a cada poucos minutos e quando a aba volta a
+     ficar visível, que é quando a pessoa realmente vai olhar. */
+  let recarregando = false;
+
+  async function recarregar(silencioso) {
+    if (recarregando) return { ok: false, motivo: 'já em andamento' };
+    recarregando = true;
+    try {
+      const r = await carregar();
+      if (!r.erro && !silencioso && ERP.app && ERP.app.aviso) {
+        ERP.app.aviso('Dados atualizados.', 'ok');
+      }
+      /* Redesenha o módulo aberto: recarregar os dados sem
+         redesenhar deixaria a tela mostrando o que já não vale. */
+      if (!r.erro && ERP.app && ERP.app.redesenharModulo) ERP.app.redesenharModulo();
+      return r;
+    } finally {
+      recarregando = false;
+    }
+  }
+
+  /* TEMPO REAL.
+
+     O banco avisa o navegador quando uma linha muda, e a tela se
+     atualiza em segundos — sem esperar os cinco minutos da recarga
+     periódica nem a pessoa trocar de módulo.
+
+     A recarga periódica CONTINUA valendo: o aviso em tempo real
+     depende de uma conexão aberta, que cai em rede de hospital,
+     celular trocando de torre, aba hibernando. Quando ela cai,
+     ninguém é avisado — e é a recarga periódica que segura a
+     diferença. Uma não substitui a outra.
+
+     Agrupa os avisos: uma entrada de nota com trinta itens dispara
+     trinta eventos, e recarregar trinta vezes seguidas travaria a
+     tela. Espera um segundo e recarrega uma vez só. */
+  let canal = null;
+  let agendado = null;
+
+  function ligarTempoReal() {
+    const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
+    if (!c || !c.channel) return false;
+    if (canal) return true;
+
+    const aoMudar = function () {
+      if (agendado) clearTimeout(agendado);
+      agendado = setTimeout(function () {
+        agendado = null;
+        recarregar(true);
+      }, 1000);
+    };
+
+    try {
+      canal = c.channel('erp-mudancas')
+        .on('postgres_changes', { event: '*', schema: 'public' }, aoMudar)
+        .subscribe();
+      return true;
+    } catch (e) {
+      /* Sem tempo real a vida segue: a recarga periódica cobre. */
+      canal = null;
+      return false;
+    }
+  }
+
+  function ligarRecargaAutomatica() {
+    ligarTempoReal();
+
+    /* Cinco minutos: curto o bastante para o saldo não envelhecer
+       no meio de uma decisão, longo o bastante para não pesar na
+       conexão de quem está num hospital com internet ruim. */
+    setInterval(function () {
+      if (document.visibilityState === 'visible') recarregar(true);
+    }, 5 * 60 * 1000);
+
+    /* Voltar para a aba é o momento em que a pessoa vai olhar de
+       verdade — e costuma ser depois de um tempo longe. */
+    document.addEventListener('visibilitychange', function () {
+      if (document.visibilityState !== 'visible') return;
+      const m = minutosDesdeALeitura();
+      if (m === null || m >= 2) recarregar(true);
+    });
+  }
+
   async function carregar() {
     const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
@@ -203,6 +306,7 @@ ERP.dadosRemoto = (function () {
       if (p.chave === 'parametros_dp' && p.valor) Object.assign(D.parametrosDP, p.valor);
     });
 
+    lidoEm = Date.now();
     return { ok: true, tabelas: MAPA.length, matriz: (mz || []).length };
   }
 
@@ -215,5 +319,8 @@ ERP.dadosRemoto = (function () {
     return carregarFuncionarios(c, ERP.dados);
   }
 
-  return { carregar: carregar, funcionarios: funcionarios };
+  return { carregar: carregar, funcionarios: funcionarios,
+           recarregar: recarregar, ligarRecargaAutomatica: ligarRecargaAutomatica,
+           ligarTempoReal: ligarTempoReal,
+           minutosDesdeALeitura: minutosDesdeALeitura };
 })();

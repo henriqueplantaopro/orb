@@ -279,8 +279,35 @@ ERP.app = (function () {
      dados chegam do banco DEPOIS de ela ter sido montada. */
   let moduloAberto = 'home';
 
+  /* Redesenha o módulo aberto. Usado depois de recarregar os dados
+     do banco: trazer dados novos sem redesenhar deixaria a tela
+     mostrando o que já não vale. */
+  function redesenharModulo() {
+    const id = moduloAberto;
+    if (!id) return;
+    const telas = {
+      estoque: 'estoque', compras: 'compras', ativos: 'ativos',
+      procedimentos: 'procedimentos', dp: 'dp', cadastros: 'cadastros',
+      administracao: 'administracao', produtividade: 'produtividade',
+      contratos: 'contratos'
+    };
+    const mod = ERP[telas[id]];
+    if (mod && typeof mod.render === 'function') { mod.render(); return; }
+    if (id === 'faturamento') {
+      if (ERP.previsoes && ERP.previsoes.render) ERP.previsoes.render();
+      if (ERP.faturamento && ERP.faturamento.renderStatus) ERP.faturamento.renderStatus();
+    }
+  }
+
   function abrirModulo(id) {
     moduloAberto = id;
+    /* Trocar de módulo é um bom momento para buscar o que mudou:
+       a pessoa está mudando de assunto, e meio segundo de espera
+       não atrapalha — ver saldo velho, sim. */
+    if (ERP.dadosRemoto && ERP.dadosRemoto.minutosDesdeALeitura) {
+      const m = ERP.dadosRemoto.minutosDesdeALeitura();
+      if (m !== null && m >= 2) ERP.dadosRemoto.recarregar(true);
+    }
     if (id === 'ativos' && ERP.ativos) setTimeout(function () { ERP.ativos.render(); }, 0);
     /* Faturamento abre na Previsão: é o começo do fluxo (previsão →
        confirmado → autorizado → liberado → faturado). */
@@ -541,7 +568,7 @@ ERP.app = (function () {
     if (moduloAberto && moduloAberto !== 'home') abrirModulo(moduloAberto);
   }
 
-  return { init: init, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, modal: modal, fecharModal: fecharModal,
+  return { init: init, redesenharModulo: redesenharModulo, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, modal: modal, fecharModal: fecharModal,
            abrirModulo: abrirModulo, abrirAba: abrirAba, abrirArea: abrirArea, renderHome: renderHome,
            atualizar: atualizar, atualizarContadores: atualizarContadores };
 })();

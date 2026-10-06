@@ -9,6 +9,28 @@ ERP.store = (function () {
 
   const st = {
     usuarioId: 'u1',
+    /* PRODUTOS aponta para a MESMA lista de `dados`, não para uma
+       cópia. A persistência só enxerga o que está em `st`, e o
+       cadastro de material mexe em `dados.produtos` — então o
+       material novo ficava só na memória. A entrada de estoque
+       seguinte gravava uma camada apontando para um produto que o
+       banco não conhecia, e a gravação inteira caía com
+       "estoque_camadas_produto_fkey".
+
+       Uma referência só, não duas listas: duas listas é como os
+       dois lados se desencontram de novo. */
+    get produtos() { return D.produtos; },
+    /* Os demais CADASTROS pelo mesmo caminho. Nenhum deles era
+       gravado: criar um armazém, um fornecedor ou um cliente pela
+       tela mudava só a memória, e sumia ao recarregar. Só aparecia
+       quando alguém tentava usar o cadastro novo em outro módulo —
+       como a camada de estoque apontando para um produto que o
+       banco não conhecia. */
+    get credores() { return D.credores; },
+    get armazens() { return D.armazens; },
+    get centros() { return D.centros; },
+    get clientes() { return D.clientes; },
+    get bancos() { return D.bancos; },
     titulos: [],
     parcelas: [],
     pagamentos: [],
