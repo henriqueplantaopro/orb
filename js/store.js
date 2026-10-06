@@ -3748,9 +3748,22 @@ ERP.store = (function () {
        aparecia nesta tela, que é justamente a que existe para
        encontrar o que falta. Com a lista completa, a ausência fica
        visível em vez de invisível. */
+    /* Quem JÁ LANÇOU entra na lista mesmo sem a marcação. Projeto
+       com produtividade lançada e sem a flag sumia da tela quando
+       se filtrava pelos marcados — e some justamente o que está em
+       andamento, que é o pior caso. A marcação diz o que se
+       espera; o lançamento diz o que é fato, e fato manda. */
+    const temLote = {};
+    st.lotesProdutividade.forEach(function (l) {
+      if (l.competencia === competencia && !l.cancelado) temLote[l.centro] = true;
+    });
     const projetos = D.centros.filter(function (c) {
       if (!c.ativo || c.tipo !== 'projeto') return false;
-      return todos ? true : !!c.produtividade;
+      return todos ? true : (!!c.produtividade || !!temLote[c.id]);
+    }).sort(function (a2, b2) {
+      /* Ordem alfabética: a lista é de conferência, e quem procura
+         um projeto procura pelo nome. */
+      return (a2.curto || a2.nome || '').localeCompare(b2.curto || b2.nome || '', 'pt-BR');
     });
     /* Vários lotes no mesmo projeto/competência (fechamento
        complementar) são a regra, não a exceção: a cobertura mostrava só

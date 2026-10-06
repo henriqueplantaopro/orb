@@ -7313,3 +7313,49 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v88 — e marca quais deveriam ter produtividade',
     todos.every(function (x) { return typeof x.esperado === 'boolean'; }), '');
 })();
+
+// ── ERP teste2 v89: confirmar o fechamento e cobertura completa ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
+
+  /* A confirmação existia no sistema e NÃO TINHA TELA. É ela que
+     destrava o pagamento: enquanto não vem, o valor é número de
+     trabalho e o financeiro não paga — então quem precisava
+     confirmar não tinha onde, e o médico esperava. */
+  verificar('v89 — a confirmação do fechamento tem botão na tela',
+    /data-lp-confirmar/.test(ui) && /confirmarLoteProdutividade/.test(ui), '');
+  verificar('v89 — e a linha mostra que está aguardando',
+    /aguardando confirmação/.test(ui), '');
+
+  /* COBERTURA: projeto COM produtividade lançada tem de aparecer
+     mesmo sem a marcação no cadastro. A marcação diz o que se
+     espera; o lançamento diz o que é fato, e fato manda. */
+  const comp = Ut.mesAtual();
+  const centro = D.centros.find(function (c) {
+    return c.tipo === 'projeto' && c.ativo && !c.produtividade;
+  });
+  if (centro) {
+    S.st.lotesProdutividade.push({
+      id: 'lpQA89', centro: centro.id, competencia: comp, titulo_ids: [],
+      medicos: 2, valor: 1000, criado_em: new Date().toISOString()
+    });
+    const soMarcados = S.coberturaProdutividade(comp);
+    verificar('v89 — projeto sem marcação mas COM lançamento aparece',
+      soMarcados.some(function (x) { return x.centro === centro.id; }),
+      centro.curto);
+  }
+
+  const todos = S.coberturaProdutividade(comp, true);
+  const nomes = todos.map(function (x) {
+    const c = D.centro(x.centro) || {};
+    return c.curto || c.nome || '';
+  });
+  const ordenado = nomes.slice().sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+  verificar('v89 — a cobertura sai em ordem alfabética',
+    JSON.stringify(nomes) === JSON.stringify(ordenado), nomes.slice(0, 3).join(' | '));
+
+  verificar('v89 — e abre mostrando TODOS os projetos por padrão',
+    /let cobTodos = true;/.test(ui), '');
+})();
