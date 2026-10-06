@@ -77,7 +77,12 @@ ERP.produtividade = (function () {
     }
   }
 
-  let cobTodos = false;
+  /* A cobertura abre com TODOS os projetos. Quem olha esta tela
+     quer saber o que falta — e o que falta pode ser justamente um
+     projeto que ninguém marcou como de produtividade. Filtrar por
+     padrão esconde exatamente o caso que a tela existe para
+     encontrar. */
+  let cobTodos = true;
 
   function desenharCobertura() {
     const comp = U.val('pr-cob-comp');
@@ -312,9 +317,24 @@ ERP.produtividade = (function () {
             '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
             '<td class="num">' + l.medicos + '</td>' +
             '<td class="num">' + U.brl(l.valor) + '</td>' +
-            '<td><span class="badge ' + s.cls + '">' + s.txt + (l.cancelado_parcial && !l.cancelado ? ' · cancelado em parte' : '') + '</span></td>' +
+            /* A CONFIRMAÇÃO da produtividade é o que destrava o
+               pagamento: enquanto não vem, o valor é número de
+               trabalho e o financeiro não paga. A função existia no
+               sistema e não tinha tela nenhuma — quem precisava
+               confirmar não tinha onde. */
+            '<td><span class="badge ' + s.cls + '">' + s.txt +
+              (l.cancelado_parcial && !l.cancelado ? ' · cancelado em parte' : '') + '</span>' +
+              (!l.cancelado
+                ? (l.confirmado_em
+                    ? '<div class="sub" title="' + U.esc(l.confirmado_por || '') + '">✓ confirmada em ' +
+                      U.fData(U.dataLocal(l.confirmado_em)) + '</div>'
+                    : '<div class="sub" style="color:var(--amber,#8a6d00)">aguardando confirmação</div>')
+                : '') + '</td>' +
             '<td class="acoes"><button class="btn-sm" data-lp-ver="' + l.id + '">' +
               (loteAberto === l.id ? 'Fechar' : 'Ver detalhe') + '</button>' +
+              (!l.cancelado && !l.confirmado_em && S.pode('confirmar_produtividade')
+                ? '<button class="btn-sm btn-aprovar" data-lp-confirmar="' + l.id + '">' +
+                  'Confirmar fechamento</button>' : '') +
               (!l.cancelado ? '<button class="btn-sm" data-lp-fat="' + l.id + '">Valor a faturar</button>' +
                 '<button class="btn-sm btn-cancelar" data-lp-cancelar="' + l.id + '">Cancelar</button>' : '') +
               '</td></tr>' +
@@ -392,6 +412,53 @@ ERP.produtividade = (function () {
   }
 
   function ligarLotes() {
+    /* CONFIRMAR O FECHAMENTO: a mão da produtividade dizendo "este
+       valor é o certo, pode pagar". Sem isso o financeiro não
+       libera, e o médico espera. */
+    document.querySelectorAll('[data-lp-confirmar]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const id = this.dataset.lpConfirmar;
+        const l = S.st.lotesProdutividade.find(function (x) { return x.id === id; });
+        if (!l) return;
+        const sit = S.situacaoLoteProdutividade(l);
+        const c = D.centro(l.centro) || {};
+
+        ERP.app.modal({
+          titulo: 'Confirmar fechamento · ' + (c.curto || c.nome),
+          fecharTxt: 'Cancelar',
+          corpo:
+            '<div class="resumo-linha"><span>Competência</span><span class="v">' +
+              U.fComp(l.competencia) + '</span></div>' +
+            '<div class="resumo-linha"><span>Médicos</span><span class="v">' + l.medicos + '</span></div>' +
+            '<div class="resumo-linha"><span>Valor total</span><span class="v">' +
+              U.brl(l.valor) + '</span></div>' +
+            (sit.bloqueados
+              ? '<div class="aviso" style="margin-top:10px;border-left-color:var(--red)">' +
+                '<b>' + sit.bloqueados + ' médico(s) com pagamento bloqueado:</b> ' +
+                U.esc(sit.medicos_bloqueados.join(', ')) + '. Eles ficam FORA da remessa de ' +
+                'pagamento. Libere antes, ou confirme ciente disso.</div>' +
+                '<label class="marcar" style="margin-top:8px"><input type="checkbox" id="cf-ciente">' +
+                '<span>Estou ciente de que esses médicos não serão pagos agora</span></label>'
+              : '') +
+            '<div class="ajuda" style="margin-top:10px">Confirmar é dizer que este valor é o ' +
+            'fidedigno. A partir daqui o financeiro pode pagar — antes disso, não.</div>' +
+            '<div id="cf-erro"></div>',
+          acoes: [{ txt: 'Confirmar fechamento', cls: 'btn-aprovar', fn: function () {
+            const erro = U.el('cf-erro');
+            const ciente = U.el('cf-ciente') ? U.el('cf-ciente').checked : false;
+            const r = S.confirmarLoteProdutividade(id, { ciente_bloqueios: ciente });
+            if (r.erro) {
+              if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+              return;
+            }
+            ERP.app.fecharModal();
+            ERP.app.aviso('Fechamento confirmado — liberado para pagamento.', 'ok');
+            render();
+          } }]
+        });
+      });
+    });
+
     /* Liberar o pagamento do médico direto na conferência. */
     document.querySelectorAll('[data-lp-liberar]').forEach(function (b2) {
       b2.addEventListener('click', function () {
