@@ -955,7 +955,11 @@ ERP.store = (function () {
       const achou = prefs.find(function (x) { return normMun(x.nome).indexOf(mun) > -1; });
       if (achou) return achou.id;
       const novo = { id: novoId('cr'), ativo: true, nome: 'Prefeitura de ' + municipio + ' — ISS', tipo: 'orgao',
-        conta_padrao: '2.01', forma_pagamento: 'guia', origem: 'retencao' };
+        conta_padrao: '2.01', forma_pagamento: 'guia', origem: 'retencao',
+        /* Nasce PENDENTE: é o campo que o financeiro usa para
+           liberar pagamento, e cadastro criado no automático não
+           deve chegar liberado. */
+        dados_aprovados: false };
       D.credores.push(novo);
       return novo.id;
     }
@@ -3127,7 +3131,7 @@ ERP.store = (function () {
         conta_padrao: '8.01', origem: 'procedimentos',
         /* Sem PIX e sem conta: o pagamento não sai enquanto o
            financeiro não completar, que é o comportamento certo. */
-        forma_pagamento: '', documento: '', pix: '' };
+        forma_pagamento: '', documento: '', pix: '', dados_aprovados: false };
       D.credores.push(cr);
       logar('credor', cr.id, 'criou', 'Médico do mutirão — dados bancários pendentes');
     }
@@ -6175,7 +6179,8 @@ ERP.store = (function () {
     let cr = pensao.credor_id && D.credor(pensao.credor_id);
     if (!cr) {
       const id = novoId('cr');
-      cr = { id: id, ativo: true, nome: pensao.beneficiario_nome, tipo: 'outro', conta_padrao: '4.01', origem: 'dp' };
+      cr = { id: id, ativo: true, nome: pensao.beneficiario_nome, tipo: 'outro', conta_padrao: '4.01',
+        origem: 'dp', dados_aprovados: false };
       D.credores.push(cr);
       pensao.credor_id = id;
     }
@@ -9837,6 +9842,7 @@ ERP.store = (function () {
      dois caminhos criando id de jeitos diferentes é como nascem ids
      repetidos. */
   function proximoIdProduto() { return novoId('pr'); }
+  function proximoIdCredor() { return novoId('cr'); }
 
   /* COMPLETA O CADASTRO do material com o que a nota traz.
 
@@ -16818,7 +16824,7 @@ ERP.store = (function () {
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
-    completarCadastroPelaNota, materiaisSemNCM,
+    completarCadastroPelaNota, materiaisSemNCM, proximoIdCredor,
     transferirEntreContas, transferenciasBanco, cancelarTransferenciaBanco,
     analisarNFSeImportacao, importarNFSe,
     recebidoNaConta, recebidoSemConta, ultimoInventario, checarDataInventario,
