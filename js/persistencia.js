@@ -60,6 +60,24 @@ ERP.persistencia = (function () {
   }
 
   const MAPA = {
+    /* CADASTROS PRIMEIRO, e nesta ordem.
+
+       O banco recusa um título que aponta para um credor que
+       ainda não existe — "titulos_credor_fkey". Com os cadastros
+       gravando DEPOIS dos lançamentos, todo médico, fornecedor
+       ou material criado no mesmo ciclo derrubava o lote inteiro.
+       Eram quinze dependências fora de ordem, e cada uma
+       aparecia como um erro diferente em um módulo diferente.
+
+       `centros` antes de `armazens` porque o armazém aponta
+       para o centro de custo. Há um teste que confere a ordem
+       contra as chaves estrangeiras do schema. */
+    centros: { tabela: 'centros', colunas: ['id', 'curto', 'codigo', 'nome', 'tipo', 'unidade', 'cidade', 'uf', 'cnpj', 'empresa', 'cliente', 'grupo_faturamento', 'especialidade_pate', 'impostos', 'ativo', 'tipo_servico', 'prev_faturamento', 'prev_repasse', 'produtividade', 'retencao_pct', 'prazo_dias'] },
+    clientes: { tabela: 'clientes', colunas: ['id', 'nome', 'documento', 'centro_padrao', 'prazo_dias', 'endereco', 'numero', 'bairro', 'cidade', 'uf', 'cep', 'email', 'ativo'] },
+    credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta', 'dados_aprovados', 'ativo'] },
+    bancos: { tabela: 'bancos', colunas: ['id', 'empresa', 'apelido', 'banco', 'agencia', 'agencia_dv', 'conta', 'conta_dv', 'layout_remessa', 'convenio', 'saldo_inicial', 'saldo_inicial_em', 'ativo'] },
+    produtos: { tabela: 'produtos', colunas: ['id', 'codigo', 'descricao', 'unidade', 'ncm', 'cest', 'familia', 'minimo', 'ideal', 'custo', 'conta', 'ativo'] },
+    armazens: { tabela: 'armazens', colunas: ['id', 'codigo', 'nome', 'centro', 'tipo', 'pai', 'responsavel', 'ativo', 'especialidade'] },
     titulos: { tabela: 'titulos', colunas: ['id', 'descricao', 'credor', 'doc', 'tipo_titulo', 'emissao', 'origem', 'origem_ref', 'obs', 'valor_total', 'valor_bruto', 'qtd', 'empresa_tomadora', 'criado_por', 'criado_por_id', 'criado_em'] },
     parcelas: { tabela: 'parcelas', colunas: ['id', 'titulo_id', 'num', 'total', 'descricao', 'credor', 'conta', 'centro', 'rateio', 'tipo_titulo', 'emissao', 'comp', 'venc', 'valor', 'status', 'valor_pago', 'pago_em', 'aprovacao', 'aprovado_por', 'aprovado_em', 'motivo', 'origem', 'doc', 'obs', 'chave', 'retencoes', 'valor_retido', 'itens', 'criado_por', 'criado_por_id', 'criado_em'] },
     pagamentos: { tabela: 'pagamentos', colunas: ['id', 'parcela_id', 'data', 'valor', 'juros', 'multa', 'desconto', 'banco', 'empresa', 'cruzamento', 'doc', 'obs', 'forma', 'forma_codigo', 'situacao', 'estornado', 'usuario', 'usuario_id', 'criado_em'] },
@@ -86,12 +104,6 @@ ERP.persistencia = (function () {
 
        Vem ANTES do estoque na ordem do mapa de propósito: o produto
        precisa existir no banco antes da camada que aponta para ele. */
-    produtos: { tabela: 'produtos', colunas: ['id', 'codigo', 'descricao', 'unidade', 'ncm', 'cest', 'familia', 'minimo', 'ideal', 'custo', 'conta', 'ativo'] },
-    credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta', 'dados_aprovados', 'ativo'] },
-    armazens: { tabela: 'armazens', colunas: ['id', 'codigo', 'nome', 'centro', 'tipo', 'pai', 'responsavel', 'ativo', 'especialidade'] },
-    centros: { tabela: 'centros', colunas: ['id', 'curto', 'codigo', 'nome', 'tipo', 'unidade', 'cidade', 'uf', 'cnpj', 'empresa', 'cliente', 'grupo_faturamento', 'especialidade_pate', 'impostos', 'ativo', 'tipo_servico', 'prev_faturamento', 'prev_repasse', 'produtividade', 'retencao_pct', 'prazo_dias'] },
-    clientes: { tabela: 'clientes', colunas: ['id', 'nome', 'documento', 'centro_padrao', 'prazo_dias', 'endereco', 'numero', 'bairro', 'cidade', 'uf', 'cep', 'email', 'ativo'] },
-    bancos: { tabela: 'bancos', colunas: ['id', 'empresa', 'apelido', 'banco', 'agencia', 'agencia_dv', 'conta', 'conta_dv', 'layout_remessa', 'convenio', 'saldo_inicial', 'saldo_inicial_em', 'ativo'] },
     estoque: { tabela: 'estoque_camadas', colunas: ['id', 'produto', 'armazem', 'qtd', 'custo', 'data', 'data_nf', 'lote', 'validade', 'origem', 'documento', 'nota_chave', 'pedido_id', 'grupo', 'lancado_em'] },
     estoqueMov: { tabela: 'estoque_movimentos', colunas: ['id', 'tipo', 'produto', 'armazem', 'qtd', 'qtd_nota', 'unidades_por_embalagem', 'custo', 'custo_nota', 'valor', 'medio_depois', 'data', 'data_nf', 'motivo', 'documento', 'lote', 'validade', 'origem', 'grupo', 'pedido_id', 'paciente', 'estornado', 'usuario', 'usuario_id', 'lancado_em'] },
     procedimentos: { tabela: 'procedimentos', colunas: ['id', 'data', 'competencia', 'centro', 'especialidade', 'procedimento', 'procedimento_nome', 'medico', 'paciente', 'qtd', 'faturamento', 'repasse', 'custo_material', 'imposto', 'imposto_pct', 'resultado', 'armazem', 'materiais', 'transferencias', 'grupo', 'financeiro', 'cancelado', 'motivo_cancelamento', 'editado_por', 'usuario_id', 'criado_em'] },
@@ -261,6 +273,37 @@ ERP.persistencia = (function () {
     if (!c) return { erro: 'Sem conexão com o banco.' };
     const { error } = await c.from('chamados').update(dados).eq('id', id);
     return error ? { erro: error.message } : { ok: true };
+  }
+
+  /* MATRIZ DE ACESSO.
+
+     Era lida do banco e nunca gravada: marcar um nível na tela de
+     Administração mudava só a sessão de quem marcou. A pessoa via
+     a permissão concedida, a outra continuava sem ver nada, e não
+     havia erro em lugar nenhum — o pior tipo de falha, porque
+     parece que o sistema está certo e a culpa é do usuário.
+
+     Grava a matriz inteira: ela tem poucas dezenas de linhas, e
+     comparar linha a linha para enviar só o que mudou traz mais
+     risco de divergência do que economia. */
+  async function gravarMatriz() {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const m = ERP.store && ERP.store.st && ERP.store.st.parametros &&
+      ERP.store.st.parametros.matriz_acesso;
+    if (!m) return { ok: true, nada: true };
+
+    const linhas = [];
+    Object.keys(m).forEach(function (perfil) {
+      Object.keys(m[perfil] || {}).forEach(function (modulo) {
+        linhas.push({ perfil: perfil, modulo: modulo, niveis: String(m[perfil][modulo] || '') });
+      });
+    });
+    if (!linhas.length) return { ok: true, nada: true };
+
+    const { error } = await c.from('matriz_acesso')
+      .upsert(linhas, { onConflict: 'perfil,modulo' });
+    return error ? { erro: error.message } : { ok: true, linhas: linhas.length };
   }
 
   async function statusLogins() {
@@ -878,6 +921,37 @@ ERP.persistencia = (function () {
 
   /* A faixa de "não está salvo". Fica no topo, vermelha, até a
      próxima gravação dar certo. */
+  /* Traduz o erro do banco para o que a pessoa precisa fazer.
+
+     "violates foreign key constraint titulos_credor_fkey" não diz
+     nada a quem está lançando produtividade — e o que ela faz em
+     seguida é tentar de novo, com o mesmo resultado. A causa quase
+     sempre é um cadastro que não chegou ao banco antes do
+     lançamento que aponta para ele. */
+  function explicar(erro) {
+    const t = String(erro || '');
+    if (/violates foreign key constraint/i.test(t)) {
+      const alvo = (t.match(/"(\w+?)_(\w+?)_fkey"/) || [])[2] || '';
+      const nomes = { credor: 'o fornecedor ou médico', produto: 'o material',
+        centro: 'o projeto', cliente: 'o cliente', banco: 'a conta bancária',
+        armazem: 'o armazém', ativo: 'o equipamento' };
+      const quem = nomes[alvo] || 'um cadastro';
+      return t + ' — na prática: ' + quem + ' deste lançamento não foi gravado no banco. ' +
+        'Em geral é falta de permissão para criar cadastro. Avise quem cuida do sistema.';
+    }
+    if (/row-level security/i.test(t)) {
+      return t + ' — na prática: seu perfil não tem permissão para gravar nesta tabela.';
+    }
+    if (/Could not find the '(\w+)' column/i.test(t)) {
+      return t + ' — na prática: o banco está desatualizado em relação ao sistema. ' +
+        'Falta rodar uma atualização.';
+    }
+    if (/violates not-null constraint/i.test(t)) {
+      return t + ' — na prática: um campo obrigatório ficou em branco.';
+    }
+    return t;
+  }
+
   function marcarPendencia(falhas) {
     let el = document.getElementById('faixa-nao-salvo');
     if (!el) {
@@ -888,7 +962,7 @@ ERP.persistencia = (function () {
     const quantas = falhas.length;
     el.innerHTML = '<b>Não foi gravado no banco.</b> ' +
       (quantas > 1 ? quantas + ' partes falharam. Primeira: ' : '') +
-      ERP.util.esc(String(falhas[0])) +
+      ERP.util.esc(explicar(falhas[0])) +
       ' — o que está na tela ainda não está salvo. Não feche a aba.';
     el.style.display = 'block';
     registrarFalha(falhas);
@@ -971,7 +1045,7 @@ ERP.persistencia = (function () {
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,
            listarChamados: listarChamados, responderChamado: responderChamado,
-           falhasGravacao: falhasGravacao,
+           falhasGravacao: falhasGravacao, gravarMatriz: gravarMatriz,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
            degradadas: () => degradadas.slice() };

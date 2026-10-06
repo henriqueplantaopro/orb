@@ -557,7 +557,7 @@ ERP.cadastros = (function () {
           S.logarCadastro('cadastro', c.id, 'editou cadastro', (c.nome || c.descricao || c.codigo || ''));
           c.ativo = U.el('pj-ativo') ? U.el('pj-ativo').checked : true;
         } else {
-          dados.id = 'pj' + Date.now().toString(36);
+          dados.id = S.proximoId('pj');
           dados.ativo = true;
           D.centros.push(dados);
           S.logarCadastro('centro', dados.id, 'cadastrou centro de custo', dados.nome || dados.descricao || dados.codigo || '');
@@ -697,7 +697,7 @@ ERP.cadastros = (function () {
           S.logarCadastro('cadastro', c.id, 'editou cadastro', (c.nome || c.descricao || c.codigo || ''));
           c.ativo = U.el('un-ativo') ? U.el('un-ativo').checked : true;
         } else {
-          dados.id = 'cc' + Date.now().toString(36);
+          dados.id = S.proximoId('cc');
           dados.ativo = true;
           D.centros.push(dados);
           S.logarCadastro('centro', dados.id, 'cadastrou centro de custo', dados.nome || dados.descricao || dados.codigo || '');
@@ -908,7 +908,7 @@ ERP.cadastros = (function () {
           Object.keys(dados).forEach(function (k) { a[k] = dados[k]; });
           a.ativo = ativoNovo;
         } else {
-          dados.id = 'am' + Date.now().toString(36);
+          dados.id = S.proximoId('am');
           dados.ativo = true;
           D.armazens.push(dados);
           S.logarCadastro('armazem', dados.id, 'cadastrou armazém', dados.nome || dados.descricao || dados.codigo || '');
@@ -1061,7 +1061,7 @@ ERP.cadastros = (function () {
           S.logarCadastro('cadastro', c.id, 'editou cadastro', (c.nome || c.descricao || c.codigo || ''));
           c.ativo = U.el('cd-ativo') ? U.el('cd-ativo').checked : true;
         } else {
-          dados.id = 'cr' + Date.now().toString(36);
+          dados.id = S.proximoId('cr');
           dados.ativo = true;
           D.credores.push(dados);
           S.logarCadastro('credor', dados.id, 'cadastrou fornecedor/credor', dados.nome || dados.descricao || dados.codigo || '');
@@ -1166,7 +1166,7 @@ ERP.cadastros = (function () {
         };
         if (c) Object.keys(dados).forEach(function (k) { c[k] = dados[k]; });
         else {
-          dados.id = 'cl' + Date.now().toString(36);
+          dados.id = S.proximoId('cl');
           D.clientes.push(dados);
           S.logarCadastro('cliente', dados.id, 'cadastrou cliente', dados.nome || dados.descricao || dados.codigo || '');
         }

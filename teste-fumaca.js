@@ -6961,15 +6961,24 @@ function liberarParaFaturar(centro, competencia) {
   const vazio = S.cadastrarMaterial({ descricao: '   ' });
   verificar('v76 — exige descrição', !!vazio.erro, vazio.erro || 'PASSOU');
 
-  /* Cadastrar é ato de quem tem o módulo: a requisição não vira
-     porta dos fundos para quem só consulta. */
+  /* Quem SÓ CONSULTA não cadastra — a requisição não vira porta
+     dos fundos. Mas quem movimenta estoque ou compras SIM: a nota
+     chega com item que não existe, e sem poder cadastrar a entrada
+     inteira trava. */
   S.setUsuario('u4');
   const semPerm = S.cadastrarMaterial({ descricao: 'QA sem permissao v76' });
-  verificar('v76 — perfil sem Cadastros não cadastra',
+  verificar('v76 — perfil de consulta não cadastra',
     !!semPerm.erro && /não cadastra/i.test(semPerm.erro), semPerm.erro || 'PASSOU');
 
-  verificar('v76 — só um material entrou no cadastro',
-    D.produtos.length === antes + 1, (D.produtos.length - antes) + '');
+  S.setUsuario('u6');   // controle de estoque
+  const comEstoque = S.cadastrarMaterial({ descricao: 'QA material pelo estoque v85' });
+  verificar('v85 — quem movimenta estoque cadastra material da nota',
+    comEstoque.ok, comEstoque.erro || '');
+
+  /* Dois: o do cadastro válido e o que o perfil de estoque criou.
+     O de consulta foi recusado, que é o que importa aqui. */
+  verificar('v76 — só os cadastros permitidos entraram',
+    D.produtos.length === antes + 2, (D.produtos.length - antes) + '');
   S.setUsuario('u8');
 })();
 
@@ -7207,4 +7216,72 @@ function liberarParaFaturar(centro, competencia) {
   }
   verificar('v84 — o mapa de gravação só cita colunas que o banco tem',
     divergencias.length === 0, divergencias.join(', '));
+})();
+
+// ── ERP teste2 v87: a gravação respeita as chaves estrangeiras ──
+(function () {
+  /* "titulos_credor_fkey", "estoque_camadas_produto_fkey" — sempre
+     a mesma história: o lançamento grava antes do cadastro que ele
+     aponta, e o banco recusa o lote inteiro.
+
+     Eram QUINZE dependências fora de ordem no mapa. Cada uma
+     aparecia como um erro diferente, num módulo diferente, no meio
+     do trabalho de alguém — e parecia problema do módulo, não da
+     ordem de gravação.
+
+     Este teste lê as chaves estrangeiras do schema e confere a
+     ordem do mapa contra elas. */
+  const fs = require('fs');
+  const sch = fs.readFileSync(__dirname + '/supabase/01-schema.sql', 'utf8');
+  const persist = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  const ordem = [];
+  const reOrdem = /^\s*(\w+): \{ tabela: '(\w+)'/gm;
+  let m;
+  while ((m = reOrdem.exec(persist))) ordem.push(m[2]);
+
+  const deps = {};
+  const reTab = /create table (\w+) \(([\s\S]*?)\n\);/g;
+  let t;
+  while ((t = reTab.exec(sch))) {
+    const alvos = [];
+    const reRef = /references (\w+)/g;
+    let r;
+    while ((r = reRef.exec(t[2]))) {
+      if (r[1] !== t[1] && alvos.indexOf(r[1]) < 0) alvos.push(r[1]);
+    }
+    if (alvos.length) deps[t[1]] = alvos;
+  }
+
+  const fora = [];
+  ordem.forEach(function (tab, i) {
+    (deps[tab] || []).forEach(function (d) {
+      const j = ordem.indexOf(d);
+      if (j > i) fora.push(tab + ' antes de ' + d);
+    });
+  });
+  verificar('v87 — cadastros gravam antes dos lançamentos que apontam para eles',
+    fora.length === 0, fora.join(' | '));
+})();
+
+// ── ERP teste2 v87: nenhum id gerado pelo relógio ──
+(function () {
+  /* `Date.now()` repete quando dois cadastros caem no mesmo
+     milissegundo — e dois registros com o mesmo id significam
+     saldo, título e movimento indo para o lugar errado. Apareceu
+     primeiro nos materiais (cinco lentes com o mesmo id), depois em
+     fornecedores, depois em mais cinco telas de cadastro.
+
+     Este teste varre os arquivos: id tem de vir do gerador do
+     store, que segue a sequência. */
+  const fs = require('fs');
+  const dir = __dirname + '/js/';
+  const ruins = [];
+  fs.readdirSync(dir).filter(function (f) { return /\.js$/.test(f); }).forEach(function (f) {
+    const t = fs.readFileSync(dir + f, 'utf8');
+    const m = t.match(/id: '\w+' \+ Date\.now\(\)/g);
+    if (m) ruins.push(f + ' (' + m.length + ')');
+  });
+  verificar('v87 — nenhum id de cadastro é gerado pelo relógio',
+    ruins.length === 0, ruins.join(', '));
 })();

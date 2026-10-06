@@ -317,6 +317,19 @@ ERP.store = (function () {
         'consegue mais mexer nos acessos.' };
     }
     st.parametros.matriz_acesso = nova;
+    /* VAI AO BANCO. A matriz era lida de lá e nunca gravada:
+       marcar um nível mudava só a sessão de quem marcou, e a outra
+       pessoa continuava sem ver nada — sem erro em lugar nenhum,
+       que é o pior tipo de falha, porque parece que o sistema está
+       certo e a culpa é de quem usa. */
+    if (ERP.persistencia && ERP.persistencia.gravarMatriz) {
+      ERP.persistencia.gravarMatriz().then(function (r) {
+        if (r && r.erro && ERP.app && ERP.app.aviso) {
+          ERP.app.aviso('Acessos alterados na tela, MAS não gravados no banco: ' + r.erro +
+            ' — as outras pessoas continuam com o acesso antigo.', 'erro');
+        }
+      });
+    }
     logar('perfis', 'matriz', 'alterou', 'matriz de acesso atualizada');
     return { ok: true };
   }
@@ -2661,7 +2674,7 @@ ERP.store = (function () {
       if (achado.tipo !== 'medico') achado.tipo = 'medico';
       return achado.id;
     }
-    const id = 'cr' + Date.now().toString(36) + '-' + (D.credores.length + 1);
+    const id = novoId('cr');
     D.credores.push({ id: id, nome: String(nome || '').trim(), tipo: 'medico', ativo: true,
       conta_padrao: '3.01' });
     logar('credor', id, 'criou pelo fechamento do mutirão', String(nome || '').trim());
@@ -9843,6 +9856,11 @@ ERP.store = (function () {
      repetidos. */
   function proximoIdProduto() { return novoId('pr'); }
   function proximoIdCredor() { return novoId('cr'); }
+  /* Gerador único de id para as telas de cadastro. Cada uma usava
+     `Date.now()`, que repete quando dois cadastros caem no mesmo
+     milissegundo — e dois registros com o mesmo id significam
+     saldo, título e movimento indo para o lugar errado. */
+  function proximoId(prefixo) { return novoId(prefixo); }
 
   /* COMPLETA O CADASTRO do material com o que a nota traz.
 
@@ -9888,7 +9906,18 @@ ERP.store = (function () {
   }
 
   function cadastrarMaterial(d) {
-    if (!podeMover('cadastros')) return { erro: 'Seu perfil não cadastra material.' };
+    /* Quem movimenta ESTOQUE também cadastra material: a nota chega
+       com item que não existe no sistema, e sem poder cadastrar a
+       entrada inteira trava. Era por isso que o cadastro em lote
+       não fazia nada para o perfil de Compras — a verificação
+       recusava calado, e o botão parecia quebrado.
+
+       O caminho individual da tela já permitia isso há tempos,
+       gravando direto; a diferença entre os dois é que criava a
+       confusão. */
+    if (!podeMover('cadastros') && !podeMover('estoque') && !podeMover('compras')) {
+      return { erro: 'Seu perfil não cadastra material.' };
+    }
     const desc = String((d && d.descricao) || '').trim();
     if (!desc) return { erro: 'Informe a descrição do material.' };
 
@@ -11132,7 +11161,7 @@ ERP.store = (function () {
         return { erro: 'Ficaria ninguém com perfil de administração — o perfil foi mantido.' };
       }
     } else {
-      D.usuarios.push({ id: 'u' + Date.now().toString(36), nome: d.nome, perfil: d.perfil,
+      D.usuarios.push({ id: novoId('u'), nome: d.nome, perfil: d.perfil,
         email: d.email || '', ativo: true });
     }
     logar('usuario', d.id || 'novo', d.id ? 'editou usuário' : 'criou usuário', d.nome + ' · ' + d.perfil);
@@ -12044,7 +12073,7 @@ ERP.store = (function () {
     const chave = semAcento(nome);
     let cr = D.credores.find(function (x) { return semAcento(x.nome) === chave; });
     if (!cr) {
-      cr = { id: 'cr' + Date.now().toString(36) + '-' + (D.credores.length + 1),
+      cr = { id: novoId('cr') + '-' + (D.credores.length + 1),
              nome: nome, tipo: tipoCredorPorConta(conta), ativo: true,
              conta_padrao: conta || null, origem: 'conciliação' };
       D.credores.push(cr);
@@ -12065,7 +12094,7 @@ ERP.store = (function () {
       return n === chave || n.indexOf(chave) === 0 || chave.indexOf(n) === 0;
     });
     if (!cr) {
-      cr = { id: 'cr' + Date.now().toString(36) + '-' + (D.credores.length + 1),
+      cr = { id: novoId('cr') + '-' + (D.credores.length + 1),
              nome: nome, tipo: tipoCredorPorConta(conta), ativo: true,
              conta_padrao: conta || null, origem: 'conciliação' };
       D.credores.push(cr);
@@ -12083,7 +12112,7 @@ ERP.store = (function () {
     let cr = D.credores.find(function (x) { return semAcento(x.nome) === semAcento(nome); }) ||
              D.credores.find(function (x) { return semAcento(x.nome) === semAcento(curto); });
     if (!cr) {
-      cr = { id: 'cr' + Date.now().toString(36), nome: nome, tipo: 'fornecedor',
+      cr = { id: novoId('cr'), nome: nome, tipo: 'fornecedor',
              ativo: true, forma_pagamento: 'debito_conta', conta_padrao: '9.01' };
       D.credores.push(cr);
     }
@@ -16824,7 +16853,7 @@ ERP.store = (function () {
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
-    completarCadastroPelaNota, materiaisSemNCM, proximoIdCredor,
+    completarCadastroPelaNota, materiaisSemNCM, proximoIdCredor, proximoId,
     transferirEntreContas, transferenciasBanco, cancelarTransferenciaBanco,
     analisarNFSeImportacao, importarNFSe,
     recebidoNaConta, recebidoSemConta, ultimoInventario, checarDataInventario,
