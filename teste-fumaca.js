@@ -7075,3 +7075,73 @@ function liberarParaFaturar(centro, competencia) {
     geral && Math.abs(geral.valor - 4000) < 0.01, geral ? geral.valor : '(não achou)');
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v82: produto novo chega ao banco ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+
+  /* O ERRO REAL que a compradora encontrou:
+     "insert or update on table estoque_camadas violates foreign key
+      constraint estoque_camadas_produto_fkey"
+
+     A causa não estava no estoque. O material cadastrado pelo
+     sistema vivia só em `dados.produtos`, e a persistência só
+     enxerga `st` — então o produto nunca ia ao banco. A entrada
+     seguinte gravava uma camada apontando para ele, e o banco
+     recusava o bloco inteiro.
+
+     Quem lançava via um erro de ESTOQUE sem nenhuma pista de que a
+     causa era o CADASTRO. */
+  verificar('v82 — st.produtos e dados.produtos são a mesma lista',
+    S.st.produtos === D.produtos, '');
+
+  const antes = S.st.produtos.length;
+  const novo = S.cadastrarMaterial({ descricao: 'QA material v82 ponte' });
+  verificar('v82 — material cadastrado aparece no estado que é gravado',
+    novo.ok && S.st.produtos.length === antes + 1 &&
+    S.st.produtos.some(function (p) { return p.id === novo.produto.id; }), '');
+
+  /* E a entrada de estoque sobre ele funciona de ponta a ponta. */
+  const am = D.armazens[0].id;
+  const e = S.entrada({ produto: novo.produto.id, armazem: am, qtd: 5, custo: 100,
+    data: Ut.hoje(), motivo: 'QA v82', origem: 'nota' });
+  verificar('v82 — e a entrada sobre esse material funciona', !e.erro, e.erro || '');
+  verificar('v82 — com saldo correto',
+    S.saldoEstoque(novo.produto.id, am) === 5, S.saldoEstoque(novo.produto.id, am));
+  S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v82: todo cadastro usado em lançamento é gravado ──
+(function () {
+  /* A falha da compradora foi de CHAVE ESTRANGEIRA no estoque, mas
+     a causa era outra: o cadastro vivia só em `dados` e a
+     persistência só olha `st`. Material novo nunca ia ao banco.
+
+     O mesmo valia para fornecedor, armazém, projeto, cliente e
+     banco — nenhum era gravado. Só aparecia quando alguém usava o
+     cadastro novo em outro módulo e o banco recusava.
+
+     Este teste olha a CLASSE do problema: toda coleção que o mapa
+     de gravação cita precisa existir em `st` e apontar para a
+     mesma lista de `dados`, senão a gravação não vê o que mudou. */
+  const fs = require('fs');
+  const txt = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const bloco = (txt.match(/const MAPA[^=]*= \{([\s\S]*?)\n  \};/) || [])[1] || txt;
+  const nomes = [];
+  const re = /^\s*(\w+): \{ tabela: '/gm;
+  let m;
+  while ((m = re.exec(bloco))) nomes.push(m[1]);
+
+  const semEstado = nomes.filter(function (n) { return !Array.isArray(S.st[n]); });
+  verificar('v82 — toda coleção do mapa de gravação existe no estado',
+    semEstado.length === 0, semEstado.join(', '));
+
+  /* E, para as que também vivem em `dados`, tem de ser a MESMA
+     lista: duas listas é como os dois lados se desencontram. */
+  const duplicadas = nomes.filter(function (n) {
+    return Array.isArray(D[n]) && S.st[n] !== D[n];
+  });
+  verificar('v82 — e aponta para a mesma lista de dados, não uma cópia',
+    duplicadas.length === 0, duplicadas.join(', '));
+})();

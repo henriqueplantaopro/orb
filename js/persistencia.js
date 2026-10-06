@@ -77,6 +77,21 @@ ERP.persistencia = (function () {
     /* Estoque, procedimentos, compras, ativos e pessoal. Entraram
        depois do financeiro, na mesma mecânica: quem observa o
        estado não precisa saber de que módulo veio a mudança. */
+    /* PRODUTOS. Faltava aqui, e o efeito só aparecia na segunda
+       ponta: material cadastrado pelo sistema ficava só na memória,
+       a entrada de estoque gravava uma camada apontando para ele, e
+       o banco recusava a camada inteira por chave estrangeira —
+       "estoque_camadas_produto_fkey". Quem lançava via o erro do
+       estoque sem nenhuma pista de que a causa era o cadastro.
+
+       Vem ANTES do estoque na ordem do mapa de propósito: o produto
+       precisa existir no banco antes da camada que aponta para ele. */
+    produtos: { tabela: 'produtos', colunas: ['id', 'codigo', 'descricao', 'unidade', 'ncm', 'cest', 'familia', 'minimo', 'ideal', 'custo', 'conta', 'ativo'] },
+    credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta', 'dados_aprovados', 'ativo'] },
+    armazens: { tabela: 'armazens', colunas: ['id', 'codigo', 'nome', 'centro', 'tipo', 'pai', 'responsavel', 'ativo', 'especialidade'] },
+    centros: { tabela: 'centros', colunas: ['id', 'curto', 'codigo', 'nome', 'tipo', 'unidade', 'cidade', 'uf', 'cnpj', 'empresa', 'cliente', 'grupo_faturamento', 'especialidade_pate', 'impostos', 'ativo', 'tipo_servico', 'prev_faturamento', 'prev_repasse', 'produtividade', 'retencao_pct', 'prazo_dias'] },
+    clientes: { tabela: 'clientes', colunas: ['id', 'nome', 'documento', 'centro_padrao', 'prazo_dias', 'endereco', 'numero', 'bairro', 'cidade', 'uf', 'cep', 'email', 'ativo'] },
+    bancos: { tabela: 'bancos', colunas: ['id', 'empresa', 'apelido', 'banco', 'agencia', 'agencia_dv', 'conta', 'conta_dv', 'layout_remessa', 'convenio', 'saldo_inicial', 'saldo_inicial_em', 'ativo'] },
     estoque: { tabela: 'estoque_camadas', colunas: ['id', 'produto', 'armazem', 'qtd', 'custo', 'data', 'data_nf', 'lote', 'validade', 'origem', 'documento', 'nota_chave', 'pedido_id', 'grupo', 'lancado_em'] },
     estoqueMov: { tabela: 'estoque_movimentos', colunas: ['id', 'tipo', 'produto', 'armazem', 'qtd', 'qtd_nota', 'unidades_por_embalagem', 'custo', 'custo_nota', 'valor', 'medio_depois', 'data', 'data_nf', 'motivo', 'documento', 'lote', 'validade', 'origem', 'grupo', 'pedido_id', 'paciente', 'estornado', 'usuario', 'usuario_id', 'lancado_em'] },
     procedimentos: { tabela: 'procedimentos', colunas: ['id', 'data', 'competencia', 'centro', 'especialidade', 'procedimento', 'procedimento_nome', 'medico', 'paciente', 'qtd', 'faturamento', 'repasse', 'custo_material', 'imposto', 'imposto_pct', 'resultado', 'armazem', 'materiais', 'transferencias', 'grupo', 'financeiro', 'cancelado', 'motivo_cancelamento', 'editado_por', 'usuario_id', 'criado_em'] },
@@ -876,12 +891,37 @@ ERP.persistencia = (function () {
       ERP.util.esc(String(falhas[0])) +
       ' — o que está na tela ainda não está salvo. Não feche a aba.';
     el.style.display = 'block';
+    registrarFalha(falhas);
   }
 
   function limparPendencia() {
     const el = document.getElementById('faixa-nao-salvo');
     if (el) el.style.display = 'none';
   }
+
+  /* REGISTRO DAS FALHAS de gravação.
+
+     A faixa vermelha some na gravação seguinte que der certo — e
+     aí ninguém mais sabe que algo ficou para trás. Quem lançou
+     jura que lançou, quem procura não acha, e não há onde
+     conferir.
+
+     Guarda as últimas falhas para a tela de Administração mostrar.
+     Fica só nesta sessão: se o navegador fechou, a informação se
+     perdeu de qualquer jeito — mas enquanto a pessoa está ali,
+     dá para provar o que aconteceu. */
+  const falhasDaSessao = [];
+
+  function registrarFalha(falhas) {
+    falhasDaSessao.push({
+      quando: new Date().toISOString(),
+      usuario: (ERP.store && ERP.store.usuario && (ERP.store.usuario() || {}).nome) || '',
+      erros: (falhas || []).map(String)
+    });
+    if (falhasDaSessao.length > 50) falhasDaSessao.shift();
+  }
+
+  function falhasGravacao() { return falhasDaSessao.slice(); }
 
   function agendar() {
     if (!ligado) return;
@@ -931,6 +971,7 @@ ERP.persistencia = (function () {
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,
            listarChamados: listarChamados, responderChamado: responderChamado,
+           falhasGravacao: falhasGravacao,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
            degradadas: () => degradadas.slice() };
