@@ -44,7 +44,11 @@ ERP.config = {
      segundos, se o navegador está com o código novo ou com uma
      cópia velha em cache — pergunta que já custou duas rodadas de
      diagnóstico em cima de um erro que não existia mais. */
-  versao: 'v54 · 05/10/2026',
+  /* A versão é gravada no empacotamento, não à mão: escrita
+     manualmente, ela envelhece sem ninguém notar e passa a mentir
+     sobre o que está no ar — foi o que aconteceu com o "v54" que
+     ficou parado enquanto o código avançava. */
+  versao: 'v73 · 06/10/2026',
 
   url: 'https://jsdyowuqehryfwqyklax.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpzZHlvd3VxZWhyeWZ3cXlrbGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDM4ODIsImV4cCI6MjEwNjUxOTg4Mn0.UPFhyMPwmM9DzyiRnjTg3EQGPg9KvcIQcP6wHM5WRSg'
