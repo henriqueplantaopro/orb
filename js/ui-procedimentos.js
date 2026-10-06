@@ -69,9 +69,11 @@ ERP.procedimentos = (function () {
     if (!form) form = novoForm();
     alvo.innerHTML =
       aba === 'lancar'     ? telaLancar() :
+      aba === 'padroes'    ? telaPadroes() :
       aba === 'fechamento' ? telaFechamento() :
       aba === 'relatorios' ? (veValor() ? telaRelatorios() : telaProducao()) : telaLista();
-    if (aba === 'lancar') ligarLancar();
+    if (aba === 'padroes') ligarPadroes();
+    else if (aba === 'lancar') ligarLancar();
     else if (aba === 'fechamento') ligarFechamento();
     else if (aba === 'lista') ligarLista();
     else if (veValor()) ligarRelatorios();
@@ -191,6 +193,156 @@ ERP.procedimentos = (function () {
         '</div>';
       }).join('') +
       '</div>';
+  }
+
+  /* ── Materiais padrão por cirurgia ────────────────────────
+     Toda facoemulsificação usa uma lente; toda colecistectomia usa
+     clipes. Definir isso uma vez evita que quem lança precise
+     lembrar a cada cirurgia — e material esquecido não some do
+     custo: aparece no inventário seguinte como diferença sem
+     explicação. */
+  let padraoProc = '';
+
+  function telaPadroes() {
+    const procs = (D.tabelaPate || []).slice().sort(function (a, b) {
+      return (a.area + a.nome).localeCompare(b.area + b.nome, 'pt-BR');
+    });
+    if (!padraoProc && procs.length) padraoProc = procs[0].id;
+    const atual = procs.find(function (p) { return p.id === padraoProc; });
+    const lista = padraoProc ? S.materiaisPadraoDe(padraoProc) : [];
+
+    /* As famílias que existem no cadastro: é o que permite dizer
+       "uma lente" sem dizer qual grau. */
+    const familias = [];
+    D.produtos.forEach(function (p) {
+      if (p.familia && familias.indexOf(p.familia) < 0) familias.push(p.familia);
+    });
+    familias.sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+
+    return '<div class="filtros">' +
+        '<div class="f" style="flex:1"><label for="mp-proc">Cirurgia</label>' +
+          '<select id="mp-proc">' +
+            procs.map(function (p) {
+              const n = S.materiaisPadraoDe(p.id).length;
+              return '<option value="' + p.id + '"' + (p.id === padraoProc ? ' selected' : '') + '>' +
+                U.esc(p.area + ' · ' + p.nome) + (n ? ' (' + n + ')' : '') + '</option>';
+            }).join('') +
+          '</select></div>' +
+      '</div>' +
+      (!atual ? '<div class="card"><div class="ajuda">Nenhuma cirurgia na tabela.</div></div>' :
+      '<div class="card">' +
+        '<h2 style="font-size:13px;margin:0 0 4px">' + U.esc(atual.nome) + '</h2>' +
+        '<div class="sub" style="margin-bottom:10px">' + U.esc(atual.area) + ' · ' +
+          U.esc(atual.codigo || '') + '</div>' +
+        (lista.length
+          ? '<table class="rel"><thead><tr><th>Material</th><th class="num">Qtd</th>' +
+            '<th>Como funciona</th><th></th></tr></thead><tbody>' +
+            lista.map(function (m) {
+              return '<tr><td>' +
+                (m.familia
+                  ? '<b>' + U.esc(m.familia) + '</b> <span class="badge b-aberto">família</span>'
+                  : U.esc((D.produtos.find(function (x) { return x.id === m.produto; }) || {}).descricao || m.produto)) +
+                '</td>' +
+                '<td class="num">' + U.num(m.qtd) + '</td>' +
+                '<td class="sub">' + (m.familia
+                  ? 'quem lança escolhe entre ' + m.opcoes.length + ' opção(ões)'
+                  : 'entra marcado automaticamente') + '</td>' +
+                '<td><button class="btn-sm" data-mp-rem="' + m.id + '">Remover</button></td></tr>';
+            }).join('') + '</tbody></table>'
+          : '<div class="ajuda">Nenhum material padrão nesta cirurgia ainda.</div>') +
+        '<div class="ap-acoes" style="margin-top:12px">' +
+          '<button class="btn-linha" id="mp-add-prod">+ material específico</button>' +
+          (familias.length
+            ? '<button class="btn-linha" id="mp-add-fam">+ família (quem lança escolhe)</button>'
+            : '') +
+        '</div>' +
+        '<div class="ajuda">Use <b>material específico</b> quando é sempre o mesmo item. Use ' +
+        '<b>família</b> quando varia — a lente intraocular é a mesma cirurgia com graus ' +
+        'diferentes, e a tabela não tem como saber qual foi usado.' +
+        (familias.length ? '' : ' Nenhuma família cadastrada ainda: defina em Estoque › Famílias.') +
+        '</div>' +
+      '</div>');
+  }
+
+  function ligarPadroes() {
+    const sel = U.el('mp-proc');
+    if (sel) sel.addEventListener('change', function () { padraoProc = this.value; render(); });
+
+    document.querySelectorAll('[data-mp-rem]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.mpRem;
+        S.st.materiaisPadrao = (S.st.materiaisPadrao || []).filter(function (m) {
+          return String(m.id) !== String(id);
+        });
+        render();
+      });
+    });
+
+    const add = U.el('mp-add-prod');
+    if (add) add.addEventListener('click', function () { modalPadrao(false); });
+    const addF = U.el('mp-add-fam');
+    if (addF) addF.addEventListener('click', function () { modalPadrao(true); });
+  }
+
+  function modalPadrao(porFamilia) {
+    const familias = [];
+    D.produtos.forEach(function (p) {
+      if (p.familia && familias.indexOf(p.familia) < 0) familias.push(p.familia);
+    });
+    familias.sort(function (a, b) { return a.localeCompare(b, 'pt-BR'); });
+
+    ERP.app.modal({
+      titulo: porFamilia ? 'Família de material' : 'Material específico',
+      fecharTxt: 'Cancelar',
+      corpo:
+        (porFamilia
+          ? '<label for="mpn-fam">Família</label><select id="mpn-fam">' +
+            familias.map(function (f) {
+              const n = D.produtos.filter(function (p) { return p.familia === f && p.ativo; }).length;
+              return '<option value="' + U.esc(f) + '">' + U.esc(f) + ' (' + n + ' variações)</option>';
+            }).join('') + '</select>'
+          : '<label for="mpn-prod">Material</label>' +
+            '<input list="mpn-lista" id="mpn-prod" placeholder="digite parte do nome">' +
+            '<datalist id="mpn-lista">' +
+              D.produtos.filter(function (p) { return p.ativo; })
+                .sort(function (a, b) { return (a.descricao || '').localeCompare(b.descricao || '', 'pt-BR'); })
+                .map(function (p) {
+                  return '<option value="' + U.esc(p.codigo + ' · ' + p.descricao) + '">';
+                }).join('') +
+            '</datalist>') +
+        '<label for="mpn-qtd" style="margin-top:10px">Quantidade</label>' +
+        '<input class="num" id="mpn-qtd" inputmode="decimal" value="1,00">' +
+        '<div class="ajuda">' + (porFamilia
+          ? 'Quem lançar a cirurgia escolhe qual variação foi usada — o grau da lente, por exemplo.'
+          : 'Entra marcado automaticamente ao escolher esta cirurgia, e pode ser ajustado.') +
+        '</div><div id="mpn-erro"></div>',
+      acoes: [{ txt: 'Adicionar', cls: 'btn-aprovar', fn: function () {
+        const erro = U.el('mpn-erro');
+        const qtd = U.parseValor(U.val('mpn-qtd')) || 1;
+        let dados = { procedimento: padraoProc, qtd: qtd };
+        if (porFamilia) {
+          dados.familia = U.val('mpn-fam');
+        } else {
+          const txt = U.val('mpn-prod').trim().toLowerCase();
+          const p = D.produtos.find(function (x) {
+            return (x.codigo + ' · ' + x.descricao).toLowerCase() === txt ||
+              (x.descricao || '').toLowerCase() === txt;
+          });
+          if (!p) {
+            if (erro) erro.innerHTML = '<div class="login-erro">Escolha um material da lista.</div>';
+            return;
+          }
+          dados.produto = p.id;
+        }
+        const r = S.salvarMaterialPadrao(dados);
+        if (r.erro) {
+          if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+          return;
+        }
+        ERP.app.fecharModal();
+        render();
+      } }]
+    });
   }
 
   function telaLancar() {

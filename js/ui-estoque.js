@@ -79,6 +79,7 @@ ERP.estoque = (function () {
     });
     if (!U.el('es-armazem').options.length) U.el('es-armazem').innerHTML = opcoesArmazem('', true);
     U.el('es-saida').innerHTML =
+      aba === 'familias'  ? telaFamilias() :
       aba === 'posicao'   ? posicao() :
       aba === 'extrato'   ? extrato() :
       aba === 'pacientes' ? telaPacientes() :
@@ -573,6 +574,107 @@ ERP.estoque = (function () {
      Os graus ZERADOS aparecem de propósito: saber que o +21,0
      acabou é mais útil que não ver a linha, porque é justamente o
      que precisa de reposição. */
+  /* ── Famílias de material ──────────────────────────────────
+     A família é o que permite dizer "uma lente intraocular" sem
+     dizer qual grau: no estoque ela junta as variações numa linha
+     só, e no procedimento ela deixa a escolha do item para quem
+     lança a cirurgia.
+
+     É um campo de texto livre de propósito. Uma lista fechada
+     exigiria cadastrar a família antes do material, e na prática
+     a família só fica óbvia quando o segundo item parecido
+     aparece. */
+  let buscaFam = '';
+
+  function telaFamilias() {
+    const q = String(buscaFam || '').trim().toUpperCase();
+    const lista = D.produtos.filter(function (p) {
+      if (!p.ativo) return false;
+      if (!q) return true;
+      return (p.descricao + ' ' + (p.codigo || '') + ' ' + (p.familia || ''))
+        .toUpperCase().indexOf(q) >= 0;
+    }).sort(function (a2, b2) {
+      /* Agrupados por família, e os sem família no fim: é a lista
+         de trabalho de quem está organizando. */
+      const fa = a2.familia || 'zzz', fb = b2.familia || 'zzz';
+      if (fa !== fb) return fa.localeCompare(fb, 'pt-BR');
+      return (a2.descricao || '').localeCompare(b2.descricao || '', 'pt-BR', { numeric: true });
+    });
+
+    const familias = [];
+    D.produtos.forEach(function (p) {
+      if (p.familia && familias.indexOf(p.familia) < 0) familias.push(p.familia);
+    });
+    const semFamilia = D.produtos.filter(function (p) { return p.ativo && !p.familia; }).length;
+
+    let html = '<div class="filtros">' +
+        '<div class="f" style="flex:1"><label for="fm-busca">Buscar material</label>' +
+          '<input id="fm-busca" value="' + U.esc(buscaFam) + '" placeholder="ex.: lente"></div>' +
+        (q ? '<button class="btn-sm" id="fm-limpa">Limpar</button>' : '') +
+      '</div>' +
+      '<div class="pr-confere">' +
+        '<span>Famílias <b>' + familias.length + '</b></span>' +
+        '<span>Materiais sem família <b>' + semFamilia + '</b></span>' +
+      '</div>' +
+      '<div class="ajuda" style="margin:8px 0">Materiais com a <b>mesma família</b> aparecem ' +
+      'juntos no estoque e podem ser usados como material padrão de uma cirurgia, com quem lança ' +
+      'escolhendo a variação. Deixe em branco o que não tem variação.</div>';
+
+    if (!S.podeMover('cadastros')) {
+      html += '<div class="aviso">Seu perfil não altera cadastro — a lista está em leitura.</div>';
+    }
+
+    html += '<datalist id="fm-existentes">' +
+      familias.sort(function (a2, b2) { return a2.localeCompare(b2, 'pt-BR'); })
+        .map(function (f) { return '<option value="' + U.esc(f) + '">'; }).join('') +
+      '</datalist>';
+
+    html += '<table class="rel"><thead><tr><th>Material</th><th style="width:40%">Família</th>' +
+      '<th class="num">Saldo</th></tr></thead><tbody>' +
+      lista.map(function (p) {
+        const saldo = D.armazens.reduce(function (t, am) {
+          return t + S.saldoEstoque(p.id, am.id);
+        }, 0);
+        return '<tr><td>' + U.esc(p.codigo + ' · ' + p.descricao) + '</td>' +
+          '<td>' + (S.podeMover('cadastros')
+            ? '<input list="fm-existentes" data-fam-prod="' + p.id + '" value="' +
+              U.esc(p.familia || '') + '" placeholder="— sem família —">'
+            : U.esc(p.familia || '—')) + '</td>' +
+          '<td class="num' + (saldo ? '' : ' sub') + '">' + U.num(saldo) + '</td></tr>';
+      }).join('') +
+      '</tbody></table>';
+
+    if (!lista.length) {
+      html += '<div class="card"><div class="ajuda">Nenhum material com esse texto.</div></div>';
+    }
+    return html;
+  }
+
+  function ligarFamilias() {
+    const bq = U.el('fm-busca');
+    if (bq) {
+      bq.addEventListener('change', function () { buscaFam = this.value; render(); });
+    }
+    const lp = U.el('fm-limpa');
+    if (lp) lp.addEventListener('click', function () { buscaFam = ''; render(); });
+
+    /* Grava ao sair do campo, não a cada tecla: redesenhar a tabela
+       a cada letra tiraria o foco e faria perder o que está sendo
+       digitado. */
+    document.querySelectorAll('[data-fam-prod]').forEach(function (e) {
+      e.addEventListener('change', function () {
+        const p = D.produtos.find(function (x) { return x.id === this.dataset.famProd; }.bind(this));
+        if (!p) return;
+        const nova = this.value.trim();
+        if ((p.familia || '') === nova) return;
+        p.familia = nova || null;
+        S.logarCadastro('produto', p.id, nova ? 'agrupou na família' : 'tirou da família',
+          p.codigo + ' · ' + (nova || 'sem família'));
+        ERP.app.aviso(nova ? 'Agrupado em "' + nova + '".' : 'Família removida.', 'ok');
+      });
+    });
+  }
+
   function posicaoFamilia() {
     const am = armSel();
     const q = String(buscaPosicao || '').trim().toUpperCase();
@@ -1890,6 +1992,10 @@ ERP.estoque = (function () {
   }
 
   function ligar() {
+    /* A aba de famílias tem campos próprios e nenhum dos elementos
+       que o resto desta função espera — liga e sai. */
+    if (aba === 'familias') { ligarFamilias(); return; }
+
     const box = U.el('es-saida');
     box.querySelectorAll('[data-es]').forEach(function (chk) {
       chk.addEventListener('change', function () {
