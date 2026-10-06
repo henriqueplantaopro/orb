@@ -762,3 +762,11 @@ body.ambiente-teste .barra-modulo {
 .busca-mat { display: flex; gap: 6px; align-items: center; min-width: 0; }
 .busca-mat input[list] { flex: 1 1 auto; min-width: 0; }
 .busca-mat .btn-sm { flex: 0 0 auto; white-space: nowrap; }
+
+/* Médico com pagamento bloqueado no fechamento: cor própria, não a
+   mesma de "lançado". Quem está bloqueado é justamente o que exige
+   decisão — some no meio dos outros é como o bloqueio é esquecido
+   até o dia do pagamento. */
+.badge.sit-bloqueado {
+  background: #fdecea; color: #962d22; border: 1px solid #f0b4ab; font-weight: 600;
+}
