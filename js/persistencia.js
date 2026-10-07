@@ -426,6 +426,13 @@ ERP.persistencia = (function () {
     return linha;
   }
 
+  /* Colunas que apontam para outra tabela. Levantadas do schema:
+     centros.empresa, produtos.conta, armazens.centro e pai,
+     titulos.credor, parcelas.conta e centro, compras.armazem...
+     São vinte tabelas, e em qualquer uma delas um campo em branco
+     derruba a gravação inteira com erro de chave estrangeira. */
+  const APONTA_PARA_OUTRA = /^(credor|conta|centro|cliente|empresa|empresa_tomadora|banco|armazem|pai|projeto|contrato|lote_origem|fornecedor|centro_padrao|titulo_id|extrato_id|usuario_id|parcela_id|produto|ativo)$/;
+
   /* Separa o registro entre colunas conhecidas e `extra`. */
   function paraBanco(item, colunas) {
     const linha = {};
@@ -436,6 +443,11 @@ ERP.persistencia = (function () {
         if (v === undefined) v = null;
         /* "" em coluna de data ou número é ausência, não valor. */
         if (v === '' && DATA_OU_NUMERO.test(k)) v = null;
+        /* E em coluna que APONTA PARA OUTRA TABELA também: o banco
+           vai procurar o registro de código "" e não vai achar —
+           "produtos_conta_fkey". Vazio ali significa "sem conta
+           definida", não "a conta cujo código é nada". */
+        if (v === '' && APONTA_PARA_OUTRA.test(k)) v = null;
         linha[k] = v;
       } else if (item[k] !== undefined) {
         extra[k] = item[k];
@@ -624,15 +636,25 @@ ERP.persistencia = (function () {
       const antes = sombra[nome] || {};
       const agora = {};
       const novos = [];
+      const criados = [];
       (st[nome] || []).forEach(function (it) {
         if (!it || !it.id) return;
         const s = JSON.stringify(it);
         agora[it.id] = s;
-        if (antes[it.id] !== s) novos.push(it);
+        if (antes[it.id] !== s) {
+          novos.push(it);
+          /* Separa CRIADO de ALTERADO: quem não administra cadastro
+             pode criar o material que precisa para o próprio
+             lançamento, mas não alterar o cadastro dos outros — e
+             sem essa distinção a gravação tentava enviar a tabela
+             inteira e era recusada, derrubando o lançamento junto. */
+          if (!(it.id in antes)) criados.push(it);
+        }
       });
       const sumiram = Object.keys(antes).filter(function (id) { return !(id in agora); });
       if (novos.length || sumiram.length) {
-        mudou.push({ nome: nome, def: MAPA[nome], novos: novos, sumiram: sumiram });
+        mudou.push({ nome: nome, def: MAPA[nome], novos: novos,
+          criados: criados, sumiram: sumiram });
       }
     });
     return mudou;
@@ -762,9 +784,43 @@ ERP.persistencia = (function () {
     const estoqueFalhou = falhas.some(function (f) { return String(f).indexOf('estoque') === 0; });
     const DEPENDE_DO_ESTOQUE = ['procedimentos', 'fechamentosProcedimentos', 'previsoes', 'compras'];
 
+    /* CADASTRO que o perfil não administra não vai junto.
+
+       Pôr os cadastros na gravação resolveu o material que não
+       chegava ao banco — e criou outro problema: qualquer
+       diferença boba num projeto ou cliente fazia a gravação
+       tentar escrever a tabela inteira, e o perfil que não
+       administra cadastro era recusado pela política. O
+       lançamento, que não tinha nada a ver, caía junto.
+
+       A regra: o cadastro só é enviado se o perfil mexe nele OU se
+       a própria pessoa criou o registro agora — que é o caso do
+       material cadastrado no meio de uma requisição. O resto
+       segue, e o lançamento grava. */
+    const CADASTROS = ['centros', 'clientes', 'credores', 'bancos', 'produtos', 'armazens'];
+    const MODULO_DO_CADASTRO = { centros: 'cadastros', clientes: 'cadastros',
+      credores: 'cadastros', bancos: 'cadastros', produtos: 'estoque', armazens: 'estoque' };
+
     for (const m of mudou) {
       /* Já foram no bloco acima. */
       if (m.nome === 'estoque' || m.nome === 'estoqueMov') continue;
+
+      if (CADASTROS.indexOf(m.nome) >= 0) {
+        const S2 = ERP.store;
+        const administra = S2 && S2.podeMover && S2.podeMover('cadastros');
+        const doModulo = S2 && S2.podeMover && S2.podeMover(MODULO_DO_CADASTRO[m.nome]);
+        if (!administra && !doModulo) continue;
+        /* Sem o módulo de Cadastros, só o que a pessoa ACABOU de
+           criar: alterar o cadastro de outros é ato de quem
+           administra, e enviar a tabela inteira seria recusado
+           pela política de qualquer forma. */
+        if (!administra) {
+          if (!m.criados || !m.criados.length) continue;
+          /* Só o que esta pessoa criou agora. */
+          m.novos = m.criados;
+          m.sumiram = [];
+        }
+      }
       if (estoqueFalhou && DEPENDE_DO_ESTOQUE.indexOf(m.nome) >= 0) {
         falhas.push(m.def.tabela + ': não gravado de propósito — a baixa de estoque desta ' +
           'operação falhou, e o lançamento sem a baixa diz ter consumido material que não saiu');
