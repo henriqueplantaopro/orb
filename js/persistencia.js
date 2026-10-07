@@ -798,8 +798,6 @@ ERP.persistencia = (function () {
        material cadastrado no meio de uma requisição. O resto
        segue, e o lançamento grava. */
     const CADASTROS = ['centros', 'clientes', 'credores', 'bancos', 'produtos', 'armazens'];
-    const MODULO_DO_CADASTRO = { centros: 'cadastros', clientes: 'cadastros',
-      credores: 'cadastros', bancos: 'cadastros', produtos: 'estoque', armazens: 'estoque' };
 
     for (const m of mudou) {
       /* Já foram no bloco acima. */
@@ -808,15 +806,26 @@ ERP.persistencia = (function () {
       if (CADASTROS.indexOf(m.nome) >= 0) {
         const S2 = ERP.store;
         const administra = S2 && S2.podeMover && S2.podeMover('cadastros');
-        const doModulo = S2 && S2.podeMover && S2.podeMover(MODULO_DO_CADASTRO[m.nome]);
-        if (!administra && !doModulo) continue;
-        /* Sem o módulo de Cadastros, só o que a pessoa ACABOU de
-           criar: alterar o cadastro de outros é ato de quem
-           administra, e enviar a tabela inteira seria recusado
-           pela política de qualquer forma. */
+        /* O QUE A PESSOA CRIOU AGORA VAI SEMPRE.
+
+           A versão anterior disto exigia o módulo do cadastro —
+           e quem tem Compras, mas não Estoque, cadastrava o
+           material na requisição e ele nunca chegava ao banco.
+           A requisição gravava apontando para um produto
+           inexistente, e a tela mostrava "material fora do
+           cadastro".
+
+           Decidir permissão aqui é duplicar uma regra que o banco
+           já aplica — e duplicar regra é como as duas versões se
+           separam. O cliente envia o que foi criado; a política
+           do banco aceita ou recusa, e a recusa aparece como erro
+           em vez de sumiço silencioso.
+
+           O que NÃO vai sem o módulo de Cadastros é a ALTERAÇÃO do
+           cadastro alheio: aí sim o lote inteiro seria recusado
+           por causa de uma diferença que ninguém pediu. */
         if (!administra) {
           if (!m.criados || !m.criados.length) continue;
-          /* Só o que esta pessoa criou agora. */
           m.novos = m.criados;
           m.sumiram = [];
         }

@@ -130,9 +130,17 @@ ERP.compras = (function () {
            no cadastro — porque a gravação falhou, ou porque alguém
            o inativou — a linha mostra o nome guardado na própria
            requisição, e só então o código. */
+        /* O nome do cadastro primeiro; depois o que ficou guardado
+           na própria requisição. "Material fora do cadastro" só
+           quando não há nem um nem outro — aí é informação de
+           verdade, não um código cru. */
         return '<tr><td class="desc">' +
           U.esc(p.descricao || i.descricao || i.nome ||
             ('material fora do cadastro · ' + (i.produto || 'sem código'))) +
+          (p.descricao || i.descricao
+            ? '<div class="sub">' + U.esc(p.codigo || i.codigo || '') +
+              (p.unidade || i.unidade ? ' · ' + U.esc(p.unidade || i.unidade) : '') + '</div>'
+            : '') +
             '<div class="sub">' + U.esc(p.codigo || '') + '</div></td>' +
           '<td class="num">' + U.num(i.qtd) + ' ' + U.esc(p.unidade || '') + '</td>' +
           '<td class="num">' + U.num(i.recebido) + '</td>' +

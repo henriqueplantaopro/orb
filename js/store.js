@@ -10669,7 +10669,16 @@ ERP.store = (function () {
       credor: null, prazo: d.prazo || '',
       observacao: d.observacao || '',
       itens: itens.map(function (i) {
-        return { produto: i.produto, qtd: Math.round(i.qtd * 1000) / 1000, recebido: 0 };
+        /* O NOME VAI JUNTO, não só o código. A requisição vive
+           meses — passa por cotação, aprovação, pedido, entrega — e
+           nesse tempo o material pode ser renomeado, inativado ou,
+           como aconteceu, nem chegar ao cadastro. Guardar o nome
+           custa nada e evita que a tela mostre um código cru para
+           quem precisa decidir uma compra. */
+        const pr = D.produtos.find(function (x) { return x.id === i.produto; }) || {};
+        return { produto: i.produto, qtd: Math.round(i.qtd * 1000) / 1000, recebido: 0,
+          descricao: pr.descricao || i.descricao || '',
+          codigo: pr.codigo || '', unidade: pr.unidade || '' };
       }),
       historico: [{ status: 'requisicao', data: U.hoje(), usuario: usuario().nome }],
       /* Sem o id de quem abriu, a regra "quem pede não aprova" não tem

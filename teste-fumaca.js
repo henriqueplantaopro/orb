@@ -7461,3 +7461,37 @@ function liberarParaFaturar(centro, competencia) {
     S.podeMover('cadastros') || S.podeMover('contratos'), '');
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v93: o cadastro criado na hora sempre grava ──
+(function () {
+  const fs = require('fs');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* DEFEITO MEU no v91: a regra que criei para não derrubar o
+     lançamento passou a exigir o módulo do cadastro — e quem tem
+     Compras mas não Estoque cadastrava o material na requisição,
+     ele NUNCA chegava ao banco, e a requisição gravava apontando
+     para um produto inexistente.
+
+     Decidir permissão no cliente duplica uma regra que o banco já
+     aplica, e é assim que as duas versões se separam. O que a
+     pessoa criou vai sempre; a política do banco aceita ou recusa,
+     e a recusa aparece como erro em vez de sumiço silencioso. */
+  verificar('v93 — o que a pessoa criou é sempre enviado ao banco',
+    !/MODULO_DO_CADASTRO/.test(pers) &&
+    /O QUE A PESSOA CRIOU AGORA VAI SEMPRE/.test(pers), '');
+
+  /* E a requisição guarda o NOME do material, não só o código: ela
+     vive meses, e nesse tempo o material pode ser renomeado,
+     inativado ou nem chegar ao cadastro. */
+  S.setUsuario('u7');
+  const p = D.produtos[0];
+  const r = S.criarRequisicao({ armazem: D.armazens[0].id, itens: [{ produto: p.id, qtd: 10 }] });
+  verificar('v93 — a requisição guarda o nome do material',
+    r.ok && r.requisicao.itens[0].descricao === p.descricao,
+    r.ok ? r.requisicao.itens[0].descricao : r.erro);
+  verificar('v93 — com código e unidade junto',
+    r.ok && r.requisicao.itens[0].codigo === p.codigo &&
+    r.requisicao.itens[0].unidade === p.unidade, '');
+  S.setUsuario('u8');
+})();
