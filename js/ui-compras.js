@@ -253,7 +253,13 @@ ERP.compras = (function () {
             'value="' + U.esc(i.produto ? (prod(i.produto).codigo + ' · ' + prod(i.produto).descricao) : '') + '" ' +
             'placeholder="digite parte do nome ou o código" autocomplete="off">' +
           '<input type="hidden" data-i="' + ix + '" data-c="produto" value="' + U.esc(i.produto || '') + '">' +
-          (S.podeMover('cadastros')
+          /* O botão segue a MESMA regra do cadastro em si: quem
+             movimenta compras ou estoque também cadastra material.
+             A regra foi corrigida no sistema, mas a tela continuou
+             exigindo o módulo de Cadastros — então quem requisita
+             via o campo e não via o botão, e a única saída era
+             escolher um material parecido. */
+          (S.podeMover('cadastros') || S.podeMover('compras') || S.podeMover('estoque')
             ? '<button type="button" class="btn-sm" data-novo="' + ix + '" ' +
               'title="Cadastrar um material que ainda não existe">+ novo</button>' : '') +
         '</div>' +

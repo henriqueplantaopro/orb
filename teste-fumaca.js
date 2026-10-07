@@ -7359,3 +7359,32 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v89 — e abre mostrando TODOS os projetos por padrão',
     /let cobTodos = true;/.test(ui), '');
 })();
+
+// ── ERP teste2 v90: o botão de cadastrar segue a regra do sistema ──
+(function () {
+  /* A regra de QUEM cadastra material foi corrigida no sistema —
+     compras e estoque passaram a poder — mas a TELA continuou
+     exigindo o módulo de Cadastros. Resultado: quem requisita via
+     o campo e não via o botão, e a única saída era escolher um
+     material parecido, que é o erro que o cadastro existe para
+     evitar.
+
+     Este teste amarra os dois lados: quem vê o botão tem de
+     conseguir cadastrar, e quem não vê, não. */
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-compras.js', 'utf8');
+  verificar('v90 — o botão na requisição aceita compras e estoque',
+    /podeMover\('cadastros'\) \|\| S\.podeMover\('compras'\) \|\| S\.podeMover\('estoque'\)/.test(ui), '');
+
+  const divergentes = [];
+  D.usuarios.forEach(function (u) {
+    S.setUsuario(u.id);
+    const veBotao = S.podeMover('cadastros') || S.podeMover('compras') || S.podeMover('estoque');
+    const r = S.cadastrarMaterial({ descricao: 'QA v90 ' + u.id });
+    const consegue = !!r.ok;
+    if (veBotao !== consegue) divergentes.push(u.nome + ' (botão ' + veBotao + ', cadastra ' + consegue + ')');
+  });
+  verificar('v90 — quem vê o botão consegue cadastrar, e vice-versa',
+    divergentes.length === 0, divergentes.join(' | '));
+  S.setUsuario('u8');
+})();
