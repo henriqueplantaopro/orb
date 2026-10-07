@@ -615,7 +615,7 @@ ERP.procedimentos = (function () {
         } }]
       });
     }
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     const p = r.procedimento;
     const medico = form.medico, esp = form.especialidade, arm = form.armazem;
     form = novoForm();
@@ -800,7 +800,7 @@ ERP.procedimentos = (function () {
           data: U.val('ed-data'), medico: U.val('ed-medico'), paciente: U.val('ed-paciente'),
           qtd: Number(U.val('ed-qtd')) || 1, materiais: materiais
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Procedimento atualizado.', 'ok');
       } }]
@@ -816,7 +816,7 @@ ERP.procedimentos = (function () {
         'lance a devolução no módulo de estoque — cancelar aqui não devolve sozinho.</div>',
       acoes: [{ txt: 'Cancelar procedimento', cls: 'btn-reprovar', fn: function () {
         const r = S.cancelarProcedimento(id, U.val('pc-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Procedimento cancelado.' + (r.aviso ? ' ' + r.aviso : ''), 'ok');
       } }]
@@ -851,7 +851,7 @@ ERP.procedimentos = (function () {
         : '<div class="vazio"><strong>Nada pendente nesta competência.</strong></div>'),
       acoes: pend.length ? [{ txt: 'Gerar', cls: 'btn-aprovar', fn: function () {
         const r = S.gerarFinanceiroProcedimentos(comp);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Gerado: ' + r.procedimentos + ' procedimento(s), faturamento ' +
           U.brl(r.faturamento) + ', ' + r.criados.titulos.length + ' repasse(s).' +
@@ -1044,7 +1044,7 @@ ERP.procedimentos = (function () {
         '<input id="pl-motivo" placeholder="turno de 12 horas, meio período…"></div>',
       acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
         const r = S.ajustarPlantoes(partes[0], partes[1], U.val('pl-qtd'), U.val('pl-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Plantões atualizados para ' + U.num(r.qtd) + '.', 'ok');
       } }]
@@ -1422,7 +1422,7 @@ ERP.procedimentos = (function () {
             vencimento_repasse: U.val('fc-venc'), observacao: U.val('fc-obs'),
             refazer: refazendo
           });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal(); render();
           ERP.app.aviso('Fechamento gravado: ' + U.brl(r.fechamento.faturamento) +
             ' a faturar e ' + U.brl(r.fechamento.repasse) + ' de repasse em ' +
@@ -1447,7 +1447,7 @@ ERP.procedimentos = (function () {
         acoes: [{ txt: 'Enviar', cls: 'btn-aprovar', fn: function () {
           const r = S.enviarFaturamentoProcedimentos(fechComp, D.PATE_CENTRO,
             { protocolo: U.val('fc-prot'), data: U.val('fc-data') });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal(); render();
           ERP.app.aviso('Faturamento autorizado e liberado. O financeiro já pode emitir a nota.', 'ok');
         } }]

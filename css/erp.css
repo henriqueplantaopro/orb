@@ -770,3 +770,17 @@ body.ambiente-teste .barra-modulo {
 .badge.sit-bloqueado {
   background: #fdecea; color: #962d22; border: 1px solid #f0b4ab; font-weight: 600;
 }
+
+/* ── Campo que faltou preencher ─────────────────────────────────
+   Borda vermelha fina some num formulário cheio. O que a pessoa
+   precisa é achar o campo num relance, sem ler tudo de novo — daí
+   a borda mais grossa e o halo em volta. */
+.campo-erro,
+.campo-erro:focus {
+  border: 2px solid var(--red) !important;
+  background: var(--red-bg);
+  box-shadow: 0 0 0 3px rgba(150, 45, 34, .14);
+  outline: none;
+}
+/* O rótulo acompanha: o olho vai primeiro ao texto, não à caixa. */
+.campo-erro-rotulo { color: var(--red); font-weight: 650; }

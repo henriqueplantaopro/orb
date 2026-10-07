@@ -158,7 +158,7 @@ ERP.faturamento = (function () {
           valor: U.parseValor(U.val('cp-valor')), numero: U.val('cp-num'),
           vencimento: U.val('cp-venc'), motivo: U.val('cp-motivo')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         renderStatus(); ERP.receber.render(); ERP.app.atualizarContadores();
         ERP.app.aviso('Complemento de ' + U.brl(r.receber.valor_bruto) + ' lançado no contas a receber.', 'ok');
@@ -312,7 +312,7 @@ ERP.faturamento = (function () {
         });
         const remessa = U.hoje().replace(/-/g, '') + String(S.st.lotesRPS.length + 1).padStart(3, '0');
         const r = ERP.rpsBarueri.gerar(itens, D.empresa, { remessa: remessa, numero_inicial: proximoRPS() });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         const nome = 'rps-' + rpsComp + '-' + remessa + '.txt';
         ERP.rpsBarueri.baixar(nome, r.conteudo);
         S.registrarLoteRPS({ competencia: rpsComp, remessa: remessa, arquivo_nome: nome,
@@ -350,7 +350,7 @@ ERP.faturamento = (function () {
           acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
             const r = S.registrarProtocoloRPS(id, { protocolo: U.val('rp-prot'),
               situacao: U.val('rp-sit'), ambiente: U.val('rp-amb') });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); renderRPS(); ERP.app.aviso('Envio registrado.', 'ok');
           } }]
         });
@@ -390,7 +390,7 @@ ERP.faturamento = (function () {
           if (i.value.trim()) numeros[+i.dataset.nf] = i.value.trim();
         });
         const r = S.converterLoteRPS(loteId, numeros);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         renderRPS();
         atualizarAlertaFat();
@@ -586,7 +586,7 @@ ERP.faturamento = (function () {
         confirmar_sem_produtividade: U.el('es-sem-prod') ? U.el('es-sem-prod').checked : true,
         protocolo: U.val('es-conf-prot'), observacao: U.val('es-conf-obs')
       });
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       ERP.app.fecharModal();
       renderEsteira();
       ERP.receber.render();
@@ -676,7 +676,7 @@ ERP.faturamento = (function () {
           acoes: [{ txt: 'Registrar autorização', cls: 'btn-aprovar', fn: function () {
             const r = S.autorizarFaturamento(par[0], par[1], { protocolo: U.val('es-prot'),
               data: U.val('es-data'), observacao: U.val('es-obs') });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); renderEsteira(); atualizarAlertaFat();
             ERP.app.aviso('Autorização registrada — já liberado para o RPS em lote.', 'ok');
           } }]
@@ -698,7 +698,7 @@ ERP.faturamento = (function () {
                 ERP.app.fecharModal(); liberar(true); } }]
             });
           }
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           renderEsteira(); atualizarAlertaFat();
           ERP.app.aviso('Liberado para faturar.', 'ok');
         };
@@ -715,7 +715,7 @@ ERP.faturamento = (function () {
           corpo: '<label>Motivo *</label><input id="es-motivo" placeholder="ex.: órgão pediu revisão da medição">',
           acoes: [{ txt: 'Desfazer', cls: 'btn-cancelar', fn: function () {
             const r = S.desfazerEtapaFaturamento(par[1], par[2], par[0], U.val('es-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); renderEsteira(); ERP.app.aviso('Etapa desfeita.', 'ok');
           } }]
         });
@@ -756,7 +756,7 @@ ERP.faturamento = (function () {
       acoes: [{ txt: 'Lançar nota única', cls: 'btn-aprovar', fn: function () {
         const r = S.faturarGrupo({ grupo: grupo, competencia: covComp, numero: U.val('ng-num'),
           valor: U.parseValor(U.val('ng-valor')), emissao: U.val('ng-emissao'), vencimento: U.val('ng-venc') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); renderCobertura(); atualizarAlertaFat();
         ERP.app.aviso('Nota única lançada e rateada entre ' + r.partes.length + ' projeto(s).', 'ok');
       } }]
@@ -879,7 +879,7 @@ ERP.faturamento = (function () {
         centro: fatSel.centro, competencia: fatSel.comp, itens: fatSel.itens,
         observacao: U.val('fa-fat-obs'), arquivo: arquivo
       }, dadosAnexo || {}));
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       if (arquivo) ERP.app.fecharModal();
       if (!arquivo) pdfFatura(r.receber);
       ERP.contas.render();
@@ -1064,7 +1064,7 @@ ERP.faturamento = (function () {
     box.querySelectorAll('[data-encerrar]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.marcarPrevisoes(covComp, 'encerrada', this.dataset.encerrar);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         renderCobertura(); atualizarAlertaFat(); ERP.app.atualizarContadores();
         ERP.app.aviso('Projeto marcado como "não fatura em ' + U.fComp(covComp) + '".', 'ok');
       });
@@ -1072,7 +1072,7 @@ ERP.faturamento = (function () {
     box.querySelectorAll('[data-reabrir]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.marcarPrevisoes(covComp, 'estimada', this.dataset.reabrir);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         renderCobertura(); atualizarAlertaFat(); ERP.app.atualizarContadores();
         ERP.app.aviso('Competência reaberta para este projeto.', 'ok');
       });

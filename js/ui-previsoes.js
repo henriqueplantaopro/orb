@@ -298,7 +298,7 @@ ERP.previsoes = (function () {
           valor: U.parseValor(U.val('pd-valor')), data: U.val('pd-data'),
           descricao: U.val('pd-desc'), serie: pv ? pv.serie : null, repetir: rep
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso(r.n > 1
           ? 'Despesa recorrente criada em ' + r.n + ' meses, a partir de ' + U.fComp(comp) + '.'
@@ -346,7 +346,7 @@ ERP.previsoes = (function () {
     U.el('pd-saida').querySelectorAll('[data-pd-rep]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.replicarSerieDespesa(this.dataset.pdRep);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         renderDespesas();
         ERP.app.aviso('Valor replicado para ' + r.n + ' mês(es) seguinte(s) da série.', 'ok');
       });
@@ -371,7 +371,7 @@ ERP.previsoes = (function () {
     U.el('pv-saida').querySelectorAll('[data-parcial]').forEach(function (chk) {
       chk.addEventListener('change', function () {
         const r = S.marcarParcial(this.dataset.parcial, U.val('pv-comp'), this.checked);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         render();
         ERP.app.aviso(this.checked
           ? 'Marcado como faturamento parcial: o que falta continua no fluxo.'

@@ -192,7 +192,7 @@ ERP.saldo = (function () {
           acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
             const r = S.informarSaldoBancario(banco.id, { valor: U.parseValor(U.val('sb-valor')),
               data: U.val('sb-data'), observacao: U.val('sb-obs') });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             render();
             ERP.app.aviso(Math.abs(r.diferenca) <= 0.004
@@ -216,7 +216,7 @@ ERP.saldo = (function () {
             'o lançamento da conta corrente entre as empresas cai junto.</div>',
           acoes: [{ txt: 'Cancelar transferência', cls: 'btn-cancelar', fn: function () {
             const r = S.cancelarTransferenciaBanco(id, U.val('ct-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render();
             ERP.app.aviso('Transferência cancelada — os saldos voltaram.', 'ok');
           } }]
@@ -262,7 +262,7 @@ ERP.saldo = (function () {
               } }]
             });
           }
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal();
           render();
           ERP.app.aviso(r.entre_empresas

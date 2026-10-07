@@ -1039,7 +1039,7 @@ ERP.produtividade = (function () {
           centro: centro, competencia: comp, faturamento: valor,
           produtividade: valorRepasse, observacao: U.val('pr-fat-obs'), lote: lote ? lote.id : null
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.contas.render();
         ERP.app.atualizarContadores();
@@ -1127,7 +1127,7 @@ ERP.produtividade = (function () {
           { txt: 'Substituir o fechamento anterior', cls: 'btn-aprovar', fn: function () {
             const r = S.substituirFechamento(centroAtual, compAtual,
               'novo arquivo ' + L.arquivo + ' lançado por ' + S.usuario().nome);
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             complementar = false;   // depois de cancelar, nada mais é repetido
             ERP.app.fecharModal();
             ERP.app.aviso(r.cancelados + ' fechamento(s) anterior(es) cancelado(s). Lançando o novo…', 'ok');

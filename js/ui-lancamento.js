@@ -785,7 +785,7 @@ ERP.lancamento = (function () {
       });
       return;
     }
-    if (r.erro) { ERP.app.aviso(r.erro, 'erro'); return; }
+    if (ERP.app.erroDoRetorno(r)) return;
 
     const n = linhas.length;
     ERP.app.aviso('Lançado: ' + n + (n > 1 ? ' parcelas' : ' parcela') +

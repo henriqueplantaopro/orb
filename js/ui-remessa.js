@@ -180,7 +180,7 @@ ERP.remessa = (function () {
             '<input id="rm-cb" inputmode="numeric" placeholder="somente números">',
           acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
             const r = S.informarCodigoBarras(par.id, U.val('rm-cb'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render();
             ERP.app.aviso('Código de barras salvo — o pagamento entra no próximo arquivo.', 'ok');
           } }]
@@ -220,7 +220,7 @@ ERP.remessa = (function () {
     U.el('rm-saida').querySelectorAll('[data-liq]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.liquidar(this.dataset.liq, { data: U.hoje() });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Pagamento confirmado — baixa registrada.', 'ok');
         ERP.app.atualizar();
       });

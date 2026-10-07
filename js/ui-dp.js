@@ -119,7 +119,7 @@ ERP.dp = (function () {
         if (!confirm('Confirma os dados de pagamento de ' + (f ? f.nome : '') +
             ' (PIX/banco) antes de aprovar? Isso libera folha, férias, 13º e rescisão pra pagar essa pessoa.')) return;
         const r = S.aprovarDadosPagamento(this.dataset.aprovarPagFn);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso(r.aviso ? 'Dados de pagamento aprovados. ' + r.aviso : 'Dados de pagamento aprovados.', r.aviso ? 'erro' : 'ok');
         render();
       });
@@ -204,7 +204,7 @@ ERP.dp = (function () {
         'de FGTS numa eventual rescisão usa pra saber quanto ele ganhava em cada época do contrato.</div>',
       acoes: [{ txt: 'Registrar reajuste', cls: 'btn-aprovar', fn: function () {
         const r = S.registrarReajusteSalarial(id, U.parseValor(U.val('rj-salario')), U.val('rj-vigencia'), U.val('rj-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Reajuste registrado.', 'ok');
         render();
@@ -406,7 +406,7 @@ ERP.dp = (function () {
           }
         };
         const r = f ? S.editarFuncionario(f.id, dados) : S.criarFuncionario(dados);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         if (r.aviso) ERP.app.aviso((f ? 'Funcionário atualizado. ' : 'Funcionário admitido. ') + r.aviso, 'erro');
         else ERP.app.aviso(f ? 'Funcionário atualizado.' : 'Funcionário admitido — já pode entrar na próxima folha.', 'ok');
@@ -437,7 +437,7 @@ ERP.dp = (function () {
       const nome = U.val('fn-cargo-nome');
       if (!nome) return ERP.app.aviso('Informe o nome do cargo.', 'erro');
       const r = S.criarCargo({ nome: nome, cbo: U.val('fn-cargo-cbo'), piso_salarial: U.parseValor(U.val('fn-cargo-piso')) });
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       U.el('fn-cargo').innerHTML = opcoesCargo(r.cargo.id);
       U.el('fn-cargo-form').style.display = 'none';
       ERP.app.aviso('Cargo cadastrado.', 'ok');
@@ -459,7 +459,7 @@ ERP.dp = (function () {
             return '<option value="' + m + '">' + m + '</option>'; }).join('') + '</select>',
       acoes: [{ txt: 'Confirmar desligamento (sem calcular verbas)', cls: 'btn-recusar', fn: function () {
         const r = S.desligarFuncionario(id, { data: U.val('dg-data'), motivo: U.val('dg-motivo') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Funcionário desligado.', 'ok');
         render();
@@ -607,7 +607,7 @@ ERP.dp = (function () {
             '<div class="dif ok">Total líquido' + (pendentes.length ? ' (só de quem vai entrar)' : '') + ': ' + U.brl(totalAFechar) + '</div>',
           acoes: [{ txt: 'Fechar folha', cls: 'btn-aprovar', fn: function () {
             const r = S.fecharFolha(comp, ajustesFolha, { complementar: modoComplementar });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             ajustesFolha = {};
             ERP.app.aviso('Folha de ' + U.fComp(comp) + ' fechada' +
@@ -776,7 +776,7 @@ ERP.dp = (function () {
           if (!confirm(r.erro + '\n\nForçar cancelamento parcial mesmo assim?')) return;
           r = S.cancelarFolha(id, motivo, true);
         }
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Folha cancelada.', 'ok');
         render();
@@ -851,7 +851,7 @@ ERP.dp = (function () {
         if (!confirm('Fechar a ' + (parcela === 1 ? '1ª' : '2ª') + ' parcela do 13º de ' + ano + '? Total: ' +
             U.brl(Math.round(totalLiquido * 100) / 100))) return;
         const r = S.fechar13(ano, parcela);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso((parcela === 1 ? '1ª' : '2ª') + ' parcela do 13º fechada' +
           (r.erros && r.erros.length ? ' — ' + r.erros.length + ' pendência(s): ' + r.erros.join('; ') : '') + '.',
           r.erros && r.erros.length ? 'erro' : 'ok');
@@ -933,7 +933,7 @@ ERP.dp = (function () {
           if (!confirm(r.erro + '\n\nForçar cancelamento parcial mesmo assim?')) return;
           r = S.cancelar13(id, motivo, true);
         }
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Parcela cancelada.', 'ok');
         render();
@@ -1038,7 +1038,7 @@ ERP.dp = (function () {
           if (!confirm(r.erro + '\n\nForçar o cancelamento mesmo assim?')) return;
           r = S.cancelarFerias(fid, dataInicio, motivo, true);
         }
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Férias cancelada' + (r.cancelado_completo ? '' : ' em parte (havia pagamento já registrado)') + '.', 'ok');
         renderFerias();
@@ -1091,7 +1091,7 @@ ERP.dp = (function () {
     if (U.el('dp-fe-lancar')) {
       U.el('dp-fe-lancar').addEventListener('click', function () {
         const r = S.lancarFerias(fid, calc, inicio);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Férias lançadas — entrou como previsão em Contas a Pagar.', 'ok');
         render();
@@ -1198,7 +1198,7 @@ ERP.dp = (function () {
           if (!confirm(r.erro + '\n\nForçar o cancelamento mesmo assim?')) return;
           r = S.cancelarRescisao(fid, motivo, true);
         }
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Rescisão cancelada' + (r.cancelado_completo ? ' — ' + f.nome + ' está ativo de novo.' : ' em parte (havia pagamento já registrado).') +
           (r.aviso ? ' ' + r.aviso : ''), r.aviso ? 'erro' : 'ok');
@@ -1318,7 +1318,7 @@ ERP.dp = (function () {
       U.el('dp-rc-lancar').addEventListener('click', function () {
         if (!confirm('Confirmar a rescisão (' + calc.tipo_nome + ')? Isso desliga o funcionário — dá pra cancelar depois, na lista de rescisões já lançadas.')) return;
         const r = S.lancarRescisao(fid, calc);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Rescisão lançada e funcionário desligado.', 'ok');
         abrirAba('funcionarios');
       });
@@ -1684,7 +1684,7 @@ ERP.dp = (function () {
           aliquota_rat_fap: U.parseValor(U.val('dp-rat-fap')),
           aliquota_terceiros: U.parseValor(U.val('dp-terceiros'))
         } });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Tabelas atualizadas — os próximos cálculos já usam os novos valores.', 'ok');
         render();
       });

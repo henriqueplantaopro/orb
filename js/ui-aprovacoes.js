@@ -258,7 +258,7 @@ ERP.aprovacoes = (function () {
         const g = ag.grupos.find(function (x) { return x.chave === this.dataset.autgrupo; }.bind(this));
         if (!g) return;
         const r = S.autorizarPagamento(g.pagamentos.map(function (pg) { return pg.id; }));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         render();
         ERP.app.atualizarContadores();
         ERP.app.aviso(g.medicos + ' pagamentos aprovados (' + S.nomeDoGrupo(g) + ').', 'ok');
@@ -318,7 +318,7 @@ ERP.aprovacoes = (function () {
       b.addEventListener('click', function (e) {
         e.preventDefault();
         const r = S.cancelarSolicitacao(this.dataset.des);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Solicitação desfeita.', 'ok');
         ERP.app.atualizar();
       });
@@ -327,7 +327,7 @@ ERP.aprovacoes = (function () {
     box.querySelectorAll('[data-aut]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.autorizarPagamento([this.dataset.aut]);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Pagamento aprovado — já está na aba de remessa bancária.', 'ok');
         ERP.app.atualizar();
       });
@@ -343,7 +343,7 @@ ERP.aprovacoes = (function () {
                  '<label>Motivo</label><textarea id="mo-motivo" placeholder="Ex.: valor divergente do fechamento"></textarea>',
           acoes: [{ txt: 'Recusar pagamento', cls: 'btn-cancelar', fn: function () {
             const r = S.recusarPagamento(id, U.val('mo-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             ERP.app.aviso('Pagamento recusado — a parcela voltou para a fila.', 'ok');
             ERP.app.atualizar();
@@ -356,7 +356,7 @@ ERP.aprovacoes = (function () {
       U.el('ap-autorizar').addEventListener('click', function () {
         const r = S.autorizarPagamento(Array.from(selPg));
         selPg.clear();
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso(r.n + ' pagamento(s) aprovado(s) — já estão na aba de remessa bancária.', 'ok');
         ERP.app.atualizar();
       });
@@ -388,7 +388,7 @@ ERP.aprovacoes = (function () {
       U.el('ap-nada').addEventListener('click', function () { sel.clear(); render(); });
       U.el('ap-aprovar').addEventListener('click', function () {
         const r = S.aprovar(Array.from(sel));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         sel.clear();
         ERP.app.aviso(r.n + ' lançamento(s) aprovado(s).', 'ok');
         ERP.app.atualizar();

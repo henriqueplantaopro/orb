@@ -196,7 +196,7 @@ ERP.relatorios = (function () {
     const r = fatModo === 'periodo'
       ? S.relatorioFaturamento({ de: per.de, ate: per.ate, unidade: fatUnidade || undefined })
       : S.relatorioFaturamento({ competencia: fatComp, unidade: fatUnidade || undefined });
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     const porComp = r.modo === 'competencia';
     const colunas = [
       { campo: 'unidade', titulo: 'Unidade' },

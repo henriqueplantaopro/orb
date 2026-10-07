@@ -121,7 +121,7 @@ ERP.retencoes = (function () {
         const venc = U.val('rt-fg-venc');
         if (!venc) return ERP.app.aviso('Informe o vencimento.', 'erro');
         const r = S.fecharGuiaRetencao(tributo, competencia, venc, municipio);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Guia fechada — já está em Contas a Pagar, como previsão.', 'ok');
         render();
@@ -166,7 +166,7 @@ ERP.retencoes = (function () {
           if (!confirm(r.erro + '\n\nForçar o cancelamento mesmo assim?')) return;
           r = S.cancelarGuiaRetencao(id, motivo, true);
         }
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Guia cancelada.', 'ok');
         render();

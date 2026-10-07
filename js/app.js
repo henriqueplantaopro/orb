@@ -36,6 +36,11 @@ ERP.app = (function () {
     const e = U.el(id);
     if (!e) return aviso(msg, 'erro');
     e.classList.add('campo-erro');
+    /* O RÓTULO também fica vermelho: o olho vai primeiro ao texto
+       que nomeia o campo, não à caixa de digitação. */
+    const rot = (e.parentNode && e.parentNode.querySelector('label')) ||
+      document.querySelector('label[for="' + id + '"]');
+    if (rot) rot.classList.add('campo-erro-rotulo');
     let m = document.getElementById(id + '-erro');
     if (!m) {
       m = document.createElement('div');
@@ -46,14 +51,36 @@ ERP.app = (function () {
     m.textContent = msg;
     const limpa = function () {
       e.classList.remove('campo-erro');
+      if (rot) rot.classList.remove('campo-erro-rotulo');
       if (m && m.parentNode) m.parentNode.removeChild(m);
       e.removeEventListener('input', limpa);
       e.removeEventListener('change', limpa);
     };
     e.addEventListener('input', limpa);
     e.addEventListener('change', limpa);
-    try { e.focus(); } catch (x) {}
+    /* ROLA ATÉ O CAMPO. Num formulário de contrato, que é longo e
+       rola dentro do modal, o campo em falta costuma estar fora da
+       vista — e aí a pessoa vê o aviso, não acha onde está o
+       problema, e tenta salvar de novo. */
+    try {
+      e.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    } catch (x) {
+      try { e.scrollIntoView(); } catch (x2) {}
+    }
+    try { e.focus({ preventScroll: true }); } catch (x) {
+      try { e.focus(); } catch (x2) {}
+    }
     aviso(msg, 'erro');
+  }
+
+  /* Recebe o retorno de uma função do sistema e, se ela disse QUAL
+     campo faltou, destaca esse campo em vez de só mostrar o aviso.
+     Devolve true quando havia erro, para quem chamou parar ali. */
+  function erroDoRetorno(r) {
+    if (!r || !r.erro) return false;
+    if (r.campo) erroCampo(r.campo, r.erro);
+    else aviso(r.erro, 'erro');
+    return true;
   }
 
   function aviso(msg, tipo) {
@@ -568,7 +595,7 @@ ERP.app = (function () {
     if (moduloAberto && moduloAberto !== 'home') abrirModulo(moduloAberto);
   }
 
-  return { init: init, redesenharModulo: redesenharModulo, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, modal: modal, fecharModal: fecharModal,
+  return { init: init, redesenharModulo: redesenharModulo, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, erroDoRetorno: erroDoRetorno, modal: modal, fecharModal: fecharModal,
            abrirModulo: abrirModulo, abrirAba: abrirAba, abrirArea: abrirArea, renderHome: renderHome,
            atualizar: atualizar, atualizarContadores: atualizarContadores };
 })();

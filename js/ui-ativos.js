@@ -275,7 +275,7 @@ ERP.ativos = (function () {
                 '<label>Motivo *</label><input id="es-mov-motivo" placeholder="ex.: lançado no equipamento errado">',
               acoes: [{ txt: 'Estornar', cls: 'btn-cancelar', fn: function () {
                 const r = S.estornarMovimentacao(movId, U.val('es-mov-motivo'));
-                if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+                if (ERP.app.erroDoRetorno(r)) return;
                 ERP.app.fecharModal(); render(); ERP.app.aviso('Movimentação estornada.', 'ok');
               } }]
             });
@@ -291,7 +291,7 @@ ERP.ativos = (function () {
                 corpo: '<label>Motivo *</label><input id="rt-motivo" placeholder="ex.: baixa registrada por engano">',
                 acoes: [{ txt: 'Reativar', cls: 'btn-aprovar', fn: function () {
                   const r = S.reativarAtivo(id, { motivo: U.val('rt-motivo') });
-                  if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+                  if (ERP.app.erroDoRetorno(r)) return;
                   ERP.app.fecharModal(); render(); ERP.app.aviso('Baixa desfeita.', 'ok');
                 } }]
               });
@@ -358,7 +358,7 @@ ERP.ativos = (function () {
           custodiante_telefone: U.val('mv-cust-fone'),
           custodiante_email: U.val('mv-cust-email'),
           documento: U.val('mv-doc'), observacao: U.val('mv-obs') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Movimentação registrada.', 'ok');
       } }]
@@ -464,7 +464,7 @@ ERP.ativos = (function () {
           status: U.el('av-status') ? U.val('av-status') : undefined,
           projeto: U.el('av-proj') ? (U.val('av-proj') || null) : undefined
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render(); ERP.app.aviso('Equipamento salvo.', 'ok');
       } }]
     });
@@ -528,7 +528,7 @@ ERP.ativos = (function () {
           (a.nf ? 'NF ' + U.esc(a.nf) : '') + '">',
       acoes: [{ txt: 'Desmembrar', cls: 'btn-aprovar', fn: function () {
         const r = S.desmembrarAtivo(id, { partes: linhas, documento: U.val('dm-doc') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Compra desmembrada em ' + r.partes.length + ' registro(s).', 'ok');
       } }],
@@ -543,7 +543,7 @@ ERP.ativos = (function () {
           const r = S.desmembrarAtivo(id, { modo: 'unitario', documento: U.val('dm-doc'),
             destino: { status: base.status || 'sede', local: base.local || '',
               projeto: base.projeto || '', custodiante: base.custodiante || '' } });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal(); render();
           ERP.app.aviso(r.partes.length + ' equipamentos criados, um por unidade.', 'ok');
         });
@@ -681,7 +681,7 @@ ERP.ativos = (function () {
         const r = S.baixarAtivo(id, { motivo: U.val('bx-motivo'), data: U.val('bx-data'),
           valor_venda: U.parseValor(U.val('bx-valor')) || null, observacao: U.val('bx-obs'),
           comprador: U.val('bx-comprador'), documento: U.val('bx-doc') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('Equipamento baixado. ' +
           (r.resultado >= 0 ? 'Ganho de ' : 'Perda de ') + brlSeguro(Math.abs(r.resultado)) +
@@ -725,7 +725,7 @@ ERP.ativos = (function () {
         const r = S.vincularLocacao(id, { contrato: escolhido || null,
           valor_locacao: U.parseValor(U.val('lc-valor')), desde: U.val('lc-desde'),
           ate: U.val('lc-ate') || null, item: U.val('lc-item') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso(escolhido
           ? 'Locação vinculada — a receita deste equipamento passa a contar no resultado.'
@@ -882,7 +882,7 @@ ERP.ativos = (function () {
       acoes: [{ txt: 'Abrir OS', cls: 'btn-aprovar', fn: function () {
         const r = S.abrirOS({ ativo: U.val('os-ativo'), tipo: U.val('os-tipo'), abertura: U.val('os-data'),
           descricao: U.val('os-desc'), executante: U.val('os-exec'), parada_uso: U.el('os-parada').checked });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); aba = 'os'; render();
         ERP.app.aviso(r.os.numero + ' aberta.', 'ok');
       } }]
@@ -947,7 +947,7 @@ ERP.ativos = (function () {
           custodiante: U.el('os-cust') ? U.val('os-cust') : '',
           status_volta: (os.voltar_para || {}).status || (os.projeto ? 'alocado' : 'sede')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render();
         ERP.app.aviso('OS fechada.' + (r.titulo ? ' Custo lançado no contas a pagar.' : ''), 'ok');
       } }]
@@ -1024,7 +1024,7 @@ ERP.ativos = (function () {
           tipo: U.val('pl-tipo'), validade_laudo_meses: parseInt(U.val('pl-validade'), 10) || null,
           periodicidade_dias: parseInt(U.val('pl-dias'), 10) || 0, proxima: U.val('pl-prox'),
           responsavel: U.val('pl-resp'), checklist: U.val('pl-check') });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); render(); ERP.app.aviso('Plano salvo.', 'ok');
       } }]
     });
@@ -1118,7 +1118,7 @@ ERP.ativos = (function () {
           descricao: ch.descricao,
           solicitante: ch.contato_nome || 'chamado pela etiqueta',
           abertura: U.hoje() });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.persistencia.responderChamado(ch.id, {
           situacao: 'em_atendimento',
           resposta: 'OS ' + (r.os ? r.os.numero || r.os.id : '') + ' aberta',
@@ -1146,7 +1146,7 @@ ERP.ativos = (function () {
               atendido_por: (S.usuario() || {}).nome || '',
               atendido_em: new Date().toISOString()
             }).then(function (r) {
-              if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+              if (ERP.app.erroDoRetorno(r)) return;
               ERP.app.fecharModal();
               chamadosLidos = false;
               render();
@@ -1186,7 +1186,7 @@ ERP.ativos = (function () {
       b.addEventListener('click', function () {
         const r = S.abrirOS({ ativo: this.dataset.avCalibrar, tipo: 'calibracao',
           descricao: 'Calibração — laudo vencendo' });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         aba = 'os'; render();
         ERP.app.aviso(r.os.numero + ' aberta para calibração.', 'ok');
       });
@@ -1194,7 +1194,7 @@ ERP.ativos = (function () {
     box.querySelectorAll('[data-av-mover]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.moverOS(this.dataset.avMover, this.dataset.etapa);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         render();
         ERP.app.aviso('OS em ' + S.NOME_ETAPA_OS[this.dataset.etapa] + '.', 'ok');
       });
@@ -1239,7 +1239,7 @@ ERP.ativos = (function () {
             '<label>Motivo *</label><input id="ro-motivo" placeholder="ex.: retorno lançado no lugar errado">',
           acoes: [{ txt: 'Reabrir', cls: 'btn-aprovar', fn: function () {
             const r = S.reabrirOS(id, U.val('ro-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render();
             ERP.app.aviso('OS reaberta.' + (r.retornos_desfeitos ? ' O equipamento voltou para a manutenção.' : ''), 'ok');
           } }]
@@ -1256,7 +1256,7 @@ ERP.ativos = (function () {
             '<label>Motivo *</label><input id="co-motivo" placeholder="ex.: aberta no equipamento errado">',
           acoes: [{ txt: 'Cancelar OS', cls: 'btn-cancelar', fn: function () {
             const r = S.cancelarOS(id, U.val('co-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render(); ERP.app.aviso('OS cancelada.', 'ok');
           } }]
         });

@@ -137,11 +137,13 @@ ERP.compras = (function () {
         return '<tr><td class="desc">' +
           U.esc(p.descricao || i.descricao || i.nome ||
             ('material fora do cadastro · ' + (i.produto || 'sem código'))) +
-          (p.descricao || i.descricao
-            ? '<div class="sub">' + U.esc(p.codigo || i.codigo || '') +
+          /* UMA linha de código e unidade, não duas: eu acrescentei
+             esta sem remover a que já existia, e o código aparecia
+             repetido embaixo do nome. */
+          (p.codigo || i.codigo
+            ? '<div class="sub">' + U.esc(p.codigo || i.codigo) +
               (p.unidade || i.unidade ? ' · ' + U.esc(p.unidade || i.unidade) : '') + '</div>'
-            : '') +
-            '<div class="sub">' + U.esc(p.codigo || '') + '</div></td>' +
+            : '') + '</td>' +
           '<td class="num">' + U.num(i.qtd) + ' ' + U.esc(p.unidade || '') + '</td>' +
           '<td class="num">' + U.num(i.recebido) + '</td>' +
           '<td class="num"' + (falta > 0 ? ' style="color:var(--amber)"' : '') + '>' + U.num(falta) + '</td></tr>';

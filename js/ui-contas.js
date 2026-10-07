@@ -616,7 +616,7 @@ ERP.contas = (function () {
             sem_nf: U.el('nf-sem').checked,
             arquivo: arquivoNovo === undefined ? undefined : arquivoNovo
           });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal();
           ERP.app.atualizarContadores();
           render();
@@ -737,13 +737,13 @@ ERP.contas = (function () {
   /* ── aprovação ─────────────────────────────────────────*/
   function aprovarUma(id) {
     const r = S.aprovar([id]);
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     ERP.app.aviso('Aprovado.', 'ok');
     depois();
   }
   function aprovarLote() {
     const r = S.aprovar(Array.from(selecionadas));
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     ERP.app.aviso(r.n + ' parcela(s) aprovada(s).', 'ok');
     selecionadas.clear();
     depois();
@@ -753,7 +753,7 @@ ERP.contas = (function () {
     const pg = S.aguardandoDe(id)[0];
     if (!pg) return ERP.app.aviso('Não há solicitação aguardando aprovação nesta parcela.', 'erro');
     const r = S.cancelarSolicitacao(pg.id);
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     ERP.app.aviso('Solicitação desfeita — a parcela saiu da fila de aprovação.', 'ok');
     depois();
   }
@@ -782,7 +782,7 @@ ERP.contas = (function () {
         const r = S.solicitarLote(alvos.map(function (p) { return p.id; }), {
           data: U.val('lp-data'), banco: U.val('lp-banco')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         selecionadas.clear();
         ERP.app.aviso(r.n + ' pagamento(s) solicitado(s), ' + U.brl(r.valor) +
@@ -815,7 +815,7 @@ ERP.contas = (function () {
     const pg = S.aguardandoDe(id)[0];
     if (!pg) return ERP.app.aviso('Não há pagamento aguardando autorização nesta parcela.', 'erro');
     const r = S.autorizarPagamento([pg.id]);
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     ERP.app.aviso('Pagamento autorizado.', 'ok');
     depois();
   }
@@ -827,7 +827,7 @@ ERP.contas = (function () {
              '<label>Motivo</label><textarea id="mo-motivo" placeholder="Ex.: valor divergente do fechamento"></textarea>',
       acoes: [{ txt: 'Recusar pagamento', cls: 'btn-cancelar', fn: () => {
         const r = S.recusarPagamento(pagId, U.val('mo-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); ERP.app.aviso('Pagamento recusado — a parcela voltou para a fila.', 'ok'); depois();
       } }]
     });
@@ -840,7 +840,7 @@ ERP.contas = (function () {
              '<div class="ajuda">O motivo volta para quem lançou. Nada é apagado.</div>',
       acoes: [{ txt: 'Reprovar', cls: 'btn-cancelar', fn: () => {
         const r = S.reprovar(id, U.val('mo-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); ERP.app.aviso('Reprovado.', 'ok'); depois();
       } }]
     });
@@ -953,7 +953,7 @@ ERP.contas = (function () {
            trabalho sem proteger nada. */
         if (r.erro && r.cruzamento) return confirmarCruzamento(id, dados, r, depois);
 
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Pagamento solicitado. Aguardando aprovação da diretoria ou do sócio.', 'ok');
         depois();
@@ -1166,7 +1166,7 @@ ERP.contas = (function () {
           }
         }
         const r = S.editarParcela(id, dados);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso(r.n ? r.n + ' alteração(ões) salva(s): ' + r.mudou[0] : 'Nada mudou.', 'ok');
         depois();
@@ -1239,7 +1239,7 @@ ERP.contas = (function () {
           codigo_barras: lido ? lido.codigoBarras : null,
           linha_digitavel: lido ? (lido.linhaDigitavel || '') : null
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         if (r.exige_aprovacao) ERP.app.aviso('Título efetivado, mas o credor ou o valor mudou em relação ao previsto — voltou para aprovação antes do pagamento.', 'erro'); else
         ERP.app.aviso('Título efetivado' +
@@ -1332,7 +1332,7 @@ ERP.contas = (function () {
              '<label>Motivo</label><textarea id="mo-motivo" placeholder="Ex.: lançado em duplicidade"></textarea>',
       acoes: [{ txt: 'Cancelar lançamento', cls: 'btn-cancelar', fn: () => {
         const r = S.cancelar(id, U.val('mo-motivo'));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Lançamento cancelado.' + (r.aviso_retencao ? ' ' + r.aviso_retencao : ''), r.aviso_retencao ? 'erro' : 'ok');
         depois();
@@ -1415,7 +1415,7 @@ ERP.contas = (function () {
         document.querySelectorAll('[data-aut]').forEach(function (b) {
           b.addEventListener('click', function () {
             const r = S.autorizarPagamento([this.dataset.aut]);
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); ERP.app.aviso('Pagamento autorizado.', 'ok'); depois();
           });
         });
@@ -1425,7 +1425,7 @@ ERP.contas = (function () {
         document.querySelectorAll('[data-des]').forEach(function (b) {
           b.addEventListener('click', function () {
             const r = S.cancelarSolicitacao(this.dataset.des);
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); ERP.app.aviso('Solicitação desfeita.', 'ok'); depois();
           });
         });
@@ -1433,7 +1433,7 @@ ERP.contas = (function () {
         document.querySelectorAll('[data-liq]').forEach(function (b) {
           b.addEventListener('click', function () {
             const r = S.liquidar(this.dataset.liq, { data: U.hoje() });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); ERP.app.aviso('Pagamento confirmado — baixa registrada.', 'ok'); depois();
           });
         });
@@ -1441,7 +1441,7 @@ ERP.contas = (function () {
           const motivo = prompt('Motivo do estorno:');
           if (!motivo) return;
           const r = S.estornar(this.dataset.est, motivo);
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal(); ERP.app.aviso('Pagamento estornado.', 'ok'); depois();
         }));
       }

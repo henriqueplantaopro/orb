@@ -358,7 +358,7 @@ ERP.contratos = (function () {
           observacao: U.val('ct-obs'), itens: itens,
           encerrado: U.el('ct-enc') ? U.el('ct-enc').checked : false
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Contrato salvo: ' + U.brl(r.contrato.valor_mensal) + '/mês.', 'ok');
         render();
@@ -573,7 +573,7 @@ ERP.contratos = (function () {
           nova_vigencia: U.val('ad-vig'), percentual: U.parseValor(U.val('ad-pct')),
           observacao: U.val('ad-obs')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Aditivo registrado.', 'ok');
         render();
