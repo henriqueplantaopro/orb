@@ -7388,3 +7388,39 @@ function liberarParaFaturar(centro, competencia) {
     divergentes.length === 0, divergentes.join(' | '));
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v91: cotação legível e chaves estrangeiras vazias ──
+(function () {
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-compras.js', 'utf8');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* "" numa coluna que aponta para outra tabela faz o banco
+     procurar o registro de código vazio — "produtos_conta_fkey". A
+     gravação inteira cai, e o erro fala de uma tabela que não tem
+     nada a ver com o que a pessoa fez. São vinte tabelas com esse
+     risco. */
+  verificar('v91 — vazio em chave estrangeira vira nulo na gravação',
+    /APONTA_PARA_OUTRA/.test(pers), '');
+
+  S.setUsuario('u5');
+  const m = S.cadastrarMaterial({ descricao: 'QA conta nula v91' });
+  verificar('v91 — material sem conta nasce com nulo, não com ""',
+    m.ok && m.produto.conta === null, JSON.stringify(m.ok ? m.produto.conta : m.erro));
+
+  /* A cotação mostrava só o código. Cotação é a hora de comparar
+     preço de coisas parecidas, onde trocar um item pelo outro
+     custa caro. */
+  verificar('v91 — a cotação mostra nome, código e unidade',
+    /p\.descricao\s*\n?\s*\? '<b>' \+ U\.esc\(p\.descricao\)/.test(ui) ||
+    /'<b>' \+ U\.esc\(p\.descricao\) \+ '<\/b>/.test(ui), '');
+
+  verificar('v91 — e permite cadastrar fornecedor sem sair da tela',
+    /ct-novo-forn/.test(ui), '');
+
+  /* Aprovar requisição e aprovar compra são atos diferentes:
+     o primeiro diz "pode comprar isso", o segundo "pode gastar
+     este valor com este fornecedor". */
+  verificar('v91 — aprovar compra pós-cotação tem aba própria',
+    /filtro === 'aprovar-compra'/.test(ui), '');
+})();

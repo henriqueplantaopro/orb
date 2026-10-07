@@ -28,13 +28,28 @@ ERP.compras = (function () {
     const todas = S.compras();
     const lista = todas.filter(function (r) {
       if (filtro === 'abertas') return ABERTAS.indexOf(r.status) > -1;
-      if (filtro === 'aprovar') return r.status === 'requisicao' || r.status === 'cotada';
+      /* DOIS ATOS DIFERENTES, duas abas. Aprovar a requisição é
+         dizer "pode comprar isso"; aprovar a compra depois da
+         cotação é dizer "pode gastar este valor, com este
+         fornecedor". Juntas numa aba só, a segunda — que é a que
+         move dinheiro — se perdia no meio da primeira. */
+      if (filtro === 'aprovar') return r.status === 'requisicao';
+      if (filtro === 'aprovar-compra') return r.status === 'cotada';
       if (filtro === 'cotar') return r.status === 'aprovada' || r.status === 'compra_aprovada';
       if (filtro === 'receber') return r.status === 'pedido' || r.status === 'recebido_parcial';
       if (filtro === 'fechadas') return r.status === 'recebido' || r.status === 'cancelada';
       return true;
     });
     const emAberto = todas.filter(function (r) { return ABERTAS.indexOf(r.status) > -1; });
+
+    /* Os contadores nas próprias abas: quem abre o módulo vê de
+       imediato onde há coisa parada esperando decisão. */
+    const nReq = todas.filter(function (r) { return r.status === 'requisicao'; }).length;
+    const nCot = todas.filter(function (r) { return r.status === 'cotada'; }).length;
+    [['cp-n-req', nReq], ['cp-n-cot', nCot]].forEach(function (par) {
+      const el = U.el(par[0]);
+      if (el) { el.textContent = par[1]; el.style.display = par[1] ? '' : 'none'; }
+    });
 
     U.el('cp-saida').innerHTML =
       '<div class="pr-confere">' +
@@ -111,7 +126,13 @@ ERP.compras = (function () {
       r.itens.map(function (i) {
         const p = prod(i.produto);
         const falta = Math.round((i.qtd - i.recebido) * 1000) / 1000;
-        return '<tr><td class="desc">' + U.esc(p.descricao || '?') +
+        /* "?" não diz nada a quem olha. Quando o material não está
+           no cadastro — porque a gravação falhou, ou porque alguém
+           o inativou — a linha mostra o nome guardado na própria
+           requisição, e só então o código. */
+        return '<tr><td class="desc">' +
+          U.esc(p.descricao || i.descricao || i.nome ||
+            ('material fora do cadastro · ' + (i.produto || 'sem código'))) +
             '<div class="sub">' + U.esc(p.codigo || '') + '</div></td>' +
           '<td class="num">' + U.num(i.qtd) + ' ' + U.esc(p.unidade || '') + '</td>' +
           '<td class="num">' + U.num(i.recebido) + '</td>' +
@@ -501,7 +522,16 @@ ERP.compras = (function () {
         '<th class="num">Preço unit.</th><th class="num">Frete do item</th><th class="num">Total</th></tr></thead><tbody>' +
         ativos.map(function (i, idx) {
           const p = D.produtos.find(function (x) { return x.id === i.produto; }) || {};
-          return '<tr><td class="desc">' + U.esc(p.descricao || i.produto) + '</td>' +
+          /* CÓDIGO E NOME. Só o código obriga quem cota a decorar o
+             cadastro — e cotação é a hora em que se compara preço
+             de coisas parecidas, onde trocar um item pelo outro
+             custa caro. */
+          return '<tr><td class="desc">' +
+            (p.descricao
+              ? '<b>' + U.esc(p.descricao) + '</b><div class="sub">' + U.esc(p.codigo || '') +
+                (p.unidade ? ' · ' + U.esc(p.unidade) : '') + '</div>'
+              : U.esc(i.descricao || ('material fora do cadastro · ' + (i.produto || '')))) +
+            '</td>' +
             '<td class="num">' + U.num(i.qtd) + ' ' + U.esc(p.unidade || '') + '</td>' +
             '<td><select data-ct-forn="' + idx + '"><option value="">—</option>' +
               opForn.map(function (c) {
@@ -514,6 +544,14 @@ ERP.compras = (function () {
         }).join('') +
         '<tr><td colspan="5"><b>Total cotado</b></td><td class="num"><b id="ct-total">R$ 0,00</b></td></tr>' +
         '</tbody></table>' +
+        /* CADASTRAR FORNECEDOR na própria cotação. O fornecedor
+           novo aparece justamente quando a cotação chega — e
+           mandar sair da tela para cadastrar faz perder os preços
+           já digitados. */
+        (S.podeMover('compras') || S.podeMover('cadastros')
+          ? '<div style="margin-top:8px"><button type="button" class="btn-linha" id="ct-novo-forn">' +
+            '+ cadastrar fornecedor</button></div>'
+          : '') +
         '<div class="row2" style="margin-top:8px">' +
           '<div><label>Frete total de um fornecedor (R$)</label><input class="num" id="ct-frete-total" inputmode="decimal" placeholder="ex.: 100,00"></div>' +
           '<div><label>Ratear entre os itens de</label><div style="display:flex;gap:6px">' +
@@ -573,6 +611,60 @@ ERP.compras = (function () {
         document.querySelectorAll('[data-ct-custo], [data-ct-frete]').forEach(function (e) {
           e.addEventListener('input', recalcular);
         });
+        /* Cadastro do fornecedor sem sair da cotação: nasce
+           pendente de aprovação do financeiro, como todo credor
+           criado no meio do trabalho. */
+        const bNf = U.el('ct-novo-forn');
+        if (bNf) {
+          bNf.addEventListener('click', function () {
+            ERP.app.modal({
+              titulo: 'Cadastrar fornecedor',
+              fecharTxt: 'Cancelar',
+              corpo:
+                '<label for="nf-nome">Razão social ou nome *</label>' +
+                '<input id="nf-nome" placeholder="como está na nota">' +
+                '<div class="row2" style="margin-top:8px">' +
+                  '<div><label for="nf-doc">CNPJ ou CPF</label>' +
+                    '<input id="nf-doc" inputmode="numeric" placeholder="só números"></div>' +
+                  '<div><label for="nf-fone">Telefone</label>' +
+                    '<input id="nf-fone" placeholder="opcional"></div>' +
+                '</div>' +
+                '<div class="ajuda">Dados bancários ficam para o financeiro: o cadastro nasce ' +
+                'pendente de aprovação, e o pagamento só sai depois que alguém de lá conferir. ' +
+                'Para cotar, nome basta.</div><div id="nf-erro"></div>',
+              acoes: [{ txt: 'Cadastrar e usar', cls: 'btn-aprovar', fn: function () {
+                const nome = U.val('nf-nome').trim();
+                const erro = U.el('nf-erro');
+                if (!nome) {
+                  if (erro) erro.innerHTML = '<div class="login-erro">Informe o nome.</div>';
+                  return;
+                }
+                const doc = String(U.val('nf-doc')).replace(/\D/g, '');
+                const igual = D.credores.find(function (c) {
+                  return (doc && String(c.documento || '').replace(/\D/g, '') === doc) ||
+                    (c.nome || '').trim().toLowerCase() === nome.toLowerCase();
+                });
+                if (igual) {
+                  if (erro) {
+                    erro.innerHTML = '<div class="login-erro">Já existe: <b>' +
+                      U.esc(igual.nome) + '</b>. Use esse na lista.</div>';
+                  }
+                  return;
+                }
+                D.credores.push({
+                  id: S.proximoId('cr'), nome: nome, tipo: 'fornecedor',
+                  documento: doc, telefone: U.val('nf-fone').trim(),
+                  ativo: true, origem: 'cotação', dados_aprovados: false
+                });
+                ERP.app.fecharModal();
+                ERP.app.aviso('Fornecedor cadastrado. O financeiro aprova os dados de pagamento ' +
+                  'antes do primeiro pagamento.', 'ok');
+                cotar(id);
+              } }]
+            });
+          });
+        }
+
         U.el('ct-ratear').addEventListener('click', function () {
           const forn = U.val('ct-frete-forn');
           const total = U.parseValor(U.val('ct-frete-total'));
@@ -881,5 +973,5 @@ ERP.compras = (function () {
     });
   }
 
-  return { montar: montar, render: render };
+  return { montar: montar, render: render, cotar: cotar };
 })();

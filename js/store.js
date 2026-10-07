@@ -9974,7 +9974,10 @@ ERP.store = (function () {
       ncm: d.ncm || '',
       minimo: 0, ideal: 0,
       custo: 0,
-      conta: d.conta || '',
+      /* NULO, não vazio: a coluna aponta para o plano de contas, e
+         o banco vai procurar a conta de código "" — que não existe.
+         "Sem conta" é ausência, não um código em branco. */
+      conta: d.conta || null,
       ativo: true,
       /* Marca de onde veio: quem for completar o cadastro depois
          precisa saber quais entraram pela pressa de uma requisição. */
