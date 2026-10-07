@@ -48,7 +48,7 @@ ERP.config = {
      manualmente, ela envelhece sem ninguém notar e passa a mentir
      sobre o que está no ar — foi o que aconteceu com o "v54" que
      ficou parado enquanto o código avançava. */
-  versao: 'v91 · 07/10/2026',
+  versao: 'v92 · 07/10/2026',
 
   url: 'https://jsdyowuqehryfwqyklax.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpzZHlvd3VxZWhyeWZ3cXlrbGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDM4ODIsImV4cCI6MjEwNjUxOTg4Mn0.UPFhyMPwmM9DzyiRnjTg3EQGPg9KvcIQcP6wHM5WRSg'

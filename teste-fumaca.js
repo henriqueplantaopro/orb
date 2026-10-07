@@ -7424,3 +7424,40 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v91 — aprovar compra pós-cotação tem aba própria',
     /filtro === 'aprovar-compra'/.test(ui), '');
 })();
+
+// ── ERP teste2 v92: contrato sem projeto específico ──
+(function () {
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-contratos.js', 'utf8');
+  S.setUsuario('u5');
+
+  /* Nem todo contrato é de projeto: tarifa de banco, aluguel de
+     filial, software da empresa. Obrigar a escolher um hospital
+     fazia o custo de todos cair no projeto que a pessoa escolheu
+     por falta de opção — e aí a margem daquele projeto mente. */
+  const base = { parte: 'fornecedor', fornecedor: D.credores[0].id, conta: '4.01',
+    vigencia_ini: '2026-01-01', vigencia_fim: '2026-12-31', valor_mensal: 1500 };
+
+  const geral = S.salvarContrato(Object.assign({ numero: 'QA-v92-G',
+    itens: [{ centro: 'cc900', valor: 1500 }] }, base));
+  verificar('v92 — contrato aceita o centro Geral (sem projeto)', geral.ok, geral.erro || '');
+
+  const filial = S.salvarContrato(Object.assign({ numero: 'QA-v92-F',
+    itens: [{ centro: 'cc200', valor: 800 }] }, base));
+  verificar('v92 — e aceita a filial, para saber quanto cada casa custa',
+    filial.ok, filial.erro || '');
+
+  verificar('v92 — a tela oferece os centros administrativos',
+    /ADMIN = \['geral', 'matriz', 'filial'\]/.test(ui), '');
+  verificar('v92 — e eles aparecem no alto da lista',
+    /Sem projeto · despesa da empresa/.test(ui), '');
+  verificar('v92 — dá para cadastrar fornecedor na própria tela',
+    /ct-novo-forn/.test(ui), '');
+
+  /* O assistente financeiro é quem cadastra contrato no dia a dia:
+     se ele não puder criar o fornecedor, o contrato para. */
+  S.setUsuario('u1');
+  verificar('v92 — o assistente financeiro consegue cadastrar fornecedor',
+    S.podeMover('cadastros') || S.podeMover('contratos'), '');
+  S.setUsuario('u8');
+})();

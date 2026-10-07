@@ -258,7 +258,14 @@ ERP.contratos = (function () {
                 .map(function (x) {
                   return '<option value="' + x.id + '"' + (c && c.fornecedor === x.id ? ' selected' : '') + '>' +
                     U.esc(x.nome) + '</option>';
-                }).join('') + '</select></div>' +
+                }).join('') + '</select>' +
+              /* Cadastrar o fornecedor aqui: contrato novo costuma
+                 vir com fornecedor novo, e mandar sair da tela
+                 perde tudo que já foi digitado. */
+              (S.podeMover('cadastros') || S.podeMover('contratos')
+                ? '<button type="button" class="btn-sm" id="ct-novo-forn" ' +
+                  'style="margin-top:4px">+ cadastrar fornecedor</button>' : '') +
+            '</div>' +
             '<div><label>Natureza da despesa *</label><select id="ct-conta">' +
               '<option value="">Escolher…</option>' +
               D.plano.filter(function (x) { return x.nivel === 2 && x.tipo !== 'receita'; }).map(function (x) {
@@ -387,6 +394,28 @@ ERP.contratos = (function () {
        R$ 20.000 só por ser reaberto. */
     const usados = {};
     itens.forEach(function (i) { if (i.centro) usados[i.centro] = true; });
+
+    /* Nem todo contrato é de projeto. Tarifa de banco, aluguel da
+       filial, software da empresa inteira — nada disso pertence a
+       um hospital específico, e obrigar a escolher um fazia o custo
+       de todo mundo cair no projeto que a pessoa escolheu por
+       falta de opção.
+
+       Os quatro centros administrativos entram na lista, num grupo
+       próprio no ALTO: é o que a pessoa procura quando o contrato
+       não é de projeto.
+
+       - Geral: despesa da empresa, sem endereço certo
+       - Matriz SP, Filial RJ, Filial CE: despesa daquela casa
+
+       A diferença entre eles não é o rateio — todos rateiam para
+       os projetos —, é saber quanto cada casa custa. */
+    const ADMIN = ['geral', 'matriz', 'filial'];
+    const admins = D.centros.filter(function (c) {
+      return ADMIN.indexOf(c.tipo) > -1 && (c.ativo !== false || usados[c.id]);
+    });
+    if (admins.length) porUni['Sem projeto · despesa da empresa'] = admins;
+
     D.centros.filter(function (c) {
       return c.tipo === 'projeto' && (c.ativo || usados[c.id]);
     }).forEach(function (c) {
@@ -395,7 +424,16 @@ ERP.contratos = (function () {
     box.innerHTML = itens.map(function (i, ix) {
       return '<div class="rateio-lin">' +
         '<select data-i="' + ix + '" data-c="centro"><option value="">Escolher projeto…</option>' +
-          Object.keys(porUni).sort().map(function (u) {
+          /* O grupo administrativo vem PRIMEIRO: quem cadastra um
+             contrato de banco procura por ele, e rolar a lista
+             inteira de hospitais para achar "Geral" no fim é o
+             caminho mais curto para escolher um projeto errado. */
+          Object.keys(porUni).sort(function (a3, b3) {
+            const adm = 'Sem projeto · despesa da empresa';
+            if (a3 === adm) return -1;
+            if (b3 === adm) return 1;
+            return a3.localeCompare(b3, 'pt-BR');
+          }).map(function (u) {
             return '<optgroup label="' + U.esc(u) + '">' + porUni[u].map(function (c) {
               return '<option value="' + c.id + '"' + (c.id === i.centro ? ' selected' : '') + '>' +
                 U.esc(c.curto) + (c.ativo ? '' : ' (inativo)') + '</option>';
@@ -421,6 +459,65 @@ ERP.contratos = (function () {
         renderItens();
       });
     });
+    /* Fornecedor novo sem sair do contrato. Nasce pendente de
+       aprovação: quem cadastra aqui está montando o contrato, e
+       conferir dados bancários é ato do financeiro. */
+    const bNf = U.el('ct-novo-forn');
+    if (bNf && !bNf.dataset.ligado) {
+      bNf.dataset.ligado = '1';
+      bNf.addEventListener('click', function () {
+        ERP.app.modal({
+          titulo: 'Cadastrar fornecedor',
+          fecharTxt: 'Cancelar',
+          corpo:
+            '<label for="cf-nome">Razão social ou nome *</label>' +
+            '<input id="cf-nome" placeholder="como está no contrato">' +
+            '<div class="row2" style="margin-top:8px">' +
+              '<div><label for="cf-doc">CNPJ ou CPF</label>' +
+                '<input id="cf-doc" inputmode="numeric" placeholder="só números"></div>' +
+              '<div><label for="cf-fone">Telefone</label>' +
+                '<input id="cf-fone" placeholder="opcional"></div>' +
+            '</div>' +
+            '<div class="ajuda">Dados bancários ficam para o financeiro conferir antes do ' +
+            'primeiro pagamento — o cadastro nasce pendente de aprovação.</div>' +
+            '<div id="cf-erro"></div>',
+          acoes: [{ txt: 'Cadastrar e usar', cls: 'btn-aprovar', fn: function () {
+            const nome = U.val('cf-nome').trim();
+            const erro = U.el('cf-erro');
+            if (!nome) {
+              if (erro) erro.innerHTML = '<div class="login-erro">Informe o nome.</div>';
+              return;
+            }
+            const doc = String(U.val('cf-doc')).replace(/\D/g, '');
+            const igual = D.credores.find(function (x) {
+              return (doc && String(x.documento || '').replace(/\D/g, '') === doc) ||
+                (x.nome || '').trim().toLowerCase() === nome.toLowerCase();
+            });
+            if (igual) {
+              if (erro) {
+                erro.innerHTML = '<div class="login-erro">Já existe: <b>' +
+                  U.esc(igual.nome) + '</b>. Escolha esse na lista.</div>';
+              }
+              return;
+            }
+            const novo = {
+              id: S.proximoId('cr'), nome: nome, tipo: 'fornecedor',
+              documento: doc, telefone: U.val('cf-fone').trim(),
+              ativo: true, origem: 'contrato', dados_aprovados: false
+            };
+            D.credores.push(novo);
+            ERP.app.fecharModal();
+            /* Reabre o contrato com o que já estava preenchido e o
+               fornecedor novo escolhido. */
+            const rasc = lerRascunho();
+            rasc.fornecedor = novo.id;
+            editar(idEmEdicao, rasc);
+            ERP.app.aviso('Fornecedor cadastrado e escolhido.', 'ok');
+          } }]
+        });
+      });
+    }
+
     U.el('ct-add-item').addEventListener('click', function () {
       lerItens();
       itens.push({ centro: '', valor: 0 });
