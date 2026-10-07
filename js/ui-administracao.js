@@ -358,7 +358,7 @@ ERP.administracao = (function () {
           ativo: U.el('us-ativo') ? U.el('us-ativo').checked : true,
           senha_provisoria: U.el('us-provisoria') ? U.el('us-provisoria').checked : false
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         /* Usuário é cadastro: vai ao banco na hora, não pela
            sincronização do movimento. */
         if (ERP.persistencia && ERP.persistencia.ligado()) {
@@ -609,7 +609,7 @@ ERP.administracao = (function () {
         document.querySelectorAll('[data-pf-mod]').forEach(function (e) {
           if (e.checked) modulos.push(e.dataset.pfMod); });
         const r = S.salvarPerfil({ id: id, nome: U.val('pf-nome'), acoes: acoes, modulos: modulos });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Perfil salvo. Quem usa este perfil já sente a mudança.', 'ok');
         ERP.app.renderHome && ERP.app.renderHome();
@@ -766,7 +766,7 @@ ERP.administracao = (function () {
     const salvar = U.el('imp-salvar');
     if (salvar) salvar.addEventListener('click', function () {
       const r = S.salvarImpostosProcedimentos(lerImpostos(), D.PATE_CENTRO);
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       render();
       ERP.app.aviso('Imposto estimado atualizado para ' + U.num(r.total) + '%.', 'ok');
     });
@@ -785,7 +785,7 @@ ERP.administracao = (function () {
         { id: 'irpj', nome: 'IRPJ', aliquota: 2.2 },
         { id: 'csll', nome: 'CSLL', aliquota: 1.19 }
       ], D.PATE_CENTRO);
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       render();
       ERP.app.aviso('Voltou ao padrão: ' + U.num(r.total) + '%.', 'ok');
     });
@@ -807,7 +807,7 @@ ERP.administracao = (function () {
     const salvar = U.el('ad-matriz-salvar');
     if (salvar) salvar.addEventListener('click', function () {
       const r = S.salvarMatrizAcesso(lerMatriz());
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       descartarRascunho();
       render();
       ERP.app.aviso('Acessos atualizados.', 'ok');
@@ -815,7 +815,7 @@ ERP.administracao = (function () {
     const padrao = U.el('ad-matriz-padrao');
     if (padrao) padrao.addEventListener('click', function () {
       const r = S.salvarMatrizAcesso(JSON.parse(JSON.stringify(D.MATRIZ_PADRAO)));
-      if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+      if (ERP.app.erroDoRetorno(r)) return;
       descartarRascunho();
       render();
       ERP.app.aviso('Voltou à distribuição sugerida.', 'ok');
@@ -864,7 +864,7 @@ ERP.administracao = (function () {
     box.querySelectorAll('[data-perfil-x]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.excluirPerfil(this.dataset.perfilX);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Perfil excluído.', 'ok');
         render();
       });
@@ -886,7 +886,7 @@ ERP.administracao = (function () {
           travar_competencia_ate: U.val('po-trava'),
           nsa_ini: U.val('po-nsai'), nsa_fim: U.val('po-nsaf')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Parâmetros salvos e já valendo.', 'ok');
         render();
       });

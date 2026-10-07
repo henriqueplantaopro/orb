@@ -82,7 +82,7 @@ ERP.conciliacao = (function () {
         ]
       });
     }
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     U.el('cn-arquivo').value = '';
     render();
     ERP.app.aviso(r.novos + ' lançamento(s) importado(s)' +
@@ -488,7 +488,7 @@ ERP.conciliacao = (function () {
             'caminho é estornar o pagamento, ou trocar a linha.</div>',
           acoes: [{ txt: 'Desfazer', cls: 'btn-aprovar', fn: function () {
             const r = S.desconciliar(id, U.val('dc-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render();
             ERP.app.aviso('Conciliação desfeita — a linha voltou para pendente.', 'ok');
           } }]
@@ -498,7 +498,7 @@ ERP.conciliacao = (function () {
     document.querySelectorAll('[data-reabre]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.reabrirLinha(this.dataset.reabre, 'reaberta na tela');
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         render();
         ERP.app.aviso('Linha reaberta — voltou para a fila de conciliação.', 'ok');
       });
@@ -528,7 +528,7 @@ ERP.conciliacao = (function () {
             '<label>Motivo</label><input id="rp-motivo" placeholder="ex.: a saída foi a do dia 12">',
           acoes: [{ txt: 'Trocar', cls: 'btn-aprovar', fn: function () {
             const r = S.reapontarConciliacao(id, U.val('rp-nova'), U.val('rp-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal(); render();
             ERP.app.aviso('Vínculo movido para a outra linha.', 'ok');
           } }]
@@ -665,7 +665,7 @@ ERP.conciliacao = (function () {
             cliente_nome: nomeCliente, cliente_doc: cli ? cli.documento : null,
             centro: U.val('rc-projeto'), numero: U.val('rc-numero'), competencia: U.val('rc-comp')
           });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal();
           abertaLinha = null;
           render();
@@ -674,7 +674,7 @@ ERP.conciliacao = (function () {
           const r = S.lancarReceitaDoExtrato(id, {
             descricao: U.val('rc-desc'), conta: U.val('rc-conta'), centro: U.val('rc-centro')
           });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal();
           abertaLinha = null;
           render();
@@ -786,7 +786,7 @@ ERP.conciliacao = (function () {
         '</tbody></table>';
       const vincularVarios = function (ids) {
         const r = S.conciliarVarios(id, ids);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         abertaLinha = null;
         render();
@@ -817,7 +817,7 @@ ERP.conciliacao = (function () {
              já com a decisão. */
           const tentar = function (decisao) {
             const r = S.conciliar(id, { tipo: tipo, id: alvo, decisao: decisao });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             if (r.decidir) return perguntarResiduo(r, tentar);
             ERP.app.fecharModal();
             abertaLinha = null;
@@ -1120,7 +1120,7 @@ ERP.conciliacao = (function () {
         const linha = this.dataset.cnOk, tipo = this.dataset.tipo, alvo = this.dataset.alvo;
         const tentar = function (decisao) {
           const r = S.conciliar(linha, { tipo: tipo, id: alvo, decisao: decisao });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           if (r.decidir) return perguntarResiduo(r, tentar);
           abertaLinha = null;
           render();

@@ -7495,3 +7495,72 @@ function liberarParaFaturar(centro, competencia) {
     r.requisicao.itens[0].unidade === p.unidade, '');
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v94: material com cadastro incompleto é sinalizado ──
+(function () {
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-compras.js', 'utf8');
+  const es = fs.readFileSync(__dirname + '/js/ui-estoque.js', 'utf8');
+
+  /* O código aparecia DUAS VEZES na linha do material: acrescentei
+     a nova sem remover a que já existia. */
+  verificar('v94 — o código do material aparece uma vez só na requisição',
+    (ui.match(/U\.esc\(p\.codigo \|\| i\.codigo\)/g) || []).length === 1 &&
+    !/'<div class="sub">' \+ U\.esc\(p\.codigo \|\| ''\) \+ '<\/div><\/td>'/.test(ui), '');
+
+  /* Material recuperado nasce com nome genérico — o sistema não
+     tem como adivinhar o que a pessoa quis cadastrar. O que ele
+     pode fazer é não deixar isso passar despercebido: o aviso fica
+     na tela que alguém abre todo dia, não num relatório que
+     ninguém procura. */
+  verificar('v94 — a posição de estoque avisa sobre cadastro incompleto',
+    /function avisoCadastroIncompleto/.test(es) &&
+    (es.match(/avisoCadastroIncompleto\(\)/g) || []).length >= 3, '');
+
+  D.produtos.push({ id: 'prQA94', codigo: 'REC-9400',
+    descricao: 'Material recuperado prQA94', unidade: 'UN', ativo: true });
+  const pend = D.produtos.filter(function (p) {
+    return /^Material recuperado/.test(p.descricao || '') || /^REC-/.test(p.codigo || '');
+  });
+  verificar('v94 — e reconhece os recuperados pelo nome ou código',
+    pend.some(function (p) { return p.id === 'prQA94'; }), pend.length + '');
+})();
+
+// ── ERP teste2 v95: o campo que faltou fica marcado ──
+(function () {
+  const fs = require('fs');
+  const app = fs.readFileSync(__dirname + '/js/app.js', 'utf8');
+
+  /* Um aviso no topo da tela não diz ONDE faltou. Em formulário
+     longo — contrato, contas a pagar — a pessoa lê o aviso,
+     procura, não acha, e tenta salvar de novo. */
+  verificar('v95 — existe o atalho que destaca o campo do erro',
+    /function erroDoRetorno/.test(app), '');
+  verificar('v95 — e ele rola a tela até o campo',
+    /scrollIntoView/.test(app), '');
+  verificar('v95 — o rótulo também é marcado, não só a caixa',
+    /campo-erro-rotulo/.test(app) &&
+    /campo-erro-rotulo/.test(fs.readFileSync(__dirname + '/css/erp.css', 'utf8')), '');
+
+  /* As validações dizem QUAL campo faltou. Sem isso o atalho não
+     tem o que destacar. */
+  S.setUsuario('u5');
+  const t = S.criarTitulo({ descricao: '' });
+  verificar('v95 — o erro de descrição aponta o campo',
+    t.erro && t.campo === 'l-desc', t.campo || '(sem campo)');
+
+  const c = S.salvarContrato({ parte: 'fornecedor' });
+  verificar('v95 — e o do contrato também',
+    c.erro && !!c.campo, c.campo || '(sem campo)');
+
+  /* As telas usam o atalho em vez do aviso solto. */
+  let soltos = 0;
+  fs.readdirSync(__dirname + '/js').filter(function (f) { return /^ui-.*\.js$/.test(f); })
+    .forEach(function (f) {
+      const t2 = fs.readFileSync(__dirname + '/js/' + f, 'utf8');
+      soltos += (t2.match(/if \(r\.erro\) return ERP\.app\.aviso\(r\.erro, 'erro'\);/g) || []).length;
+    });
+  verificar('v95 — nenhuma tela mostra o erro sem destacar o campo',
+    soltos === 0, soltos + ' ponto(s) ainda soltos');
+  S.setUsuario('u8');
+})();

@@ -479,7 +479,8 @@ ERP.estoque = (function () {
     const valor = linhas.reduce(function (s, l) { return s + l.valor; }, 0);
     const marcados = linhas.filter(function (l) { return sel.has(l.produto.id + '|' + l.armazem); });
 
-    return '<div class="filtros">' +
+    return avisoCadastroIncompleto() +
+      '<div class="filtros">' +
         '<div class="f" style="flex:1"><label for="es-busca">Buscar material</label>' +
           '<input id="es-busca" value="' + U.esc(buscaPosicao || '') +
           '" placeholder="digite parte do nome ou o código — ex.: seringa"></div>' +
@@ -586,6 +587,40 @@ ERP.estoque = (function () {
      aparece. */
   let buscaFam = '';
 
+  /* MATERIAL COM CADASTRO INCOMPLETO. Dois casos, mesma
+     consequência: ninguém reconhece o item na hora de usar.
+
+     - "Material recuperado": nasceu de uma requisição que apontava
+       para um produto que não chegou ao banco; o sistema recriou
+       com o código, mas não tinha como saber o nome.
+     - Cadastro rápido sem NCM: entrou no meio de uma requisição ou
+       entrada, com o mínimo para o lançamento andar.
+
+     Aparecem no alto da posição de estoque porque é a tela que
+     alguém abre todo dia — um relatório que ninguém procura não
+     resolve. */
+  function avisoCadastroIncompleto() {
+    const pendentes = D.produtos.filter(function (p) {
+      if (p.ativo === false) return false;
+      return /^Material recuperado/.test(p.descricao || '') ||
+        /^REC-/.test(p.codigo || '') ||
+        (p.cadastro_rapido && !String(p.ncm || '').trim());
+    });
+    if (!pendentes.length) return '';
+    const semNome = pendentes.filter(function (p) {
+      return /^Material recuperado/.test(p.descricao || '');
+    });
+    return '<div class="aviso" style="margin-bottom:10px">' +
+      '<b>' + pendentes.length + ' material(is) com cadastro incompleto.</b> ' +
+      (semNome.length
+        ? semNome.length + ' sem nome de verdade — alguém precisa dizer o que são: ' +
+          semNome.slice(0, 4).map(function (p) { return U.esc(p.codigo); }).join(', ') +
+          (semNome.length > 4 ? ' e mais ' + (semNome.length - 4) : '') + '. '
+        : '') +
+      'Corrija em Cadastros › Materiais.' +
+      '</div>';
+  }
+
   function telaFamilias() {
     const q = String(buscaFam || '').trim().toUpperCase();
     const lista = D.produtos.filter(function (p) {
@@ -689,7 +724,8 @@ ERP.estoque = (function () {
     const comFamilia = grupos.filter(function (g) { return g.familia; });
     const valor = grupos.reduce(function (a2, g) { return a2 + g.valor; }, 0);
 
-    let html = '<div class="filtros">' +
+    let html = avisoCadastroIncompleto() +
+      '<div class="filtros">' +
         '<div class="f" style="flex:1"><label for="es-busca">Buscar material ou família</label>' +
           '<input id="es-busca" value="' + U.esc(buscaPosicao || '') +
           '" placeholder="ex.: lente"></div>' +
@@ -832,7 +868,7 @@ ERP.estoque = (function () {
         });
         const r = S.distribuir({ origem: paiId, destino: U.val('ds-dst'), data: U.val('ds-data'),
           documento: U.val('ds-doc'), itens: itens });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso(r.n + ' material(is) distribuído(s) para ' + nomeArm(U.val('ds-dst')) + '.', 'ok');
         render();
@@ -1472,7 +1508,7 @@ ERP.estoque = (function () {
           ncm: U.val('np-ncm'),
           conta: U.val('np-conta')
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         const p = r.produto;
         /* Os campos que só este caminho oferece. */
         p.ean = U.val('np-ean');
@@ -1667,7 +1703,7 @@ ERP.estoque = (function () {
       motivo: notaLida ? 'Entrada por nota' : 'Entrada manual',
       itens: itensGravar
     });
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
 
     /* A NOTA COMPLETA O CADASTRO. Material criado às pressas numa
        requisição nasce sem NCM; o XML tem esse dado, e a entrada é
@@ -1879,7 +1915,7 @@ ERP.estoque = (function () {
          pronto anulava a obrigatoriedade que o store impõe. */
       motivo: U.val('iv-motivo')
     });
-    if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+    if (ERP.app.erroDoRetorno(r)) return;
     if (!r.n) return ERP.app.aviso(r.aviso || 'Nada a ajustar.', 'ok');
     ERP.app.aviso('Inventário ajustado: ' + r.sobras + ' sobra(s) e ' + r.faltas +
       ' falta(s) lançada(s).', 'ok');
@@ -1939,7 +1975,7 @@ ERP.estoque = (function () {
           observacao: U.val('ba-obs'), paciente: U.val('ba-pac'),
           pacientes: pacLista.length ? pacLista : null, itens: itens
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Baixa de ' + r.n + ' material(is) · ' + U.brl(r.valor) + ' em ' +
           nomeArm(armSel) + '.', 'ok');
@@ -2048,7 +2084,7 @@ ERP.estoque = (function () {
           origem: U.val('tr-org'), destino: U.val('tr-dst'), data: U.val('tr-data'),
           documento: U.val('tr-doc'), itens: itens
         });
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso(r.n + ' material(is) transferido(s) · ' + U.brl(r.valor) + '.', 'ok');
         render();
@@ -2158,7 +2194,7 @@ ERP.estoque = (function () {
           acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
             const r = S.definirMinimo(partes[0], partes[1], {
               minimo: U.parseValor(U.val('mn-min')), ideal: U.parseValor(U.val('mn-ideal')) });
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             ERP.app.atualizarContadores();
             render();
@@ -2296,7 +2332,7 @@ ERP.estoque = (function () {
     if (U.el('pc-exportar')) {
       U.el('pc-exportar').addEventListener('click', function () {
         const r = S.consumoPorPaciente(fPac);
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         if (!r.linhas.length) return ERP.app.aviso('Nada para exportar.', 'erro');
         ERP.exportar.abrir({
           nome: 'consumo-por-paciente', titulo: 'Consumo por paciente',
@@ -2350,7 +2386,7 @@ ERP.estoque = (function () {
             '<label>Motivo *</label><input id="ev-motivo" placeholder="ex.: baixa lançada no setor errado">',
           acoes: [{ txt: 'Estornar', cls: 'btn-cancelar', fn: function () {
             const r = S.estornarMovimento(id, U.val('ev-motivo'));
-            if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+            if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             ERP.app.atualizarContadores();
             render();

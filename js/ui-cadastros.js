@@ -252,7 +252,7 @@ ERP.cadastros = (function () {
             periodicidade: parseInt(U.val('at-per'), 10) || 6,
             observacao: U.val('at-obs'), arquivo: arquivo
           });
-          if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+          if (ERP.app.erroDoRetorno(r)) return;
           ERP.app.fecharModal();
           ERP.app.atualizarContadores();
           render();

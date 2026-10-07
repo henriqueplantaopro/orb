@@ -619,17 +619,17 @@ ERP.store = (function () {
        válvula, a previsão falhava calada: `criarTitulo` recusava, e
        quem chamou não conferia o retorno — nem título, nem erro. */
     if (!dados._interno && !pode('lancar')) return { erro: 'Seu perfil não lança contas a pagar.' };
-    if (!dados.descricao) return { erro: 'Informe a descrição.' };
+    if (!dados.descricao) return { erro: 'Informe a descrição.', campo: 'l-desc' };
     /* Número é obrigatório, MENOS quando quem lança marcou "sem NF"
        (tarifa, imposto, débito automático): aí o título nasce sem
        número e fica no alerta até alguém informar a nota depois. */
-    if (!dados.documento && !dados.sem_nf) return { erro: 'Informe o nº do título / NF (ou marque "Sem NF").' };
-    if (!dados.tipo_titulo) return { erro: 'Informe o tipo do título.' };
-    if (!dados.credor) return { erro: 'Informe o fornecedor / credor.' };
+    if (!dados.documento && !dados.sem_nf) return { erro: 'Informe o nº do título / NF (ou marque "Sem NF").', campo: 'l-doc' };
+    if (!dados.tipo_titulo) return { erro: 'Informe o tipo do título.', campo: 'l-tipo' };
+    if (!dados.credor) return { erro: 'Informe o fornecedor / credor.', campo: 'l-credor' };
     // F3 — credor é chave estrangeira: nome solto não entra
-    if (!D.credor(dados.credor)) return { erro: 'Credor não encontrado no cadastro.' };
-    if (!dados.emissao) return { erro: 'Informe a data de emissão.' };
-    if (!dados.conta) return { erro: 'Escolha a natureza (plano de contas).' };
+    if (!D.credor(dados.credor)) return { erro: 'Credor não encontrado no cadastro.', campo: 'l-credor' };
+    if (!dados.emissao) return { erro: 'Informe a data de emissão.', campo: 'l-emissao' };
+    if (!dados.conta) return { erro: 'Escolha a natureza (plano de contas).', campo: 'l-conta' };
     /* A tela usa lista, mas a importação (PegaPlantão, PlantãoPro, XML)
        entra por aqui direto: conta fora do plano viraria despesa sem
        lugar no DRE. */
@@ -12385,16 +12385,16 @@ ERP.store = (function () {
     if (!podeMover('contratos') && !pode('admin')) {
       return { erro: 'Seu perfil não altera contratos.' };
     }
-    if (!d.numero) return { erro: 'Informe o número do contrato.' };
+    if (!d.numero) return { erro: 'Informe o número do contrato.', campo: 'ct-num' };
     /* Dois tipos de contrato no mesmo módulo: o que a empresa FATURA
        (parte = cliente) e o que a empresa PAGA (parte = fornecedor —
        aluguel, software, contabilidade, manutenção). Os dois têm
        vigência, reajuste e renovação pra acompanhar; muda quem é a
        contraparte e de que lado o dinheiro anda. */
     const parte = d.parte === 'fornecedor' ? 'fornecedor' : 'cliente';
-    if (parte === 'cliente' && !d.cliente) return { erro: 'Informe o cliente.' };
-    if (parte === 'fornecedor' && !d.fornecedor) return { erro: 'Informe o fornecedor.' };
-    if (parte === 'fornecedor' && !d.conta) return { erro: 'Informe a natureza (plano de contas) da despesa.' };
+    if (parte === 'cliente' && !d.cliente) return { erro: 'Informe o cliente.', campo: 'ct-cli' };
+    if (parte === 'fornecedor' && !d.fornecedor) return { erro: 'Informe o fornecedor.', campo: 'ct-forn' };
+    if (parte === 'fornecedor' && !d.conta) return { erro: 'Informe a natureza (plano de contas) da despesa.', campo: 'ct-conta' };
     /* Condições comerciais só entram se fizerem sentido — antes o
        contrato aceitava vencimento dia 45, multa negativa e juros de
        300% ao mês sem reclamar. */
@@ -12409,7 +12409,7 @@ ERP.store = (function () {
     }
     if (d.multa_atraso_pct > 20) return { erro: 'Multa por atraso de ' + U.num(d.multa_atraso_pct) + '% — confira: o usual é até 2%.' };
     if (d.juros_mes_pct > 20) return { erro: 'Juros de ' + U.num(d.juros_mes_pct) + '% ao mês — confira: o usual é 1% ao mês.' };
-    if (!d.vigencia_ini || !d.vigencia_fim) return { erro: 'Informe a vigência.' };
+    if (!d.vigencia_ini || !d.vigencia_fim) return { erro: 'Informe a vigência.', campo: d.vigencia_ini ? 'ct-fim' : 'ct-ini' };
     if (d.vigencia_fim < d.vigencia_ini) return { erro: 'A vigência termina antes de começar.' };
     const itens = (d.itens || []).filter(function (i) { return i.centro; });
     if (!itens.length) return { erro: 'Inclua ao menos uma linha de projeto.' };

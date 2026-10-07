@@ -124,7 +124,7 @@ ERP.receber = (function () {
     const agir = (attr, fn, msg) => box.querySelectorAll('[' + attr + ']').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = fn(this.getAttribute(attr));
-        if (r.erro) return ERP.app.aviso(r.erro, 'erro');
+        if (ERP.app.erroDoRetorno(r)) return;
         render();
         ERP.app.atualizarContadores();
         ERP.app.aviso(msg, 'ok');
