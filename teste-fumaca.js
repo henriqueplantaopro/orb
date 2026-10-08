@@ -13,6 +13,7 @@ function carregar(nome) {
 
 // window precisa existir antes de qualquer script
 carregar('util.js');
+carregar('dre-gerencial.js');
 carregar('dados.js');
 carregar('store.js');
 carregar('rps-barueri.js');
@@ -8054,4 +8055,264 @@ function liberarParaFaturar(centro, competencia) {
     S.salvarParametros({ alcada: { diretoria: 50000 } });
   }
   S.setUsuario('u8');
+})();
+
+
+// ── ERP teste2 v102: DRE gerencial ──
+(function () {
+  const DRE = sandbox.window.ERP.dreGerencial;
+
+  /* O DRE do jeito que a empresa lê: receita, imposto, custo
+     direto, despesa do projeto, despesa da casa RATEADA pelo
+     faturamento, lucro — e os investimentos abaixo da linha.
+
+     Os números abaixo foram conferidos na mão. Cada um existe
+     porque a conta pode errar de um jeito específico: o rateio que
+     não fecha, a depreciação contada duas vezes, a retenção
+     descontada em dobro no caixa, a previsão entrando como fato. */
+
+const plano = [
+  { cod:'1', nome:'Receita operacional', nivel:1, tipo:'receita' },
+  { cod:'2', nome:'Impostos de venda', nivel:1, tipo:'deducao' },
+  { cod:'2.01', nome:'ISS', nivel:2, pai:'2' },
+  { cod:'3', nome:'Custos diretos', nivel:1, tipo:'custo' },
+  { cod:'3.01', nome:'Produtividade médica', nivel:2, pai:'3' },
+  { cod:'6', nome:'Despesas administrativas', nivel:1, tipo:'despesa' },
+  { cod:'6.01', nome:'Aluguel', nivel:2, pai:'6' },
+  { cod:'8', nome:'Despesas operacionais', nivel:1, tipo:'despesa' },
+  { cod:'8.04', nome:'Material', nivel:2, pai:'8' },
+  { cod:'10', nome:'Aportes', nivel:1, tipo:'nao_operacional' },
+  { cod:'10.01', nome:'Aporte', nivel:2, pai:'10' }
+];
+const centros = [
+  { id:'pj1', curto:'AGIR Neonatal', tipo:'projeto', cliente:'cl-agir' },
+  { id:'pj2', curto:'AGIR UTI',      tipo:'projeto', cliente:'cl-agir' },
+  { id:'pj3', curto:'HGB Oftalmo',   tipo:'projeto', cliente:'cl-ghc' },
+  { id:'cc100', curto:'Matriz SP',   tipo:'matriz' },
+  { id:'cc900', curto:'Geral',       tipo:'geral' }
+];
+const receber = [
+  { id:'r1', centro:'pj1', competencia:'2026-07', valor_bruto:100000, valor_retido:5000,
+    valor_recebido:100000, recebido_em:'2026-08-10', origem:'nota', status:'emitida',
+    cliente_nome:'AGIR', numero:'1',
+    baixas:[{ data:'2026-08-10', valor:95000 }] },
+  { id:'r2', centro:'pj2', competencia:'2026-07', valor_bruto:60000, valor_retido:0,
+    origem:'nota', status:'emitida', cliente_nome:'AGIR', numero:'2', baixas:[] },
+  { id:'r3', centro:'pj3', competencia:'2026-07', valor_bruto:40000, valor_retido:0,
+    origem:'nota', status:'emitida', cliente_nome:'GHC', numero:'3', baixas:[] },
+  { id:'r4', centro:'pj1', competencia:'2026-07', valor_bruto:999, valor_retido:0,
+    origem:'nota', status:'cancelado', cliente_nome:'x', baixas:[] }
+];
+const parcelas = [
+  { id:'p1', conta:'3.01', centro:'pj1', comp:'2026-07', valor:50000, status:'pago', descricao:'Repasse médico' },
+  { id:'p2', conta:'8.04', centro:'pj1', comp:'2026-07', valor:8000,  status:'pago', descricao:'Material do projeto' },
+  { id:'p3', conta:'6.01', centro:'cc100', comp:'2026-07', valor:20000, status:'pago', descricao:'Aluguel matriz' },
+  { id:'p4', conta:'2.01', centro:'cc100', comp:'2026-07', valor:3000, status:'pago', descricao:'ISS' },
+  { id:'p5', conta:'10.01', centro:'cc900', comp:'2026-07', valor:777, status:'pago', descricao:'Aporte do sócio' },
+  { id:'p6', conta:'6.01', centro:'cc100', comp:'2026-07', valor:1000, status:'previsto', descricao:'previsão' }
+];
+const pagamentos = [
+  { id:'pg1', parcela_id:'p1', data:'2026-08-05', valor:50000, juros:0, multa:0, situacao:'liquidado' },
+  { id:'pg2', parcela_id:'p3', data:'2026-07-20', valor:20000, juros:100, multa:50, situacao:'liquidado' },
+  { id:'pg3', parcela_id:'p2', data:'2026-07-30', valor:8000, juros:0, multa:0, situacao:'aguardando' }
+];
+const ativos = [
+  { id:'a1', descricao:'Arco cirúrgico', valor:360000, vida_util_meses:36, aquisicao:'2026-07-15', projeto:'pj1' },
+  { id:'a2', descricao:'Mesa', valor:50000, vida_util_meses:60, aquisicao:'2026-06-01', projeto:'pj3' }
+];
+const dados = { plano, centros, receber, parcelas, pagamentos, ativos,
+  depreciacaoPorProjeto: m => m === '2026-07'
+    ? [{ centro:'pj1', valor:10000, itens:[{}] }, { centro:'pj3', valor:833.33, itens:[{}] }] : [] };
+
+// ── 1. empresa inteira, competência, julho
+const g = DRE.calcular(dados, { de:'2026-07', ate:'2026-07', regime:'competencia' });
+const L = id => g.linhas.find(x => x.id === id);
+verificar('v102 — receita = 200.000 (cancelada fora)', L('receita').total === 200000, L('receita').total);
+verificar('v102 — imposto = 3.000 proprio + 5.000 retido', L('imposto').total === 8000, L('imposto').total);
+verificar('v102 — custo = 50.000 repasse + 10.833,33 depreciacao', L('custo').total === 60833.33, L('custo').total);
+verificar('v102 — despesa direta = 8.000', L('direta').total === 8000, L('direta').total);
+verificar('v102 — despesa geral = 20.000 (matriz, sem rateio pois é a empresa toda)', L('geral').total === 20000, L('geral').total);
+verificar('v102 — aporte NAO entra no resultado', JSON.stringify(g.linhas).indexOf('Aporte do sócio') < 0, '');
+verificar('v102 — lucro = 200000-8000-60833.33-8000-20000', L('lucro').total === 103166.67, L('lucro').total);
+verificar('v102 — investimento = 360.000 no mes', g.investimentos.total === 360000, g.investimentos.total);
+verificar('v102 — observacao avisa que investiu mais que o lucro',
+  /não sobrou caixa/.test(g.investimentos.observacao), g.investimentos.observacao);
+
+// ── 2. filtro por CLIENTE (AGIR = pj1 + pj2)
+const a = DRE.calcular(dados, { de:'2026-07', ate:'2026-07', cliente:'cl-agir' });
+const LA = id => a.linhas.find(x => x.id === id);
+verificar('v102 — AGIR soma os dois projetos: 160.000', LA('receita').total === 160000, LA('receita').total);
+// rateio: 160.000 de 200.000 = 80% de 20.000 = 16.000
+verificar('v102 — despesa geral rateada = 80% de 20.000', LA('geral').total === 16000, LA('geral').total);
+verificar('v102 — o rateio é declarado', a.rateio['2026-07'].pct === 80, JSON.stringify(a.rateio));
+verificar('v102 — custo do AGIR = 50.000 + 10.000 (so a depreciacao de pj1)',
+  LA('custo').total === 60000, LA('custo').total);
+
+// ── 3. filtro por PROJETO único
+const p1 = DRE.calcular(dados, { de:'2026-07', ate:'2026-07', centros:['pj1'] });
+const LP = id => p1.linhas.find(x => x.id === id);
+verificar('v102 — projeto só: receita 100.000', LP('receita').total === 100000, LP('receita').total);
+verificar('v102 — projeto só: geral = 50% de 20.000', LP('geral').total === 10000, LP('geral').total);
+verificar('v102 — projeto só: investimento do projeto', p1.investimentos.total === 360000, p1.investimentos.total);
+
+// ── 4. CAIXA
+const cx = DRE.calcular(dados, { de:'2026-07', ate:'2026-08', regime:'caixa' });
+const LC = id => cx.linhas.find(x => x.id === id);
+verificar('v102 — caixa: receita = 95.000 recebidos em agosto', LC('receita').total === 95000, LC('receita').total);
+verificar('v102 — caixa: custo do repasse pago em agosto', LC('custo').total === 50000, LC('custo').total);
+verificar('v102 — caixa NAO inclui depreciacao',
+  JSON.stringify(cx.linhas).indexOf('Depreciação') < 0, '');
+verificar('v102 — caixa: geral = 20.000 + juros 100 + multa 50', LC('geral').total === 20150, LC('geral').total);
+verificar('v102 — caixa: despesa nao liquidada fica de fora', LC('direta').total === 0, LC('direta').total);
+/* No caixa a receita entra pelo RECEBIDO, que já é líquido de
+   retenção. Somar a retenção na linha de imposto descontaria o
+   mesmo imposto duas vezes. O ISS (p4) não tem pagamento
+   liquidado, então também não entra. */
+verificar('v102 — caixa NAO soma a retencao (a receita ja entra liquida)', LC('imposto').total === 0, LC('imposto').total);
+const cxImp = DRE.calcular({ ...dados, pagamentos: pagamentos.concat([
+  { id:'pg4', parcela_id:'p4', data:'2026-08-20', valor:3000, juros:0, multa:0, situacao:'liquidado' }]) },
+  { de:'2026-07', ate:'2026-08', regime:'caixa' });
+verificar('v102 — caixa: imposto proprio entra quando é pago',
+  cxImp.linhas.find(x=>x.id==='imposto').total === 3000,
+  cxImp.linhas.find(x=>x.id==='imposto').total);
+
+// ── 5. período de vários meses
+const m3 = DRE.calcular(dados, { de:'2026-07', ate:'2026-09' });
+verificar('v102 — tres meses no cabecalho', m3.meses.join(',') === '2026-07,2026-08,2026-09', m3.meses.join(','));
+verificar('v102 — total do periodo = o mes unico', m3.linhas.find(x=>x.id==='receita').total === 200000, '');
+
+// ── 6. detalhe compõe o total
+const det = L('custo').detalhe['2026-07'];
+const somaDet = Math.round(det.reduce((s,x)=>s+x.valor,0)*100)/100;
+verificar('v102 — o detalhe soma exatamente a linha', somaDet === L('custo').total, somaDet + ' vs ' + L('custo').total);
+
+// ── 7. rateio da despesa no detalhe mostra a fatia
+const dg = LA('geral').detalhe['2026-07'];
+verificar('v102 — o detalhe do rateio mostra a fatia e a origem',
+  dg.length === 1 && dg[0].valor === 16000 && /80%/.test(dg[0].rotulo), JSON.stringify(dg));
+
+// ── 8. período inválido
+const inv = DRE.calcular(dados, { de:'2026-09', ate:'2026-07' });
+verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(inv.erro));
+
+
+})();
+
+// ── ERP teste2 v102: o DRE gerencial roda com os dados do sistema ──
+(function () {
+  const DRE = sandbox.window.ERP.dreGerencial;
+  const Ut = sandbox.window.ERP.util;
+
+  /* O cenário montado acima prova a CONTA. Este prova que ela
+     aguenta os dados de verdade — que é onde aparecem os campos
+     ausentes, as datas em branco e os centros que não existem
+     mais. Um relatório que quebra com dado real não serve, por
+     mais correta que seja a fórmula. */
+  const dados = {
+    plano: D.plano, centros: D.centros, clientes: D.clientes,
+    parcelas: S.todasParcelas(), pagamentos: S.todosPagamentos(),
+    receber: S.contasReceber(), ativos: S.st.ativos,
+    depreciacaoPorProjeto: S.depreciacaoPorProjeto
+  };
+  const ano = Ut.mesAtual().slice(0, 4);
+  const r = DRE.calcular(dados, { de: ano + '-01', ate: ano + '-12' });
+  verificar('v102 — roda com os dados reais do sistema', !r.erro && r.meses.length === 12,
+    r.erro || r.meses.length);
+
+  /* Nenhum número pode sair NaN ou infinito: é o defeito que se
+     espalha em silêncio e só aparece no relatório impresso. */
+  const ruins = [];
+  r.linhas.concat([r.investimentos]).forEach(function (l) {
+    if (!isFinite(l.total)) ruins.push(l.id + '.total');
+    Object.keys(l.valores).forEach(function (m) {
+      if (!isFinite(l.valores[m])) ruins.push(l.id + '.' + m);
+    });
+  });
+  verificar('v102 — nenhum valor sai NaN ou infinito', ruins.length === 0, ruins.join(', '));
+
+  /* A conta fecha: receita − imposto − custo − direta − geral = lucro.
+     Em cada mês, não só no total — um erro de sinal some no total. */
+  const L = id => r.linhas.find(x => x.id === id);
+  const fora = r.meses.filter(function (m) {
+    const esperado = Math.round((L('receita').valores[m] - L('imposto').valores[m] -
+      L('custo').valores[m] - L('direta').valores[m] - L('geral').valores[m]) * 100) / 100;
+    return Math.abs(esperado - L('lucro').valores[m]) > 0.004;
+  });
+  verificar('v102 — o lucro fecha com as linhas, mês a mês', fora.length === 0, fora.join(', '));
+
+  /* E o total de cada linha é a soma dos meses. */
+  const somaFora = r.linhas.filter(function (l) {
+    const s = Math.round(r.meses.reduce(function (t, m) { return t + l.valores[m]; }, 0) * 100) / 100;
+    return Math.abs(s - l.total) > 0.004;
+  }).map(function (l) { return l.id; });
+  verificar('v102 — o total de cada linha é a soma dos meses', somaFora.length === 0, somaFora.join(', '));
+
+  /* Com filtro por projeto, a soma de todos os projetos não pode
+     passar do resultado da empresa: é o sinal de que o rateio está
+     distribuindo mais do que existe. */
+  const geral = DRE.calcular(dados, { de: ano + '-01', ate: ano + '-12' });
+  const projetos = D.centros.filter(function (c) { return c.tipo === 'projeto'; }).map(function (c) { return c.id; });
+  if (projetos.length) {
+    const somaProjetos = projetos.reduce(function (s, id) {
+      return s + DRE.calcular(dados, { de: ano + '-01', ate: ano + '-12', centros: [id] })
+        .linhas.find(function (l) { return l.id === 'geral'; }).total;
+    }, 0);
+    const totalGeral = geral.linhas.find(function (l) { return l.id === 'geral'; }).total;
+    verificar('v102 — o rateio não distribui mais despesa do que existe',
+      somaProjetos <= totalGeral + 0.5, Ut.num(somaProjetos) + ' de ' + Ut.num(totalGeral));
+  }
+
+  /* A tela existe e está ligada. */
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-relatorios.js', 'utf8');
+  const htm = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  verificar('v102 — o relatório está no seletor do sistema',
+    /value="gerencial"/.test(htm), '');
+  verificar('v102 — e o módulo de cálculo é carregado na página',
+    /js\/dre-gerencial\.js/.test(htm), '');
+  verificar('v102 — a tela oferece competência e caixa',
+    /value="competencia"/.test(ui) && /value="caixa"/.test(ui), '');
+  verificar('v102 — e filtro por cliente e por projeto',
+    /dg-cli/.test(ui) && /dg-pj/.test(ui), '');
+  verificar('v102 — cada linha abre a composição',
+    /data-dg-abre/.test(ui), '');
+})();
+
+// ── ERP teste2 v102: o cálculo é o MESMO nos dois lugares ──
+(function () {
+  const fs = require('fs');
+  /* O DRE roda no computador e no telefone. Se os dois calcularem o
+     lucro de formas diferentes, o número deixa de servir para
+     decidir qualquer coisa — e ninguém vai saber qual dos dois
+     acreditar. Este teste compara os arquivos byte a byte.
+
+     O do aplicativo vive noutro repositório; aqui guardo uma cópia
+     de referência, que o empacotamento mantém em dia. Se a cópia
+     não existir (alguém clonou só o ERP), o teste não falha: ele
+     só não tem o que comparar. */
+  const meu = __dirname + '/js/dre-gerencial.js';
+  const dele = __dirname + '/../orb-app/dre-gerencial.js';
+  verificar('v102 — o módulo de cálculo existe', fs.existsSync(meu), '');
+  if (fs.existsSync(dele)) {
+    verificar('v102 — e é idêntico ao do aplicativo de celular',
+      fs.readFileSync(meu, 'utf8') === fs.readFileSync(dele, 'utf8'),
+      'os dois arquivos divergiram — copie o do ERP por cima do outro');
+  }
+})();
+
+// ── ERP teste2 v102: o módulo formata sem depender do aparelho ──
+(function () {
+  const fs = require('fs');
+  const t = fs.readFileSync(__dirname + '/js/dre-gerencial.js', 'utf8');
+  /* `toLocaleString` olha para a configuração do telefone. Num
+     celular em inglês, 1.234,56 sairia 1,234.56 — e num número que
+     decide pagamento essa troca de ponto por vírgula não é detalhe
+     de gosto. O módulo formata à mão. */
+  /* Tira os comentários antes de procurar: o próprio comentário
+     que explica a regra cita o nome da função, e um teste que falha
+     por causa da explicação dele mesmo é teste ruim. */
+  const semComentario = t.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
+  verificar('v102 — o módulo não depende do idioma do aparelho',
+    semComentario.indexOf('toLocaleString') < 0, '');
+  verificar('v102 — e tem o formatador próprio', /function fmt\(/.test(t), '');
 })();

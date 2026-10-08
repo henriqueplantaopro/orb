@@ -37,6 +37,10 @@ ERP.relatorios = (function () {
   function render() {
     if (U.el('rel-tipo').value !== atual) U.el('rel-tipo').value = atual;
     U.el('rel-saida').innerHTML =
+      atual === 'gerencial' ? timbrado(ger.regime === 'caixa'
+          ? 'o que de fato entrou e saiu em cada mês'
+          : 'o resultado do período, com a despesa da casa rateada pelo faturamento') +
+        filtrosGerencial() + dreGerencial() :
       atual === 'dre'       ? timbrado('o que entrou e saiu por competência') + filtrosPeriodo() + dre() :
       atual === 'empresas'  ? timbrado('resultado por empresa do grupo') + filtrosPeriodo() + porEmpresa() :
       atual === 'centro'    ? timbrado('quanto cada centro consumiu no período') + filtrosPeriodo() + porCentro() :
@@ -54,6 +58,7 @@ ERP.relatorios = (function () {
       atual === 'comparativoProd' ? timbrado('quanto a produtividade pesa sobre o faturamento, mês a mês') +
         filtrosComparativo() + comparativo() :
                                timbrado('receita, custo e margem por projeto') + filtrosPeriodo() + projeto();
+    if (atual === 'gerencial') ligarGerencial();
     if (atual === 'setortipo') ligarFiltrosSetorTipo();
     if (atual === 'faturamento') ligarFiltrosFaturamento();
     if (atual === 'fatCompetencia') ligarFiltrosCompetencia();
@@ -89,6 +94,7 @@ ERP.relatorios = (function () {
   const NOMES = {
     aPagarReceber: 'Contas a pagar e a receber', pagasRecebidas: 'Contas pagas e recebidas',
     fluxoDiario: 'Fluxo de caixa diário',
+    gerencial: 'DRE gerencial',
     dre: 'DRE por competência', empresas: 'Resultado por empresa', centro: 'Total por centro de custo',
     projeto: 'Resultado por projeto', fluxo: 'Fluxo de caixa', setortipo: 'Custos por setor/tipo',
     faturamento: 'Faturamento por projeto',
@@ -913,6 +919,194 @@ ERP.relatorios = (function () {
         : '') +
       '<div class="ajuda">Receita pela empresa do projeto; despesa repartida pelo rateio, então conta ' +
         'dividida entre centros de empresas diferentes já se divide entre os CNPJs.</div>';
+  }
+
+  /* ── DRE GERENCIAL ──────────────────────────────────────
+     O DRE do jeito que a empresa lê, e não do jeito que o plano de
+     contas organiza: receita, imposto, custo direto, despesa do
+     projeto, despesa da casa rateada, lucro.
+
+     Três coisas que o DRE por competência ao lado não faz:
+
+     - RATEIA a despesa que não é de projeto nenhum (matriz, filial,
+       sem centro) pelo faturamento de cada projeto. Sem isso, o
+       projeto parece mais lucrativo do que é e a matriz parece um
+       buraco sem explicação.
+     - Mostra por CAIXA também — o que de fato entrou e saiu —, que
+       é outra pergunta: não "a operação deu lucro?", mas "sobrou
+       dinheiro?".
+     - Põe os INVESTIMENTOS abaixo da linha. É o que responde ao mês
+       que deu lucro e não deixou caixa.
+
+     A conta mora em `js/dre-gerencial.js`, compartilhado com o
+     aplicativo de celular, para os dois não divergirem. */
+  let ger = { de: U.mesAtual(), ate: U.mesAtual(), regime: 'competencia',
+              cliente: '', centros: [], abertas: {} };
+
+  function filtrosGerencial() {
+    const clientes = (D.clientes || []).slice()
+      .sort(function (a, b) { return String(a.nome).localeCompare(String(b.nome), 'pt-BR'); });
+    const projetos = D.centros.filter(function (c) {
+      return c.tipo === 'projeto' && (c.ativo !== false || ger.centros.indexOf(c.id) >= 0);
+    }).filter(function (c) {
+      return !ger.cliente || c.cliente === ger.cliente;
+    }).sort(function (a, b) {
+      return String(a.curto || a.nome).localeCompare(String(b.curto || b.nome), 'pt-BR');
+    });
+    return '<div class="filtros">' +
+      '<div class="f"><label for="dg-de">De</label>' +
+        '<input type="month" id="dg-de" value="' + ger.de + '"></div>' +
+      '<div class="f"><label for="dg-ate">Até</label>' +
+        '<input type="month" id="dg-ate" value="' + ger.ate + '"></div>' +
+      '<div class="f"><label for="dg-regime">Regime</label><select id="dg-regime">' +
+        '<option value="competencia"' + (ger.regime === 'competencia' ? ' selected' : '') +
+          '>Competência (DRE)</option>' +
+        '<option value="caixa"' + (ger.regime === 'caixa' ? ' selected' : '') +
+          '>Caixa (entrou e saiu)</option></select></div>' +
+      '<div class="f"><label for="dg-cli">Cliente</label><select id="dg-cli">' +
+        '<option value="">— todos —</option>' +
+        clientes.map(function (c) {
+          return '<option value="' + c.id + '"' + (ger.cliente === c.id ? ' selected' : '') + '>' +
+            U.esc(c.nome) + '</option>'; }).join('') + '</select></div>' +
+      '<div class="f"><label for="dg-pj">Projeto</label><select id="dg-pj">' +
+        '<option value="">— ' + (ger.cliente ? 'todos do cliente' : 'a empresa inteira') + ' —</option>' +
+        projetos.map(function (c) {
+          return '<option value="' + c.id + '"' + (ger.centros[0] === c.id ? ' selected' : '') + '>' +
+            U.esc(c.curto || c.nome) + '</option>'; }).join('') + '</select></div>' +
+      '<button class="btn-sm" id="dg-ano">Ano todo</button>' +
+      '<button class="btn-sm" id="dg-mes">Mês atual</button>' +
+      '</div>';
+  }
+
+  function ligarGerencial() {
+    const re = function () { render(); };
+    if (U.el('dg-de')) U.el('dg-de').addEventListener('change', function () { ger.de = this.value; re(); });
+    if (U.el('dg-ate')) U.el('dg-ate').addEventListener('change', function () { ger.ate = this.value; re(); });
+    if (U.el('dg-regime')) U.el('dg-regime').addEventListener('change', function () { ger.regime = this.value; re(); });
+    if (U.el('dg-cli')) U.el('dg-cli').addEventListener('change', function () {
+      ger.cliente = this.value; ger.centros = []; re();
+    });
+    if (U.el('dg-pj')) U.el('dg-pj').addEventListener('change', function () {
+      ger.centros = this.value ? [this.value] : []; re();
+    });
+    if (U.el('dg-ano')) U.el('dg-ano').addEventListener('click', function () {
+      const ano = U.mesAtual().slice(0, 4);
+      ger.de = ano + '-01'; ger.ate = ano + '-12'; re();
+    });
+    if (U.el('dg-mes')) U.el('dg-mes').addEventListener('click', function () {
+      ger.de = U.mesAtual(); ger.ate = U.mesAtual(); re();
+    });
+    /* Abrir e fechar a composição de cada linha, como na planilha. */
+    document.querySelectorAll('[data-dg-abre]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const k = this.dataset.dgAbre;
+        ger.abertas[k] = !ger.abertas[k];
+        render();
+      });
+    });
+  }
+
+  function dreGerencial() {
+    if (!ERP.dreGerencial) return vazio('Módulo de cálculo não carregado.');
+    const r = ERP.dreGerencial.calcular({
+      plano: D.plano, centros: D.centros, clientes: D.clientes,
+      parcelas: S.todasParcelas(), pagamentos: S.todosPagamentos(),
+      receber: S.contasReceber(), ativos: S.st.ativos,
+      depreciacaoPorProjeto: S.depreciacaoPorProjeto
+    }, { de: ger.de, ate: ger.ate, regime: ger.regime,
+         cliente: ger.cliente, centros: ger.centros });
+
+    if (r.erro) return vazio(r.erro);
+    if (!r.meses.length) return vazio('Escolha um período.');
+
+    const cols = r.meses;
+    const cel = (v, cls) => '<td class="num' + (cls ? ' ' + cls : '') + '">' +
+      (Math.abs(v) > 0.004 ? U.num(v) : '') + '</td>';
+
+    let html = '<table class="rel"><thead><tr><th style="min-width:230px">Descrição</th>' +
+      cols.map(function (m) { return '<th class="num">' + U.fComp(m) + '</th>'; }).join('') +
+      '<th class="num">Total</th></tr></thead><tbody>';
+
+    r.linhas.forEach(function (l) {
+      const temDetalhe = l.detalhe && cols.some(function (m) { return (l.detalhe[m] || []).length; });
+      const aberta = ger.abertas[l.id];
+      html += '<tr class="' + (l.tipo === 'total' ? 'total' : l.tipo === 'receita' ? 'g' : '') + '">' +
+        '<td>' + (temDetalhe
+          ? '<button class="btn-ghost" data-dg-abre="' + l.id + '" style="padding:0;margin-right:6px">' +
+            (aberta ? '▾' : '▸') + '</button>' : '<span style="margin-right:18px"></span>') +
+        U.esc(l.rotulo) + '</td>' +
+        cols.map(function (m) { return cel(l.valores[m], l.tipo === 'total' ? 'total' : ''); }).join('') +
+        cel(l.total, l.tipo === 'total' ? 'total' : '') + '</tr>';
+
+      if (!aberta || !temDetalhe) return;
+      /* A composição, agrupada por natureza + projeto — uma linha por
+         lançamento numa DRE de 46 milhões seria ilegível. */
+      const agrup = {};
+      cols.forEach(function (m) {
+        (l.detalhe[m] || []).forEach(function (i) {
+          const k = (i.conta_nome || '—') + ' | ' + (i.centro_nome || '—');
+          const a = agrup[k] = agrup[k] || { rot: k, por: {}, total: 0 };
+          a.por[m] = (a.por[m] || 0) + i.valor;
+          a.total += i.valor;
+        });
+      });
+      Object.keys(agrup).sort(function (a, b) { return agrup[b].total - agrup[a].total; })
+        .forEach(function (k) {
+          const a = agrup[k];
+          const partes = a.rot.split(' | ');
+          html += '<tr><td style="padding-left:30px" class="sub">' +
+            U.esc(partes[0]) + ' <span class="sub">· ' + U.esc(partes[1]) + '</span></td>' +
+            cols.map(function (m) { return cel(a.por[m] || 0); }).join('') +
+            cel(Math.round(a.total * 100) / 100) + '</tr>';
+        });
+    });
+
+    /* Margem e investimentos, abaixo da linha. */
+    if (r.margem !== null) {
+      html += '<tr><td class="sub">Margem sobre a receita</td>' +
+        cols.map(function () { return '<td></td>'; }).join('') +
+        '<td class="num sub">' + U.num(r.margem) + '%</td></tr>';
+    }
+    const inv = r.investimentos;
+    const invAberto = ger.abertas.investimento;
+    const temInv = cols.some(function (m) { return (inv.detalhe[m] || []).length; });
+    html += '<tr><td colspan="' + (cols.length + 2) + '" style="padding-top:14px"></td></tr>';
+    html += '<tr class="g"><td>' + (temInv
+      ? '<button class="btn-ghost" data-dg-abre="investimento" style="padding:0;margin-right:6px">' +
+        (invAberto ? '▾' : '▸') + '</button>' : '<span style="margin-right:18px"></span>') +
+      U.esc(inv.rotulo) + '</td>' +
+      cols.map(function (m) { return cel(inv.valores[m], 'g'); }).join('') + cel(inv.total, 'g') + '</tr>';
+    if (invAberto && temInv) {
+      cols.forEach(function (m) {
+        (inv.detalhe[m] || []).forEach(function (i) {
+          html += '<tr><td style="padding-left:30px" class="sub">' + U.esc(i.rotulo) +
+            ' <span class="sub">· ' + U.esc(i.centro_nome) + '</span></td>' +
+            cols.map(function (c2) { return cel(c2 === m ? i.valor : 0); }).join('') +
+            cel(i.valor) + '</tr>';
+        });
+      });
+    }
+    html += '</tbody></table>';
+
+    if (inv.observacao) {
+      html += '<div class="ajuda" style="margin-top:10px">' + U.esc(inv.observacao) + '</div>';
+    }
+    /* Quando há filtro, a régua do rateio precisa estar à vista:
+       senão o número da despesa geral é um valor que apareceu. */
+    if (r.alvo) {
+      const linhasR = cols.map(function (m) {
+        const x = r.rateio[m] || {};
+        return U.fComp(m) + ': ' + U.num(x.pct || 0) + '%';
+      }).join(' · ');
+      html += '<div class="ajuda">Despesa geral rateada pelo faturamento do período: ' +
+        U.esc(linhasR) + '. O que não é de projeto nenhum (matriz, filial, sem centro) ' +
+        'entra aqui nessa proporção.</div>';
+    }
+    if (ger.regime === 'caixa') {
+      html += '<div class="ajuda">No regime de caixa a depreciação não entra — ela não é desembolso. ' +
+        'O dinheiro do equipamento saiu na compra, e aparece em investimentos.</div>';
+    }
+    return html;
   }
 
   function dre() {
