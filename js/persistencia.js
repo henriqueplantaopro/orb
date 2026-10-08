@@ -433,6 +433,32 @@ ERP.persistencia = (function () {
      derruba a gravação inteira com erro de chave estrangeira. */
   const APONTA_PARA_OUTRA = /^(credor|conta|centro|cliente|empresa|empresa_tomadora|banco|armazem|pai|projeto|contrato|lote_origem|fornecedor|centro_padrao|titulo_id|extrato_id|usuario_id|parcela_id|produto|ativo)$/;
 
+  /* ONDE CADA CHAVE ESTRANGEIRA APONTA. Serve para conferir, antes
+     de enviar, se o registro referenciado existe — porque o banco
+     recusa o lote inteiro quando não existe, e a mensagem fala de
+     uma tabela que a pessoa nem tocou.
+
+     Aconteceu com `produtos_conta_fkey`: o material apontava para
+     uma conta do plano que estava no sistema e não no banco. Em
+     vez de insistir e derrubar tudo, o campo vai NULO e o resto
+     grava — o lançamento é o que a pessoa fez; a referência que
+     falta é problema de cadastro, e cabe a outra conversa. */
+  const ONDE_APONTA = {
+    conta: function (v) { return (ERP.dados.plano || []).some(function (x) { return x.cod === v; }); },
+    centro: function (v) { return (ERP.dados.centros || []).some(function (x) { return x.id === v; }); },
+    credor: function (v) { return (ERP.dados.credores || []).some(function (x) { return x.id === v; }); },
+    cliente: function (v) { return (ERP.dados.clientes || []).some(function (x) { return x.id === v; }); },
+    armazem: function (v) { return (ERP.dados.armazens || []).some(function (x) { return x.id === v; }); },
+    banco: function (v) { return (ERP.dados.bancos || []).some(function (x) { return x.id === v; }); },
+    empresa: function (v) { return (ERP.dados.empresas || []).some(function (x) { return x.id === v; }); },
+    produto: function (v) { return (ERP.dados.produtos || []).some(function (x) { return x.id === v; }); }
+  };
+
+  /* O que foi descartado nesta gravação, para avisar depois: some
+     calado é pior que não gravar. */
+  let refsDescartadas = [];
+  function referenciasDescartadas() { return refsDescartadas.slice(); }
+
   /* Separa o registro entre colunas conhecidas e `extra`. */
   function paraBanco(item, colunas) {
     const linha = {};
@@ -448,6 +474,12 @@ ERP.persistencia = (function () {
            "produtos_conta_fkey". Vazio ali significa "sem conta
            definida", não "a conta cujo código é nada". */
         if (v === '' && APONTA_PARA_OUTRA.test(k)) v = null;
+        /* E se o registro apontado NÃO EXISTE, melhor gravar sem a
+           referência do que perder o lançamento inteiro. */
+        if (v !== null && v !== undefined && ONDE_APONTA[k] && !ONDE_APONTA[k](v)) {
+          refsDescartadas.push(k + ' = ' + v);
+          v = null;
+        }
         linha[k] = v;
       } else if (item[k] !== undefined) {
         extra[k] = item[k];
@@ -750,6 +782,7 @@ ERP.persistencia = (function () {
     if (!ligado || salvando) { pendente = !!ligado; return; }
     const c = cliente();
     if (!c) return;
+    refsDescartadas = [];
     const mudou = diferencas();
     if (!mudou.length) return;
 
@@ -981,6 +1014,18 @@ ERP.persistencia = (function () {
 
     tirarFoto();
     limparPendencia();
+
+    /* O que foi gravado SEM a referência precisa ser dito. Um
+       campo que some calado é pior que um erro: o lançamento
+       parece perfeito e o relatório sai errado meses depois. */
+    if (refsDescartadas.length && ERP.app && ERP.app.aviso) {
+      const unicas = refsDescartadas.filter(function (x, i, a2) { return a2.indexOf(x) === i; });
+      ERP.app.aviso('Gravado, mas ' + unicas.length + ' referência(s) ficaram em branco porque ' +
+        'o cadastro apontado não existe no banco: ' + unicas.slice(0, 3).join(', ') +
+        (unicas.length > 3 ? ' e mais ' + (unicas.length - 3) : '') +
+        '. Confira o cadastro.', 'erro');
+      refsDescartadas = [];
+    }
     if (pendente) { pendente = false; agendar(); }
   }
 
@@ -1111,6 +1156,7 @@ ERP.persistencia = (function () {
            criarLogin: criarLogin,
            listarChamados: listarChamados, responderChamado: responderChamado,
            falhasGravacao: falhasGravacao, gravarMatriz: gravarMatriz,
+           referenciasDescartadas: referenciasDescartadas,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
            degradadas: () => degradadas.slice() };

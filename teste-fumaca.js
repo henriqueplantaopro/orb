@@ -7564,3 +7564,27 @@ function liberarParaFaturar(centro, competencia) {
     soltos === 0, soltos + ' ponto(s) ainda soltos');
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v96: referência inexistente não derruba o lote ──
+(function () {
+  const fs = require('fs');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* "produtos_conta_fkey" voltou mesmo depois de eu tratar o campo
+     vazio: o material apontava para uma conta do plano que existe
+     no sistema e NÃO no banco. O banco recusa o lote inteiro, e o
+     erro fala de produtos quando falta uma linha do plano.
+
+     Insistir numa referência que o sistema sabe não existir é
+     perder o lançamento por causa de um cadastro. Melhor gravar
+     sem a referência — e DIZER que gravou assim, porque campo que
+     some calado é pior que erro: o lançamento parece perfeito e o
+     relatório sai errado meses depois. */
+  verificar('v96 — a gravação confere se a referência existe antes de enviar',
+    /ONDE_APONTA/.test(pers), '');
+  verificar('v96 — e avisa o que foi gravado sem a referência',
+    /refsDescartadas/.test(pers) &&
+    /ficaram em branco porque/.test(pers), '');
+  verificar('v96 — a lista é zerada a cada gravação',
+    /refsDescartadas = \[\];\n    const mudou = diferencas\(\);/.test(pers), '');
+})();
