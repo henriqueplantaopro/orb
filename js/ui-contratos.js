@@ -117,6 +117,33 @@ ERP.contratos = (function () {
      os alertas dele valem tanto quanto a vigência que o gerou. */
   /* As linhas de projeto abrem para baixo em vez de virar coluna:
      com quatro linhas por contrato, a tabela ficava larga demais. */
+  /* O que o contrato já mandou para o contas a pagar. Fica no
+     detalhe, que abre para baixo — a coluna de ações já tem dois
+     botões e um terceiro obrigaria a rolar a tabela de lado. */
+  function blocoPagamentos(c) {
+    if (c.parte !== 'fornecedor') return '';
+    const cron = S.cronogramaContrato(c);
+    const gerados = S.titulosDoContrato(c.id);
+    const previstas = S.previsoesDoContrato(c.id).length;
+    const total = cron.reduce(function (s, l) { return s + l.valor; }, 0);
+    const podeGerar = S.podeMover('contratos') || S.pode('lancar') || S.pode('admin');
+    return '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e6e9ee">' +
+      '<b>Contas a pagar</b> · ' +
+      (c.pagamentos_variaveis
+        ? 'cronograma digitado — ' + cron.length + ' parcela(s), ' + U.brl(total)
+        : (cron.length
+            ? 'previsão mensal — ' + cron.length + ' parcela(s) até ' + U.fData(c.vigencia_fim) + ', ' + U.brl(total)
+            : 'sem valor mensal ou sem vigência')) +
+      (gerados.length
+        ? '<div class="sub">Já lançado: ' + gerados.length + ' título(s), ' + previstas + ' ainda como previsão.</div>'
+        : '<div class="sub">Ainda não lançado no financeiro.</div>') +
+      (podeGerar && !c.encerrado && cron.length
+        ? '<div class="ap-acoes"><button class="btn-sm btn-aprovar" data-ct-ger="' + c.id + '">' +
+          (gerados.length ? 'Refazer previsões' : 'Gerar contas a pagar') + '</button></div>'
+        : '') +
+      '</div>';
+  }
+
   function detalhe(c) {
     const itensC = c.itens || [];
     return '<tr><td></td><td colspan="9" style="background:#fafbfc;padding:10px 8px">' +
@@ -146,6 +173,7 @@ ERP.contratos = (function () {
         : '') +
       (c.renovacao ? '<div class="ajuda">Renovação: ' + U.esc(c.renovacao) +
         (c.processo ? ' · processo ' + U.esc(c.processo) : '') + '</div>' : '') +
+      blocoPagamentos(c) +
       '</td></tr>';
   }
 
@@ -177,6 +205,10 @@ ERP.contratos = (function () {
 
   /* ── cadastro ───────────────────────────────────────────*/
   let itens = [];
+  /* Cronograma de pagamentos variáveis. Vive ao lado de `itens`
+     porque é a mesma história: lista editável que a tela monta e
+     o store valida. */
+  let parcelas = [];
 
   /* Cliente ou projeto que ainda não existe se cadastra daqui, sem
      perder o que já foi digitado: o formulário é guardado, o cadastro
@@ -201,6 +233,8 @@ ERP.contratos = (function () {
       aviso_rescisao_dias: U.val('ct-aviso'), garantia: U.val('ct-garantia'),
       contato_cobranca: U.val('ct-contato'),
       observacao: U.val('ct-obs'), itens: itens.slice(),
+      pagamentos_variaveis: U.el('ct-var') ? U.el('ct-var').checked : false,
+      parcelas_previstas: parcelas.slice(),
       encerrado: U.el('ct-enc') ? U.el('ct-enc').checked : false
     };
   }
@@ -235,6 +269,9 @@ ERP.contratos = (function () {
     itens = (c && c.itens && c.itens.length)
       ? c.itens.map(function (i) { return { centro: i.centro, valor: i.valor }; })
       : [{ centro: '', valor: 0 }];
+    parcelas = (c && c.parcelas_previstas && c.parcelas_previstas.length)
+      ? c.parcelas_previstas.map(function (p) { return { venc: p.venc, valor: p.valor, obs: p.obs || '' }; })
+      : [];
 
     ERP.app.modal({
       titulo: (id ? 'Contrato ' + (c ? c.numero : '') : 'Novo contrato') +
@@ -329,13 +366,29 @@ ERP.contratos = (function () {
           '<button class="btn-ghost" id="ct-novo-pj" type="button" style="float:right;padding:0">' +
           '+ cadastrar projeto</button></h2>' +
         '<div id="ct-itens"></div>' +
+        /* O cronograma só existe no contrato que a empresa PAGA. No
+           contrato de cliente o dinheiro entra pelo faturamento, que
+           tem o seu próprio caminho. */
+        (fornec
+          ? '<h2 style="font-size:12px;margin:14px 0 6px">Programação de pagamento</h2>' +
+            '<label style="display:flex;gap:7px;align-items:flex-start;font-weight:400">' +
+              '<input type="checkbox" id="ct-var" style="width:auto;margin-top:3px"' +
+              (c && c.pagamentos_variaveis ? ' checked' : '') + '> ' +
+              '<span>Pagamentos variáveis — datas e valores digitados um a um<br>' +
+              '<span class="sub">Sem marcar, o sistema prevê uma parcela por mês dentro da vigência, ' +
+              'no dia de vencimento combinado, pelo valor mensal das linhas de projeto.</span></span></label>' +
+            '<div id="ct-cron"></div>'
+          : '') +
         '<label>Observação</label><textarea id="ct-obs">' + U.esc(c ? (c.observacao || '') : '') + '</textarea>' +
         (c ? '<label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-weight:400">' +
              '<input type="checkbox" id="ct-enc" style="width:auto"' + (c.encerrado ? ' checked' : '') + '> ' +
              'contrato encerrado</label>' : ''),
       acoes: [{ txt: idEmEdicao ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         lerItens();
+        lerParcelas();
         const r = S.salvarContrato({
+          pagamentos_variaveis: U.el('ct-var') ? U.el('ct-var').checked : false,
+          parcelas_previstas: parcelas,
           id: idEmEdicao, numero: U.val('ct-num'), tipo: U.val('ct-tipo'),
           processo: U.val('ct-proc'),
           /* parte vem da aba (contrato novo) ou do próprio contrato */
@@ -362,9 +415,25 @@ ERP.contratos = (function () {
         ERP.app.fecharModal();
         ERP.app.aviso('Contrato salvo: ' + U.brl(r.contrato.valor_mensal) + '/mês.', 'ok');
         render();
+        /* O contrato dizia quanto e até quando, e nada disso chegava
+           ao financeiro. Agora pergunta na hora — e não gera sozinho,
+           porque gerar doze parcelas no contas a pagar sem avisar é
+           pior que não gerar. */
+        if (r.contrato.parte === 'fornecedor' && !r.contrato.encerrado &&
+            !S.titulosDoContrato(r.contrato.id).length) {
+          oferecerGeracao(r.contrato.id);
+        }
       } }],
       aoAbrir: function () {
         renderItens();
+        renderCronograma();
+        if (U.el('ct-var')) {
+          U.el('ct-var').addEventListener('change', function () {
+            lerParcelas();
+            if (this.checked && !parcelas.length) parcelas = [{ venc: '', valor: 0, obs: '' }];
+            renderCronograma();
+          });
+        }
         if (rascunho) {
           [['ct-dia-venc', 'dia_vencimento'], ['ct-prazo', 'prazo_dias'], ['ct-dia-nf', 'dia_entrega_nf'],
            ['ct-multa', 'multa_atraso_pct'], ['ct-juros', 'juros_mes_pct'], ['ct-corr', 'correcao_atraso'],
@@ -525,6 +594,128 @@ ERP.contratos = (function () {
     });
   }
 
+  /* ── cronograma de pagamentos variáveis ─────────────────
+     Uma linha por vencimento, com valor próprio. É o contrato que
+     paga a cada 20 dias com as primeiras parcelas maiores — e para
+     esse não há regra que o sistema deduza: quem lê o contrato
+     digita. */
+  function renderCronograma() {
+    const box = U.el('ct-cron');
+    if (!box) return;
+    const ligado = U.el('ct-var') && U.el('ct-var').checked;
+    if (!ligado) { box.innerHTML = ''; return; }
+    const total = parcelas.reduce(function (s, p) { return s + (Number(p.valor) || 0); }, 0);
+    box.innerHTML =
+      '<table style="margin:6px 0"><thead><tr>' +
+      '<th style="width:140px">Vencimento</th><th class="num" style="width:140px">Valor</th>' +
+      '<th>Observação</th><th style="width:34px"></th></tr></thead><tbody>' +
+      parcelas.map(function (p, i) {
+        return '<tr>' +
+          '<td><input type="date" data-p="venc" data-i="' + i + '" value="' + (p.venc || '') + '"></td>' +
+          '<td><input class="num" inputmode="decimal" data-p="valor" data-i="' + i + '" value="' +
+            U.num(p.valor || 0) + '"></td>' +
+          '<td><input data-p="obs" data-i="' + i + '" placeholder="entrada, medição 1…" value="' +
+            U.esc(p.obs || '') + '"></td>' +
+          '<td><button type="button" class="btn-sm btn-cancelar" data-p-rem="' + i + '">×</button></td></tr>';
+      }).join('') +
+      '<tr class="total"><td>' + parcelas.length + ' parcela(s)</td>' +
+      '<td class="num">' + U.brl(total) + '</td><td colspan="2"></td></tr>' +
+      '</tbody></table>' +
+      '<div class="ap-acoes"><button class="btn-sm" type="button" id="ct-add-parc">+ parcela</button>' +
+      '<span class="sub">As linhas de projeto acima definem o RATEIO por projeto; ' +
+      'o cronograma define as datas e os valores.</span></div>';
+
+    box.querySelectorAll('[data-p-rem]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        lerParcelas();
+        parcelas.splice(+this.dataset.pRem, 1);
+        renderCronograma();
+      });
+    });
+    /* O total só faz sentido se acompanhar a digitação. */
+    box.querySelectorAll('[data-p="valor"]').forEach(function (inp) {
+      inp.addEventListener('change', function () { lerParcelas(); renderCronograma(); });
+    });
+    U.el('ct-add-parc').addEventListener('click', function () {
+      lerParcelas();
+      /* A próxima linha nasce no mesmo intervalo das duas últimas —
+         contrato a cada 20 dias não deveria custar 20 digitações de
+         data. Com uma linha só, soma 30 dias. */
+      const n = parcelas.length;
+      let prox = '';
+      if (n >= 2 && parcelas[n - 1].venc && parcelas[n - 2].venc) {
+        prox = U.addDias(parcelas[n - 1].venc, U.diasEntre(parcelas[n - 2].venc, parcelas[n - 1].venc));
+      } else if (n === 1 && parcelas[0].venc) {
+        prox = U.addMeses(parcelas[0].venc, 1);
+      }
+      parcelas.push({ venc: prox, valor: n ? parcelas[n - 1].valor : 0, obs: '' });
+      renderCronograma();
+    });
+  }
+
+  function lerParcelas() {
+    const box = U.el('ct-cron');
+    if (!box) return;
+    box.querySelectorAll('[data-p]').forEach(function (inp) {
+      const i = +inp.dataset.i;
+      if (!parcelas[i]) return;
+      if (inp.dataset.p === 'valor') parcelas[i].valor = U.parseValor(inp.value);
+      else parcelas[i][inp.dataset.p] = inp.value;
+    });
+  }
+
+  /* ── gerar o contas a pagar do contrato ─────────────────*/
+  function oferecerGeracao(id, forcar) {
+    const c = S.contrato(id);
+    if (!c) return;
+    const linhas = S.cronogramaContrato(c);
+    if (!linhas.length) {
+      if (forcar) {
+        ERP.app.aviso(c.pagamentos_variaveis
+          ? 'O cronograma está vazio — edite o contrato e informe as parcelas.'
+          : 'Sem valor mensal ou sem vigência: não há o que prever.', 'erro');
+      }
+      return;
+    }
+    const jaTem = S.titulosDoContrato(id).length;
+    const previstas = S.previsoesDoContrato(id).length;
+    const total = linhas.reduce(function (s, l) { return s + l.valor; }, 0);
+    ERP.app.modal({
+      titulo: 'Contas a pagar do contrato ' + U.esc(c.numero),
+      fecharTxt: jaTem ? 'Fechar' : 'Agora não',
+      corpo:
+        (jaTem
+          ? '<div class="aviso" style="margin:0 0 10px">Este contrato já gerou lançamentos — ' +
+            previstas + ' ainda como previsão. Gerar de novo <b>cancela as previsões</b> e ' +
+            'refaz o cronograma. O que já foi efetivado ou pago não é tocado.</div>'
+          : '') +
+        '<div class="resumo-linha"><span>Fornecedor</span><span class="v">' +
+          U.esc((D.credor(c.fornecedor) || {}).nome || '—') + '</span></div>' +
+        '<div class="resumo-linha"><span>Programação</span><span class="v">' +
+          (c.pagamentos_variaveis ? 'cronograma digitado' : 'mensal pela vigência') + '</span></div>' +
+        '<div class="resumo-linha"><span>Total</span><span class="v">' +
+          linhas.length + ' parcela(s) · ' + U.brl(total) + '</span></div>' +
+        '<table style="margin-top:10px"><thead><tr><th>#</th><th>Vencimento</th>' +
+        '<th>Competência</th><th class="num">Valor</th></tr></thead><tbody>' +
+        linhas.slice(0, 24).map(function (l) {
+          return '<tr><td class="sub">' + l.num + '</td><td>' + U.fData(l.venc) + '</td>' +
+            '<td class="sub">' + U.fComp(l.comp) + '</td>' +
+            '<td class="num">' + U.brl(l.valor) + '</td></tr>';
+        }).join('') +
+        (linhas.length > 24 ? '<tr><td colspan="4" class="sub">… e mais ' + (linhas.length - 24) + '</td></tr>' : '') +
+        '</tbody></table>' +
+        '<div class="ajuda">Entram como <b>previsão</b>: aparecem no fluxo de caixa e no orçamento, ' +
+        'mas não podem ser pagas antes de alguém efetivar com a nota do período na mão.</div>',
+      acoes: [{ txt: jaTem ? 'Refazer previsões' : 'Gerar previsões', cls: 'btn-aprovar', fn: function () {
+        const r = S.gerarTitulosContrato(id, { refazer: !!jaTem });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        ERP.app.aviso(r.parcelas + ' previsão(ões) no contas a pagar · ' + U.brl(r.total) + '.', 'ok');
+        render();
+      } }]
+    });
+  }
+
   function lerItens() {
     const box = U.el('ct-itens');
     if (!box) return;
@@ -642,6 +833,9 @@ ERP.contratos = (function () {
     });
     box.querySelectorAll('[data-ct-ad]').forEach(function (b) {
       b.addEventListener('click', function (e) { e.stopPropagation(); aditivo(this.dataset.ctAd); });
+    });
+    box.querySelectorAll('[data-ct-ger]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); oferecerGeracao(this.dataset.ctGer, true); });
     });
   }
 

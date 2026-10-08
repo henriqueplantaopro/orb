@@ -83,7 +83,11 @@ ERP.persistencia = (function () {
     pagamentos: { tabela: 'pagamentos', colunas: ['id', 'parcela_id', 'data', 'valor', 'juros', 'multa', 'desconto', 'banco', 'empresa', 'cruzamento', 'doc', 'obs', 'forma', 'forma_codigo', 'situacao', 'estornado', 'usuario', 'usuario_id', 'criado_em'] },
     receber: { tabela: 'receber', colunas: ['id', 'numero', 'serie', 'nf_chave', 'codigo_verificacao', 'emissao', 'competencia', 'vencimento', 'centro', 'rateio_centros', 'grupo_faturamento', 'empresa', 'cliente', 'cliente_doc', 'cliente_nome', 'discriminacao', 'origem', 'status', 'valor_bruto', 'valor_retido', 'valor_liquido', 'glosa_prevista', 'glosa_real', 'valor_recebido', 'recebido_em', 'baixas', 'retencoes', 'substitui', 'abatimentos', 'conferir', 'observacao', 'criado_em'] },
     previsoes: { tabela: 'previsoes', colunas: ['id', 'centro', 'competencia', 'faturamento', 'produtividade', 'status', 'observacao', 'confirmado_por', 'confirmado_em', 'autorizado_em', 'autorizado_por', 'autorizado_por_id', 'autorizacao_protocolo', 'autorizacao_obs', 'autorizado_valor', 'autorizacoes_anteriores', 'liberado_em', 'liberado_por'] },
-    contratos: { tabela: 'contratos', colunas: ['id', 'parte', 'numero', 'tipo', 'cliente', 'objeto', 'processo', 'vigencia_ini', 'vigencia_fim', 'renovacao', 'indice', 'reajuste_mes', 'itens', 'aditivos', 'valor_mensal', 'encerrado', 'atualizado_em'] },
+    /* O contrato tinha DEZENOVE campos vivendo no `extra` — o
+       fornecedor e a natureza da despesa entre eles, que são o que
+       o contas a pagar precisa para nascer. Viraram colunas na
+       etapa 41. */
+    contratos: { tabela: 'contratos', colunas: ['id', 'parte', 'numero', 'tipo', 'cliente', 'fornecedor', 'conta', 'objeto', 'processo', 'vigencia_ini', 'vigencia_fim', 'renovacao', 'indice', 'reajuste_mes', 'itens', 'aditivos', 'valor_mensal', 'encerrado', 'atualizado_em', 'dia_vencimento', 'prazo_dias', 'dia_entrega_nf', 'multa_atraso_pct', 'juros_mes_pct', 'correcao_atraso', 'regra_reajuste', 'regra_renovacao', 'aviso_rescisao_dias', 'garantia', 'contato_cobranca', 'observacao', 'exemplo', 'pagamentos_variaveis', 'parcelas_previstas', 'total_previsto', 'previsoes_geradas_em'] },
     retencoesRegistradas: { tabela: 'retencoes_registradas', colunas: ['id', 'titulo_id', 'tributo', 'valor', 'competencia', 'conta', 'municipio', 'guia_id', 'cancelada'] },
     guiasRetencao: { tabela: 'guias_retencao', colunas: ['id', 'tributo', 'competencia', 'municipio', 'conta', 'por_conta', 'titulo_id', 'total', 'criado_em'] },
     transferenciasBanco: { tabela: 'transferencias_banco', colunas: ['id', 'origem', 'destino', 'data', 'valor', 'obs', 'mutuo', 'cancelada', 'motivo_cancelamento', 'criado_em'] },
@@ -475,7 +479,7 @@ ERP.persistencia = (function () {
     guias_retencao:            { titulo_id: 'nao_confere' },
     receber:                   { centro: 'centros', empresa: 'empresas', cliente: 'clientes' },
     previsoes:                 { centro: 'centros' },
-    contratos:                 { cliente: 'clientes' },
+    contratos:                 { cliente: 'clientes', fornecedor: 'credores', conta: 'plano' },
     extratos:                  { banco: 'bancos', usuario_id: 'nao_confere' },
     linhas_extrato:            { extrato_id: 'nao_confere', banco: 'bancos' },
     saldos_informados:         { banco: 'bancos', usuario_id: 'nao_confere' },
@@ -1282,8 +1286,42 @@ ERP.persistencia = (function () {
     return r;
   }
 
+  /* ── o que ainda NÃO está no banco ──────────────────────
+     A recarga automática troca as listas de cadastro pelo que está
+     no banco. Se um cadastro novo ainda não foi gravado, essa troca
+     o APAGA: a compradora cadastra um material, o aviso de tempo
+     real chega um segundo depois, a lista é substituída, e o
+     material some antes de ser gravado — deixando a requisição
+     apontando para um produto que não existe mais ("material fora
+     do cadastro · pr8802").
+
+     `aindaNaoGravados` diz o que precisa sobreviver à troca;
+     `refotografar` acerta a sombra depois dela, para o que veio do
+     banco não ser reenviado como novidade. */
+  function aindaNaoGravados(nome) {
+    const st2 = ERP.store.st;
+    const conhecidos = sombra[nome] || {};
+    if (!Array.isArray(st2[nome])) return [];
+    return st2[nome].filter(function (it) {
+      return it && it.id && conhecidos[it.id] === undefined;
+    });
+  }
+
+  function refotografar(nome) {
+    if (nome) tirarFotoDe(nome); else tirarFoto();
+  }
+
+  /* Tira UM registro da foto, para ele voltar a contar como novo.
+     Serve ao cadastro que a recarga segurou: ele está na memória e
+     não no banco, e precisa ser gravado no próximo ciclo. */
+  function esquecerDaFoto(nome, id) {
+    if (sombra[nome]) delete sombra[nome][id];
+  }
+
   return { iniciar: iniciar, sincronizar: sincronizar, carregar: carregar,
            limparMovimentoLocal: limparMovimentoLocal,
+           aindaNaoGravados: aindaNaoGravados, refotografar: refotografar,
+           esquecerDaFoto: esquecerDaFoto, gravando: () => salvando,
            salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,

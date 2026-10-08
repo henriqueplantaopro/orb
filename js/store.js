@@ -3343,8 +3343,19 @@ ERP.store = (function () {
        TELA, que prefixava valor = saldo e não descontava nada quando o
        usuário digitava desconto; agora ela ajusta sozinha. */
     if (valor + desconto > saldoDe(p) + 0.004) {
+      /* A mensagem dizia o que estava errado e não o que fazer. O
+         caso mais comum é a conta que chega MAIOR que o previsto:
+         previsão de luz de R$ 2.000, conta de R$ 2.300. A baixa não
+         é o lugar de corrigir isso — ela registra o que saiu do
+         banco contra um título que já existe. Quem muda o valor do
+         título é "Efetivar" (na previsão) ou "Editar" (no título
+         já efetivado). */
+      const comoCorrigir = p.status === 'previsto'
+        ? ' Esta é uma PREVISÃO: use "Efetivar" para informar o valor real da conta, e aí pague.'
+        : ' Se a conta veio maior que o lançado, use "Editar" para corrigir o valor do título antes de pagar.';
       return { erro: 'Principal (' + U.brl(valor) + ') mais desconto (' + U.brl(desconto) +
-        ') passa do saldo da parcela (' + U.brl(saldoDe(p)) + '). Com desconto, o valor pago é o saldo menos o desconto.' };
+        ') passa do saldo da parcela (' + U.brl(saldoDe(p)) + '). Com desconto, o valor pago é o saldo menos o desconto.' +
+        comoCorrigir };
     }
     const situacao = situacaoPedida;
 
@@ -12414,6 +12425,52 @@ ERP.store = (function () {
     const itens = (d.itens || []).filter(function (i) { return i.centro; });
     if (!itens.length) return { erro: 'Inclua ao menos uma linha de projeto.' };
 
+    /* CRONOGRAMA DE PAGAMENTOS VARIÁVEIS.
+
+       Nem todo contrato paga o mesmo valor todo mês. Há fornecimento
+       com pagamento a cada 20 dias e parcelas decrescentes — e para
+       esses não existe fórmula: o cronograma está escrito no
+       contrato e quem digita é quem leu. */
+    let cronograma = null;
+    if (d.pagamentos_variaveis) {
+      const bruto = (d.parcelas_previstas || []).filter(function (p) {
+        return p && (p.venc || Number(p.valor) > 0);
+      });
+      if (!bruto.length) {
+        return { erro: 'Marcou pagamentos variáveis: informe ao menos uma parcela com vencimento e valor.' };
+      }
+      const semData = bruto.find(function (p) { return !p.venc; });
+      if (semData) return { erro: 'Há parcela sem data de vencimento no cronograma.' };
+      const semValor = bruto.find(function (p) { return !(Number(p.valor) > 0); });
+      if (semValor) {
+        return { erro: 'A parcela de ' + U.fData(semValor.venc) + ' está sem valor (ou com valor zero).' };
+      }
+      const naoFinito = bruto.find(function (p) { return !isFinite(Number(p.valor)); });
+      if (naoFinito) return { erro: 'Valor inválido na parcela de ' + U.fData(naoFinito.venc) + '.' };
+      /* Duas parcelas na mesma data costumam ser engano de digitação
+         — e viram pagamento em dobro no fluxo de caixa. */
+      const datas = bruto.map(function (p) { return p.venc; });
+      const repetida = datas.find(function (v, i) { return datas.indexOf(v) !== i; });
+      if (repetida) {
+        return { erro: 'Há duas parcelas vencendo em ' + U.fData(repetida) +
+          '. Se for proposital, junte as duas numa linha só.' };
+      }
+      /* Fora da vigência não é erro de digitação necessariamente —
+         a última parcela costuma vencer depois do fim —, mas antes
+         do início é. */
+      const antes = bruto.find(function (p) { return p.venc < d.vigencia_ini; });
+      if (antes) {
+        return { erro: 'A parcela de ' + U.fData(antes.venc) + ' vence antes do início da vigência (' +
+          U.fData(d.vigencia_ini) + ').' };
+      }
+      cronograma = bruto.slice()
+        .sort(function (a2, b2) { return String(a2.venc).localeCompare(String(b2.venc)); })
+        .map(function (p) {
+          return { venc: p.venc, valor: Math.round(Number(p.valor) * 100) / 100,
+            comp: p.comp || U.compDe(p.venc), obs: p.obs || '' };
+        });
+    }
+
     const contraparte = parte === 'fornecedor' ? d.fornecedor : d.cliente;
     // "abc-1" e "ABC-1" são o mesmo contrato
     const mesmoNumero = n => String(n || '').trim().toLowerCase();
@@ -12442,6 +12499,15 @@ ERP.store = (function () {
       return { centro: i.centro, valor: Math.round((i.valor || 0) * 100) / 100 };
     });
     alvo.valor_mensal = Math.round(alvo.itens.reduce(function (s2, i) { return s2 + i.valor; }, 0) * 100) / 100;
+    alvo.pagamentos_variaveis = !!d.pagamentos_variaveis;
+    alvo.parcelas_previstas = cronograma || [];
+    /* No cronograma variável, o total do contrato é a soma das
+       parcelas, não o valor mensal — que ali é só a base do rateio
+       por projeto. Guardado para a tela não ter de recalcular e
+       para o relatório não somar coisa errada. */
+    alvo.total_previsto = cronograma
+      ? Math.round(cronograma.reduce(function (s2, p) { return s2 + p.valor; }, 0) * 100) / 100
+      : null;
     alvo.encerrado = !!d.encerrado;
     if (d.id) alvo.exemplo = false;   // editado por alguém = conferido
     alvo.atualizado_em = new Date();
@@ -12740,6 +12806,190 @@ ERP.store = (function () {
 
     const ordem = { erro: 0, alerta: 1, info: 2 };
     return lista.sort(function (a2, b2) { return ordem[a2.nivel] - ordem[b2.nivel] || b2.n - a2.n; });
+  }
+
+  /* ── do contrato para o contas a pagar ──────────────────────
+     O contrato dizia quanto e até quando, e nada disso chegava ao
+     financeiro: alguém relançava o aluguel todo mês na mão, de
+     cabeça, e o contrato existia só como ficha.
+
+     Duas formas de pagamento, porque as duas existem na prática:
+
+     FIXA — o contrato paga todo mês o mesmo valor, no dia
+     combinado. É o aluguel, o software, a contabilidade.
+
+     VARIÁVEL — o cronograma vem no próprio contrato, com datas e
+     valores que não seguem mês cheio nem valor igual. É o caso de
+     um fornecimento com pagamentos a cada 20 dias e as primeiras
+     parcelas maiores que as últimas. Aqui não há fórmula que
+     adivinhe: quem digita é a pessoa, linha por linha. */
+
+  function cronogramaContrato(c) {
+    if (!c) return [];
+    /* Cronograma digitado vence qualquer cálculo: foi alguém lendo
+       o contrato. */
+    if (c.pagamentos_variaveis) {
+      return (c.parcelas_previstas || [])
+        .filter(function (p) { return p.venc && Number(p.valor) > 0; })
+        .slice()
+        .sort(function (a2, b2) { return String(a2.venc).localeCompare(String(b2.venc)); })
+        .map(function (p, i) {
+          return { num: i + 1, venc: p.venc, comp: p.comp || U.compDe(p.venc),
+            valor: Math.round(Number(p.valor) * 100) / 100 };
+        });
+    }
+    if (!c.vigencia_ini || !c.vigencia_fim) return [];
+    const mensal = Math.round((c.valor_mensal || 0) * 100) / 100;
+    if (!(mensal > 0)) return [];
+    /* O dia combinado manda; sem ele, o dia em que a vigência
+       começou. `addMeses` já cai no último dia do mês quando o dia
+       31 não existe em fevereiro. */
+    const diaBase = c.dia_vencimento || Number(String(c.vigencia_ini).slice(8, 10)) || 1;
+    const primeiro = String(c.vigencia_ini).slice(0, 8) + String(diaBase).padStart(2, '0');
+    /* Dia já passado no mês de início: a primeira cobrança é a do
+       mês seguinte, não uma vencida no dia da assinatura. */
+    let venc = primeiro < c.vigencia_ini ? U.addMeses(primeiro, 1) : primeiro;
+    const linhas = [];
+    while (venc <= c.vigencia_fim && linhas.length < 120) {
+      linhas.push({ num: linhas.length + 1, venc: venc, comp: U.compDe(venc), valor: mensal });
+      venc = U.addMeses(venc, 1);
+    }
+    return linhas;
+  }
+
+  /* A referência do contrato ganha sufixo a cada refazimento
+     (`-r2`, `-r3`): a trava de duplicidade de `criarTitulo` recusa
+     a mesma referência duas vezes, e sem o sufixo o segundo
+     cronograma não entrava — "este lançamento já foi importado
+     antes". É o mesmo recurso que a guia de retenção usa.
+
+     O `-r` no meio evita a confusão de prefixo: "contrato-ct10"
+     não começa com "contrato-ct1-r". */
+  function refDoContrato(contratoId) { return 'contrato-' + contratoId; }
+
+  function titulosDoContrato(contratoId) {
+    const base = refDoContrato(contratoId);
+    return st.titulos.filter(function (t) {
+      return t.origem === 'contrato' && tituloNaoCancelado(t) &&
+        (t.origem_ref === base || String(t.origem_ref || '').indexOf(base + '-r') === 0);
+    });
+  }
+
+  /* O que já foi gerado e ainda é só previsão — o que dá para
+     refazer sem desfazer trabalho de ninguém. */
+  function previsoesDoContrato(contratoId) {
+    const ids = titulosDoContrato(contratoId).map(function (t) { return t.id; });
+    return st.parcelas.filter(function (p) {
+      return ids.indexOf(p.titulo_id) >= 0 && p.status === 'previsto';
+    });
+  }
+
+  function gerarTitulosContrato(contratoId, opcoes) {
+    opcoes = opcoes || {};
+    if (!podeMover('contratos') && !pode('lancar') && !pode('admin')) {
+      return { erro: 'Seu perfil não gera contas a pagar a partir de contrato.' };
+    }
+    const c = st.contratos.find(function (x) { return x.id === contratoId; });
+    if (!c) return { erro: 'Contrato não encontrado.' };
+    if (c.parte !== 'fornecedor') {
+      return { erro: 'Este é um contrato de cliente — o que ele gera é contas a RECEBER, pelo faturamento.' };
+    }
+    if (c.encerrado) return { erro: 'Contrato encerrado.' };
+    if (!c.fornecedor || !D.credor(c.fornecedor)) {
+      return { erro: 'O fornecedor do contrato não está no cadastro.' };
+    }
+    if (!c.conta || !D.plano.some(function (x) { return x.cod === c.conta; })) {
+      return { erro: 'A natureza (plano de contas) do contrato não existe ou não foi informada.', campo: 'ct-conta' };
+    }
+
+    const linhas = cronogramaContrato(c);
+    if (!linhas.length) {
+      return { erro: c.pagamentos_variaveis
+        ? 'Nenhuma parcela informada no cronograma de pagamentos variáveis.'
+        : 'Sem valor mensal ou sem vigência — não há o que prever.' };
+    }
+
+    /* JÁ GERADO. Refazer só o que ainda é previsão: o que já virou
+       título efetivado ou foi pago é fato, e um "gerar de novo"
+       não pode apagar fato. */
+    const jaExiste = titulosDoContrato(contratoId);
+    if (jaExiste.length) {
+      const previstas = previsoesDoContrato(contratoId);
+      const firmes = st.parcelas.filter(function (p) {
+        return jaExiste.some(function (t) { return t.id === p.titulo_id; }) &&
+          ['previsto', 'cancelado'].indexOf(p.status) < 0;
+      });
+      if (!opcoes.refazer) {
+        return { erro: 'Este contrato já gerou ' + jaExiste.length + ' título(s): ' +
+          previstas.length + ' ainda como previsão' +
+          (firmes.length ? ' e ' + firmes.length + ' já efetivada(s) ou paga(s)' : '') + '.',
+          ja_gerado: true, previstas: previstas.length, firmes: firmes.length };
+      }
+      /* Cancela as previsões antigas uma a uma, com motivo — e
+         deixa as firmes de pé. */
+      previstas.forEach(function (p) {
+        p.status = 'cancelado';
+        p.motivo = 'cronograma do contrato ' + c.numero + ' refeito';
+      });
+    }
+
+    /* O rateio sai das linhas de projeto do contrato: elas dizem
+       quanto cada projeto pesa. No cronograma variável o valor de
+       cada parcela vem do cronograma, e as linhas servem só para a
+       proporção — está dito na tela. */
+    const base = (c.itens || []).filter(function (i) { return i.centro && i.valor > 0; });
+    if (!base.length) return { erro: 'O contrato não tem linha de projeto com valor — sem isso não há rateio.' };
+    const somaItens = base.reduce(function (s2, i) { return s2 + i.valor; }, 0);
+    let acum = 0;
+    const rateio = base.map(function (i, ix) {
+      /* A sobra de centavos do percentual vai na última linha, como
+         no resto do sistema: 3 projetos iguais dão 33,33/33,33/33,34
+         e não 99,99. */
+      const pct = ix === base.length - 1
+        ? Math.round((100 - acum) * 100) / 100
+        : Math.round((i.valor / somaItens) * 10000) / 100;
+      acum = Math.round((acum + pct) * 100) / 100;
+      return { centro: i.centro, pct: pct };
+    });
+
+    const total = Math.round(linhas.reduce(function (s2, l) { return s2 + l.valor; }, 0) * 100) / 100;
+    const r = criarTitulo({
+      _interno: true,
+      descricao: 'Contrato ' + c.numero + (c.objeto ? ' — ' + c.objeto : ''),
+      documento: c.numero,
+      /* Sem NF de propósito: o contrato é o compromisso, e a nota
+         de cada mês chega depois. Marcar aqui evita que as doze
+         parcelas nasçam no alerta de "pago sem nota". */
+      sem_nf: true,
+      tipo_titulo: 'fatura',
+      credor: c.fornecedor,
+      conta: c.conta,
+      centro: rateio[0].centro, rateio: rateio,
+      emissao: U.hoje(),
+      origem: 'contrato',
+      origem_ref: (function () {
+        const base = refDoContrato(contratoId);
+        if (!st.titulos.some(function (t) { return t.origem_ref === base; })) return base;
+        let n = 2;
+        while (st.titulos.some(function (t) { return t.origem_ref === base + '-r' + n; })) n++;
+        return base + '-r' + n;
+      })(),
+      obs: (c.pagamentos_variaveis ? 'Cronograma digitado no contrato' : 'Previsão mensal do contrato') +
+        ' — ' + linhas.length + ' parcela(s), ' + U.brl(total) + '. ' +
+        'Cada parcela é efetivada quando a nota do período chegar.'
+    }, linhas);
+    if (!r.ok) return r;
+
+    /* Previsão, não título firme: entra no fluxo de caixa e no
+       orçamento, mas não pode ser pago antes de alguém conferir a
+       nota do mês. É o mesmo tratamento do pedido de compra. */
+    st.parcelas.filter(function (p) { return p.titulo_id === r.titulo.id; })
+      .forEach(function (p) { p.status = 'previsto'; });
+
+    c.previsoes_geradas_em = new Date();
+    logar('contrato', c.id, 'gerou contas a pagar do contrato',
+      linhas.length + ' parcela(s) · ' + U.brl(total));
+    return { ok: true, titulo: r.titulo, parcelas: linhas.length, total: total };
   }
 
   /* Alertas de vigência e de reajuste: 90, 60 e 30 dias. */
@@ -16876,6 +17126,7 @@ ERP.store = (function () {
     classificarLinha, lancarLote, lancarReceitaDoExtrato, aplicarRegra, salvarRegra, regras, regraDe, excluirRegra,
     chaveContraparte, nomeDaLinha, gruposProdutividade, ignorarLinha, extratos, resumoConciliacao,
     salvarContrato, addAditivo, contratos, contrato, contratoDoProjeto, excluirContrato, alertasContrato, pendenciasHome,
+    cronogramaContrato, gerarTitulosContrato, titulosDoContrato, previsoesDoContrato,
     entrada, saida, baixaMultipla, transferir, estornarMovimento, entradaLote, camadas, custoMedio,
     saldoEstoque, valorEstoque, movimentos, textoDoMovimento, consumoPorPaciente,
     pacientesDoMovimento, pacienteVisivel, vePaciente, posicaoEstoque, posicaoConsolidada, distribuir,

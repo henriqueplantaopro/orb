@@ -1,3 +1,162 @@
+# ERP teste2 - v99 — a recarga apagava o que você acabou de cadastrar
+
+1460 verificações.
+
+Procurando a causa do `produtos_conta_fkey` esbarrei em outra coisa,
+e esta explica o problema que mais incomodou: **"material fora do
+cadastro · pr8802"**.
+
+## O que acontecia
+
+A recarga automática troca as listas de cadastro pelo que está no
+banco. O cadastro recém-criado, que ainda não tinha sido gravado,
+era **apagado nessa troca**.
+
+A janela é maior do que parece. Com o tempo real ligado, a recarga
+dispara um segundo depois de **qualquer** mudança no banco —
+inclusive de outra pessoa. Então:
+
+1. a compradora cadastra um material dentro da requisição;
+2. alguém do financeiro lança um título, do outro lado do sistema;
+3. o aviso de tempo real chega em um segundo;
+4. a lista de produtos é substituída pela do banco, que ainda não
+   tem o material novo;
+5. o material some, e a requisição fica apontando para um produto
+   que não existe mais.
+
+Era esse o caminho que criava os órfãos. O pr8802 e o pr8804
+perderam o nome exatamente assim.
+
+## O que mudou
+
+**O que ainda não foi gravado sobrevive à recarga.** Antes de trocar
+a lista, o sistema separa os cadastros que não estão no banco e os
+repõe depois — e só se o banco não os trouxe, porque se trouxe a
+versão do banco é a boa.
+
+**Eles continuam na fila de gravação.** Repor sem isso seria pior: o
+registro voltaria à tela e nunca mais seria enviado.
+
+**A recarga não roda no meio de uma gravação.** O que está sendo
+enviado não está nem na foto nem no banco; recarregar por cima é
+trocar o chão enquanto alguém anda nele.
+
+**A sombra é refeita a cada recarga.** Sem isso, o cadastro que veio
+do banco era comparado com a foto antiga e reenviado a cada cinco
+minutos, para sempre — tráfego e risco de conflito sem nenhum ganho.
+
+## Sobre o `produtos_conta_fkey`
+
+A hipótese do `extra` **não se confirmou**: seu relatório da etapa 40
+veio limpo para produtos — só contratos apareceram, e todos
+promovidos, nenhum descartado. Nenhum produto tinha conta escondida
+lá dentro.
+
+Então a causa ainda não está provada. O que mudou é que ela não
+custa mais uma rodada de consultas: desde a v97, se o lote cair por
+restrição o sistema reenvia linha a linha e nomeia o registro com id,
+código, descrição e o valor do campo. Na próxima vez que acontecer,
+a mensagem diz qual material e qual conta.
+
+# ERP teste2 - v98 — o contrato chega ao contas a pagar
+
+1453 verificações.
+
+## A previsão que não dava para corrigir
+
+Previsão de luz de R$ 2.000; a conta vem R$ 2.300. Quem clicava em
+**Pagar** batia em "principal passa do saldo da parcela" e não tinha
+saída: a tela da baixa registra o que saiu do banco, ela não mexe no
+valor do título. E **Editar** não aparecia na previsão.
+
+O caminho certo existia e estava ao lado — **Efetivar** é a tela que
+pergunta o valor real da conta —, mas "Pagar" parecia o botão.
+
+Três mudanças:
+
+- **Previsão não oferece mais "Pagar".** Previsão se efetiva. Depois
+  de efetivada, com o valor da conta na mão, aí se paga.
+- **"Editar" passou a aparecer na previsão**, para corrigir o valor
+  previsto sem efetivar — são coisas diferentes.
+- **A trava do saldo passou a dizer o que fazer.** Antes dizia o que
+  estava errado e parava ali. Agora, se a parcela é previsão, manda
+  efetivar; se já é título, manda editar.
+
+## O contrato gerando o contas a pagar
+
+O contrato dizia quanto e até quando, e nada disso chegava ao
+financeiro: alguém relançava o aluguel todo mês na mão, de cabeça.
+
+Agora, ao salvar um contrato de fornecedor, o sistema mostra o
+cronograma que vai gerar e pergunta. Não gera sozinho: doze parcelas
+aparecendo no contas a pagar sem aviso é pior que nenhuma.
+
+Para contratos que já existem, o botão está no detalhe (clique na
+linha do contrato), com o estado ao lado: quantos títulos já saíram
+dali e quantos ainda são previsão.
+
+**Tudo nasce como previsão**, não como título a pagar: entra no fluxo
+de caixa e no orçamento, mas ninguém paga antes de efetivar com a
+nota do período na mão.
+
+**Refazer não apaga fato.** Gerar de novo cancela as previsões
+pendentes e refaz o cronograma — o que já foi efetivado ou pago fica
+de pé. (A referência de origem ganhou sufixo `-r2`, `-r3` a cada
+refazimento, senão a trava de duplicidade recusava o segundo
+cronograma com "este lançamento já foi importado antes".)
+
+## Pagamentos variáveis
+
+Checkbox no contrato de fornecedor. Marcado, abre uma tabela de
+vencimento + valor + observação, uma linha por parcela:
+
+```
+10/10/2026   60.000,00   entrada
+30/10/2026   60.000,00
+10/11/2026   35.000,00
+30/11/2026   35.000,00
+30/12/2026   50.000,00   ─────────  240.000,00
+```
+
+O botão "+ parcela" repete o intervalo das duas últimas linhas: num
+contrato a cada 20 dias, você digita duas datas e o resto vem
+sozinho, só conferindo.
+
+**As linhas de projeto continuam valendo — como rateio.** No exemplo
+acima, se o contrato tem cc100 com 7.000 e cc200 com 3.000, toda
+parcela é rateada 70/30, com a sobra de centavos na última parte. O
+cronograma manda nas datas e nos valores; as linhas de projeto mandam
+em quanto cada projeto carrega.
+
+Quatro recusas que valem a pena conhecer, porque são erros de
+digitação que viram dinheiro errado:
+
+- parcela sem valor ou com valor zero;
+- **duas parcelas na mesma data** — quase sempre linha duplicada, e
+  vira pagamento em dobro no fluxo de caixa;
+- parcela vencendo antes do início da vigência;
+- marcar o checkbox e não informar nenhuma parcela.
+
+## Dezenove campos que viviam escondidos
+
+O contrato guardava dezenove campos dentro do `extra`, porque a
+tabela nasceu só com o que o contrato de cliente precisava. Entre os
+escondidos estavam **o fornecedor e a natureza da despesa** — que são
+exatamente o que o contas a pagar precisa para nascer de um contrato.
+
+A etapa 41 cria as colunas, traz os valores de dentro do `extra` e
+põe as chaves estrangeiras. O teste que compara o mapa com o schema
+aprendeu a ler também as chaves criadas por `alter table`, que ele
+não enxergava.
+
+## O que rodar
+
+Nos dois bancos, nesta ordem: **41** e depois **40**. A 41 cria as
+colunas; a 40 esvazia o `extra` para dentro delas. As duas são
+seguras de rodar de novo.
+
+E, se ainda não rodou: 35, 36, 37, 38, 39.
+
 # ERP teste2 - v97 — onde o "produtos_conta_fkey" estava escondido
 
 1421 verificações.

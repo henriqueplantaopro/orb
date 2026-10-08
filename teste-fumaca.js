@@ -7608,7 +7608,8 @@ function liberarParaFaturar(centro, competencia) {
      `01-schema.sql`: cada chave estrangeira do banco tem de estar
      nela, e nada que não seja chave estrangeira pode entrar. */
   const fs = require('fs');
-  const sch = fs.readFileSync(__dirname + '/supabase/01-schema.sql', 'utf8');
+  const dirSql = __dirname + '/supabase/';
+  const sch = fs.readFileSync(dirSql + '01-schema.sql', 'utf8');
   const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
 
   /* O que o banco tem. */
@@ -7623,6 +7624,21 @@ function liberarParaFaturar(centro, competencia) {
     while ((r = reRef.exec(corpo))) cols[r[1]] = r[2];
     if (Object.keys(cols).length) real[t[1]] = cols;
   }
+
+  /* E o que as ETAPAS acrescentaram depois. A chave estrangeira
+     criada por `alter table … add constraint` conta igual à do
+     `create table` — o banco não distingue, e o teste também não
+     devia: foi assim que `contratos.fornecedor` apareceu como
+     "inventada" quando ela existe de verdade. */
+  fs.readdirSync(dirSql).filter(function (f) { return /\.sql$/.test(f); }).forEach(function (f) {
+    const txt = fs.readFileSync(dirSql + f, 'utf8').replace(/--[^\n]*/g, '');
+    const reAlt = /alter table (\w+)[\s\S]{0,400}?add constraint \w+[\s\S]{0,80}?foreign key \((\w+)\)\s*references\s+(\w+)\s*\(/gi;
+    let a;
+    while ((a = reAlt.exec(txt))) {
+      real[a[1]] = real[a[1]] || {};
+      real[a[1]][a[2]] = a[3];
+    }
+  });
 
   /* O que o sistema declara. */
   const bloco = (pers.match(/const CHAVES_ESTRANGEIRAS = \{([\s\S]*?)\n  \};/) || [])[1] || '';
@@ -7702,4 +7718,222 @@ function liberarParaFaturar(centro, competencia) {
 
   verificar('v97 — e existe a limpeza do que ficou duplicado',
     fs.existsSync(__dirname + '/supabase/40-extra-para-colunas.sql'), '');
+})();
+
+// ── ERP teste2 v98: o contrato gera o contas a pagar ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u3');
+  const forn = D.credores.find(c => c.tipo !== 'medico' && c.tipo !== 'funcionario' && c.ativo !== false);
+
+  /* ── 1. mensal pela vigência ── */
+  const mensal = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-MENSAL', fornecedor: forn.id, conta: '6.01',
+    objeto: 'Aluguel da filial', vigencia_ini: '2026-03-15', vigencia_fim: '2026-08-31',
+    dia_vencimento: 10, itens: [{ centro: 'cc100', valor: 5000 }]
+  });
+  verificar('v98 — contrato mensal salvo', mensal.ok, JSON.stringify(mensal.erro));
+
+  const cron = S.cronogramaContrato(mensal.contrato);
+  /* Vigência começa em 15/03 e o vencimento é dia 10: o dia 10 de
+     março JÁ PASSOU quando o contrato começou, então a primeira
+     cobrança é 10/04. Sem isso o contrato nasceria com uma parcela
+     vencida no dia da assinatura. */
+  verificar('v98 — a primeira parcela não vence antes do início da vigência',
+    cron.length && cron[0].venc === '2026-04-10', cron.length ? cron[0].venc : 'vazio');
+  verificar('v98 — e vai até o fim da vigência', cron[cron.length - 1].venc === '2026-08-10',
+    cron.length ? cron[cron.length - 1].venc : '—');
+  verificar('v98 — uma parcela por mês', cron.length === 5, cron.length + ' parcelas');
+  verificar('v98 — a competência acompanha o vencimento', cron[0].comp === '2026-04', cron[0].comp);
+
+  /* ── 2. cronograma variável ── */
+  const prog = [
+    { venc: '2026-10-10', valor: 60000 }, { venc: '2026-10-30', valor: 60000 },
+    { venc: '2026-11-10', valor: 35000 }, { venc: '2026-11-30', valor: 35000 },
+    { venc: '2026-12-30', valor: 50000 }
+  ];
+  const varR = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-VARIAVEL', fornecedor: forn.id, conta: '6.03',
+    objeto: 'Fornecimento com pagamento a cada 20 dias',
+    vigencia_ini: '2026-10-01', vigencia_fim: '2026-12-31',
+    pagamentos_variaveis: true, parcelas_previstas: prog,
+    /* As linhas de projeto são o RATEIO, não o valor: duas, para o
+       percentual não ser 100% trivial. */
+    itens: [{ centro: 'cc100', valor: 7000 }, { centro: 'cc200', valor: 3000 }]
+  });
+  verificar('v98 — contrato com pagamentos variáveis salvo', varR.ok, JSON.stringify(varR.erro));
+  verificar('v98 — o total do cronograma é a soma das parcelas',
+    varR.ok && varR.contrato.total_previsto === 240000, varR.ok && varR.contrato.total_previsto);
+
+  const cv = S.cronogramaContrato(varR.contrato);
+  verificar('v98 — o cronograma digitado vence o cálculo mensal', cv.length === 5, cv.length);
+  verificar('v98 — com as datas e os valores exatamente como digitados',
+    cv.map(l => l.venc + '=' + l.valor).join(' ') ===
+      '2026-10-10=60000 2026-10-30=60000 2026-11-10=35000 2026-11-30=35000 2026-12-30=50000',
+    cv.map(l => l.venc + '=' + l.valor).join(' '));
+
+  /* ── 3. validações do cronograma ── */
+  const semValor = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-X1', fornecedor: forn.id, conta: '6.03',
+    vigencia_ini: '2026-10-01', vigencia_fim: '2026-12-31', pagamentos_variaveis: true,
+    parcelas_previstas: [{ venc: '2026-10-10', valor: 0 }], itens: [{ centro: 'cc100', valor: 100 }]
+  });
+  verificar('v98 — parcela sem valor é recusada', /sem valor/.test(semValor.erro || ''), semValor.erro);
+
+  const repetida = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-X2', fornecedor: forn.id, conta: '6.03',
+    vigencia_ini: '2026-10-01', vigencia_fim: '2026-12-31', pagamentos_variaveis: true,
+    parcelas_previstas: [{ venc: '2026-10-10', valor: 10 }, { venc: '2026-10-10', valor: 20 }],
+    itens: [{ centro: 'cc100', valor: 100 }]
+  });
+  verificar('v98 — duas parcelas na mesma data são recusadas',
+    /duas parcelas vencendo/.test(repetida.erro || ''), repetida.erro);
+
+  const antes = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-X3', fornecedor: forn.id, conta: '6.03',
+    vigencia_ini: '2026-10-01', vigencia_fim: '2026-12-31', pagamentos_variaveis: true,
+    parcelas_previstas: [{ venc: '2026-09-01', valor: 10 }], itens: [{ centro: 'cc100', valor: 100 }]
+  });
+  verificar('v98 — parcela antes do início da vigência é recusada',
+    /antes do início da vigência/.test(antes.erro || ''), antes.erro);
+
+  const vazio = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-X4', fornecedor: forn.id, conta: '6.03',
+    vigencia_ini: '2026-10-01', vigencia_fim: '2026-12-31', pagamentos_variaveis: true,
+    parcelas_previstas: [], itens: [{ centro: 'cc100', valor: 100 }]
+  });
+  verificar('v98 — marcar variável sem informar parcela é recusado',
+    /ao menos uma parcela/.test(vazio.erro || ''), vazio.erro);
+
+  /* ── 4. a geração em si ── */
+  const ger = S.gerarTitulosContrato(varR.contrato.id);
+  verificar('v98 — gera as previsões no contas a pagar', ger.ok, JSON.stringify(ger.erro));
+  verificar('v98 — uma parcela por linha do cronograma', ger.ok && ger.parcelas === 5, ger.parcelas);
+  verificar('v98 — somando o total do contrato', ger.ok && ger.total === 240000, ger.total);
+
+  const pcs = S.previsoesDoContrato(varR.contrato.id);
+  verificar('v98 — todas nascem como PREVISÃO, não como título a pagar',
+    pcs.length === 5, pcs.length + ' previstas');
+  verificar('v98 — com os vencimentos do cronograma',
+    pcs.map(p => p.venc).sort().join(' ') === '2026-10-10 2026-10-30 2026-11-10 2026-11-30 2026-12-30',
+    pcs.map(p => p.venc).sort().join(' '));
+  verificar('v98 — e com o fornecedor e a natureza do contrato',
+    pcs.every(p => p.credor === forn.id && p.conta === '6.03'), '');
+
+  /* O rateio sai das linhas de projeto, e tem de fechar 100%. */
+  const rat = pcs[0].rateio || [];
+  const soma = rat.reduce((s, r) => s + r.pct, 0);
+  verificar('v98 — o rateio por projeto fecha em 100%', Math.abs(soma - 100) < 0.01, soma + '%');
+  verificar('v98 — na proporção das linhas de projeto (70/30)',
+    rat.length === 2 && Math.abs(rat[0].pct - 70) < 0.01 && Math.abs(rat[1].pct - 30) < 0.01,
+    JSON.stringify(rat));
+
+  /* ── 5. gerar duas vezes ── */
+  const denovo = S.gerarTitulosContrato(varR.contrato.id);
+  verificar('v98 — gerar de novo sem confirmar é recusado',
+    !denovo.ok && denovo.ja_gerado, JSON.stringify(denovo));
+
+  /* Uma parcela vira título firme: refazer não pode apagá-la. */
+  const efetivada = pcs[0];
+  const ef = S.efetivarPrevisto(efetivada.id, { credor: forn.id, valor: efetivada.valor,
+    venc: efetivada.venc, comp: efetivada.comp, doc: 'NF-QA-1', tipo_titulo: 'nf' });
+  verificar('v98 — a previsão vira título com a nota do período', ef.ok, JSON.stringify(ef.erro));
+
+  const refeito = S.gerarTitulosContrato(varR.contrato.id, { refazer: true });
+  verificar('v98 — refazer o cronograma é aceito com confirmação', refeito.ok, JSON.stringify(refeito.erro));
+  const viva = S.parcela(efetivada.id);
+  verificar('v98 — e NÃO toca no que já foi efetivado',
+    viva && viva.status !== 'cancelado', viva && viva.status);
+  verificar('v98 — as previsões antigas saem de cena',
+    S.previsoesDoContrato(varR.contrato.id).length === 5,
+    S.previsoesDoContrato(varR.contrato.id).length + ' previstas');
+
+  /* ── 6. o que não gera ── */
+  const cli = S.contratos({ parte: 'cliente' })[0];
+  if (cli) {
+    const r = S.gerarTitulosContrato(cli.id);
+    verificar('v98 — contrato de cliente não vira contas a pagar',
+      /contas a RECEBER/.test(r.erro || ''), r.erro);
+  }
+  S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v98: previsão se efetiva, não se paga ──
+(function () {
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  const store = fs.readFileSync(__dirname + '/js/store.js', 'utf8');
+
+  /* Previsão de luz de R$ 2.000, conta de R$ 2.300. Quem clicava em
+     "Pagar" batia em "passa do saldo da parcela" e não tinha saída:
+     a tela da baixa não mexe no valor do título, e "Editar" não
+     aparecia na previsão. O caminho certo ("Efetivar") estava ali
+     do lado, mas "Pagar" parecia o botão. */
+  verificar('v98 — a previsão não oferece o botão Pagar',
+    /p\.status !== 'enviado' && p\.status !== 'previsto' && S\.pode\('pagar'\)/.test(ui), '');
+  verificar('v98 — e oferece Editar, para corrigir o valor previsto',
+    /S\.pode\('lancar'\) && p\.status !== 'pago' &&\s*\n\s*p\.status !== 'substituido'/.test(ui), '');
+  verificar('v98 — a trava do saldo diz o que fazer, não só o que está errado',
+    /use "Efetivar" para informar o valor real/.test(store) &&
+    /use "Editar" para corrigir o valor do título/.test(store), '');
+
+  /* E o store deixa mesmo editar uma previsão. */
+  S.setUsuario('u3');
+  const prev = S.st.parcelas.find(p => p.status === 'previsto' && !S.tituloSigiloso(p));
+  if (prev) {
+    const novo = Math.round((prev.valor + 300) * 100) / 100;
+    const r = S.editarParcela(prev.id, { valor: novo });
+    verificar('v98 — editar o valor de uma previsão é aceito', r.ok, JSON.stringify(r.erro));
+    verificar('v98 — e o valor novo fica gravado', S.parcela(prev.id).valor === novo,
+      S.parcela(prev.id).valor);
+  }
+  S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v99: a recarga não apaga o que ainda não gravou ──
+(function () {
+  const fs = require('fs');
+  const rem = fs.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* A RAIZ DO "material fora do cadastro · pr8802".
+
+     A recarga automática troca as listas de cadastro pelo que está
+     no banco. O cadastro recém-criado, ainda não gravado, era
+     APAGADO nessa troca — e a requisição que apontava para ele
+     ficava órfã.
+
+     A janela é grande: com o tempo real ligado, a recarga dispara
+     um segundo depois de QUALQUER mudança no banco, inclusive de
+     outra pessoa. A compradora cadastra o material na requisição,
+     o financeiro lança um título do outro lado, o aviso chega, e o
+     material some antes de ser gravado. */
+  verificar('v99 — a recarga separa o que ainda não foi gravado',
+    /aindaNaoGravados/.test(rem) && /aindaNaoGravados/.test(pers), '');
+  verificar('v99 — e o repõe depois de trocar a lista pelo banco',
+    /if \(!alvo\.some\(function \(y\) \{ return y\.id === x\.id; \}\)\) alvo\.push\(x\);/.test(rem), '');
+  verificar('v99 — sem perder a vez de ser gravado na próxima vez',
+    /esquecerDaFoto/.test(rem) && /esquecerDaFoto/.test(pers), '');
+  verificar('v99 — a recarga não roda no meio de uma gravação',
+    /gravando\(\)\) \{\s*\n\s*return \{ ok: false, motivo: 'gravação em andamento' \}/.test(rem), '');
+
+  /* E a sombra acompanha a recarga: sem isso, o cadastro que veio
+     do banco era comparado com a foto antiga e reenviado a cada
+     cinco minutos, para sempre. */
+  verificar('v99 — a sombra é refeita depois de cada recarga',
+    /refotografar\(item\.destino\)/.test(rem), '');
+
+  /* A simulação do caso: um material novo na lista, a lista
+     trocada pelo conteúdo do "banco" (que não o tem), e o material
+     tem de continuar lá. */
+  const listaBanco = [{ id: 'pr1', descricao: 'Veio do banco' }];
+  const local = [{ id: 'pr1', descricao: 'Veio do banco' }, { id: 'pr9999', descricao: 'Recém-cadastrado' }];
+  const naoGravados = local.filter(x => x.id === 'pr9999');
+  const alvo = [];
+  listaBanco.forEach(x => alvo.push(x));
+  naoGravados.forEach(x => { if (!alvo.some(y => y.id === x.id)) alvo.push(x); });
+  verificar('v99 — o material recém-cadastrado sobrevive à troca',
+    alvo.length === 2 && alvo.some(x => x.id === 'pr9999'), JSON.stringify(alvo.map(x => x.id)));
+  verificar('v99 — e o que o banco trouxe não é duplicado',
+    alvo.filter(x => x.id === 'pr1').length === 1, '');
 })();
