@@ -1,3 +1,100 @@
+# ERP teste2 - v102 — DRE gerencial, no sistema e no celular
+
+1521 verificações.
+
+O resultado do jeito que a empresa lê, e não do jeito que o plano de
+contas organiza. Está em **Relatórios › DRE gerencial**, ao lado do
+DRE por competência que já existia.
+
+```
+Receita bruta (+)
+(−) Impostos de venda          retenção na fonte + imposto próprio
+(−) Custos diretos             repasse médico, locação e a
+                               depreciação do equipamento alocado
+(−) Despesas diretas           o que foi lançado NAQUELE projeto
+(−) Despesas gerais rateadas   o que não é de projeto nenhum
+= Resultado líquido
+─────────────────────────────
+(−) Investimentos no período
+```
+
+**Cada linha abre a composição**, como na sua planilha: clicar em
+"Custos diretos" mostra o que forma o valor, agrupado por natureza e
+projeto.
+
+## As três coisas que o DRE ao lado não fazia
+
+**O rateio da despesa da casa.** Aluguel da matriz, contabilidade,
+software — nada disso é de projeto nenhum, e ficava num limbo. Agora
+é rateado pelo faturamento de cada projeto: quem fatura mais sustenta
+mais da estrutura. Com filtro, a régua aparece embaixo ("10/2026
+83,05%"), porque um número de despesa que a pessoa não sabe de onde
+veio não serve para nada.
+
+Mês sem faturamento nenhum não rateia. Dividir por igual ali
+inventaria custo num projeto que talvez nem existisse no mês.
+
+**O regime de caixa.** A mesma tela responde a outra pergunta: não "a
+operação deu lucro?", mas "sobrou dinheiro?". A receita entra pela
+data da baixa, a despesa pela data do pagamento, com juros e multa
+do atraso — e a depreciação **não entra**, porque não é desembolso.
+O dinheiro do equipamento saiu na compra.
+
+**Os investimentos abaixo da linha.** É o que explica o mês que deu
+lucro e não deixou caixa. A frase vem pronta: *"o período deu
+R$ 62.563,51 de lucro, mas foram investidos R$ 360.000,00 em
+equipamento — R$ 297.436,49 a mais do que o resultado. É por isso que
+não sobrou caixa."*
+
+## Filtro por cliente e por projeto
+
+Sem seleção, a empresa inteira. Escolhendo o cliente, a soma dos
+projetos dele — o AGIR traz os quatro juntos. Escolhendo um projeto,
+só ele, com a fatia proporcional da despesa geral.
+
+## O custo de locação
+
+Já estava certo e agora aparece no DRE: o equipamento alocado num
+projeto custa àquele projeto mesmo sem nota no mês, porque o capital
+está imobilizado ali. Um bem de R$ 360.000 com vida útil de 36 meses
+custa R$ 10.000/mês ao projeto onde está. A vida útil é por
+equipamento no cadastro; o padrão é 60 meses. Bem totalmente
+depreciado para de custar.
+
+## Um cálculo só, dois lugares
+
+O ERP e o aplicativo usam o **mesmo arquivo**, `js/dre-gerencial.js`,
+idêntico byte a byte. Há um teste na bateria que falha se um mudar
+sem o outro.
+
+A razão não é economia de código: se o computador e o telefone
+calculassem o lucro de formas diferentes, o número deixaria de servir
+para decidir, e ninguém saberia qual dos dois acreditar.
+
+O módulo não depende do store, nem do banco, nem da tela — recebe
+listas e devolve números. Isso é o que permite testá-lo com números
+conferidos na mão: são 30 casos na bateria, cada um existindo porque
+a conta pode errar de um jeito específico (o rateio que não fecha, a
+depreciação contada duas vezes, a retenção descontada em dobro no
+caixa, a previsão entrando como fato).
+
+Dois invariantes rodam contra os dados reais do sistema, não contra
+o cenário montado: o lucro fecha com as linhas **mês a mês** (não só
+no total, onde um erro de sinal some), e a soma do rateio de todos
+os projetos nunca passa da despesa que existe.
+
+## Um detalhe que o teste pegou
+
+O módulo formatava com `toLocaleString`, que olha para a
+configuração do aparelho. Num celular em inglês, R$ 1.234,56 sairia
+"1,234.56" — e num número que decide pagamento, trocar ponto por
+vírgula não é questão de gosto. Agora a formatação é feita à mão, e
+há um teste que impede a volta.
+
+## O que rodar
+
+Nada de SQL.
+
 # ERP teste2 - v101 — a alçada passou a existir de verdade
 
 1479 verificações.
