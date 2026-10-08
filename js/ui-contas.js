@@ -556,15 +556,26 @@ ERP.contas = (function () {
         if (S.pode('aprovar')) b.push(btn('Aprovar pagto', 'btn-pagar', 'autorizar', p.id));
         if (S.pode('pagar')) b.push(btn('Desfazer', 'btn-cancelar', 'desfazer', p.id));
       } else if (p.status !== 'pago' && p.status !== 'autorizado' &&
-                 p.status !== 'enviado' && S.pode('pagar')) {
+                 p.status !== 'enviado' && p.status !== 'previsto' && S.pode('pagar')) {
         /* Falta de dado bancário não esconde mais o botão: o título
            segue para aprovação e só é barrado na geração da remessa. */
         b.push(btn('Pagar', 'btn-pagar', 'pagar', p.id));
       }
+      /* PREVISÃO NÃO SE PAGA — efetiva-se. A previsão de luz é de
+         R$ 2.000 e a conta vem R$ 2.300; quem clicava em "Pagar"
+         batia em "passa do saldo da parcela" e não tinha como
+         corrigir, porque a tela da baixa não mexe no valor do
+         título. "Efetivar" é a tela que pergunta o valor real da
+         conta, e era ela que a pessoa precisava — mas "Pagar"
+         aparecia ao lado e parecia o caminho. */
       if (p.status === 'previsto' && S.pode('lancar')) {
         b.push(btn('Efetivar', 'btn-aprovar', 'efetivar', p.id));
       }
-      if (S.pode('lancar') && p.status !== 'pago' && p.status !== 'previsto' &&
+      /* Editar vale também na previsão: corrigir o valor de uma
+         previsão errada é diferente de efetivá-la, e antes não
+         havia caminho nenhum — a previsão só podia virar título
+         com o valor que alguém chutou meses atrás. */
+      if (S.pode('lancar') && p.status !== 'pago' &&
           p.status !== 'substituido' && !S.emCursoDe(p.id).length) {
         b.push(btn('Editar', '', 'editar', p.id));
       }

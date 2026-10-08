@@ -147,6 +147,14 @@ ERP.dadosRemoto = (function () {
 
   async function recarregar(silencioso) {
     if (recarregando) return { ok: false, motivo: 'já em andamento' };
+    /* Nunca no meio de uma gravação. O que está sendo enviado ainda
+       não está na foto nem no banco, e recarregar por cima disso é
+       trocar o chão enquanto alguém anda nele. A recarga seguinte
+       pega tudo — são cinco minutos, ou o próximo aviso de tempo
+       real, que chega assim que a gravação terminar. */
+    if (ERP.persistencia && ERP.persistencia.gravando && ERP.persistencia.gravando()) {
+      return { ok: false, motivo: 'gravação em andamento' };
+    }
     recarregando = true;
     try {
       const r = await carregar();
@@ -230,18 +238,44 @@ ERP.dadosRemoto = (function () {
     const D = ERP.dados;
     const vazias = [];
 
+    /* O QUE AINDA NÃO FOI GRAVADO SOBREVIVE À RECARGA.
+
+       Trocar a lista pelo que está no banco apagava o cadastro
+       recém-criado que ainda não tinha sido gravado. Com a recarga
+       em tempo real — que dispara um segundo depois de QUALQUER
+       mudança, inclusive de outra pessoa — a janela é grande: a
+       compradora cadastra o material na requisição, alguém do
+       financeiro lança um título, o aviso chega, a lista é
+       substituída e o material some. A requisição fica apontando
+       para um produto que não existe mais, e é assim que nasce o
+       "material fora do cadastro · pr8802".
+
+       O cadastro local é reposto DEPOIS da troca, e só se o banco
+       não o trouxe — se trouxe, a versão do banco é a boa. */
+    const segurar = {};
+    if (ERP.persistencia && ERP.persistencia.aindaNaoGravados) {
+      MAPA.forEach(function (item) {
+        const pendentes = ERP.persistencia.aindaNaoGravados(item.destino);
+        if (pendentes.length) segurar[item.destino] = pendentes;
+      });
+    }
+
     for (const item of MAPA) {
       const { data, error } = await c.from(item.tabela).select('*').order(item.ordem);
       if (error) {
         return { erro: 'Não foi possível ler ' + item.tabela + ': ' + error.message };
       }
+      const guardados = segurar[item.destino] || [];
       if (!data.length) {
         if (item.essencial) vazias.push(item.tabela);
         /* Tabela não essencial vazia: esvazia a lista local também.
            Deixar o cadastro de exemplo seria pior — a pessoa
            escolheria um produto que não existe no banco. */
         const a = D[item.destino];
-        if (Array.isArray(a)) a.length = 0;
+        if (Array.isArray(a)) {
+          a.length = 0;
+          guardados.forEach(function (x) { a.push(x); });
+        }
         continue;
       }
       const alvo = D[item.destino];
@@ -250,6 +284,9 @@ ERP.dadosRemoto = (function () {
       data.slice()
         .sort(function (x, y) { return compararNatural(x[item.ordem], y[item.ordem]); })
         .forEach(function (l) { alvo.push(limpar(l)); });
+      guardados.forEach(function (x) {
+        if (!alvo.some(function (y) { return y.id === x.id; })) alvo.push(x);
+      });
     }
 
     /* Tabela vazia é sinal de carga incompleta, não de cadastro
@@ -305,6 +342,29 @@ ERP.dadosRemoto = (function () {
       if (p.chave === 'tabela_irrf' && p.valor) Object.assign(D.tabelaIRRF, p.valor);
       if (p.chave === 'parametros_dp' && p.valor) Object.assign(D.parametrosDP, p.valor);
     });
+
+    /* A sombra tem de acompanhar a recarga. Sem isto, o que veio do
+       banco é comparado com a foto anterior e a diferença de
+       formato (o banco devolve `0` onde o sistema tinha `null`,
+       devolve a data como texto) faz o sistema reenviar cadastro
+       que nunca mudou — a cada cinco minutos, por tempo
+       indeterminado.
+
+       O que foi segurado acima fica FORA da foto de propósito: ele
+       ainda não está no banco, e é justamente isso que o faz ser
+       gravado no próximo ciclo. */
+    if (ERP.persistencia && ERP.persistencia.refotografar) {
+      MAPA.forEach(function (item) {
+        if (ERP.store.st && Array.isArray(ERP.store.st[item.destino])) {
+          ERP.persistencia.refotografar(item.destino);
+        }
+      });
+      /* E então tira da foto o que foi segurado, que a linha acima
+         acabou de fotografar junto. */
+      Object.keys(segurar).forEach(function (nome) {
+        segurar[nome].forEach(function (x) { ERP.persistencia.esquecerDaFoto(nome, x.id); });
+      });
+    }
 
     lidoEm = Date.now();
     return { ok: true, tabelas: MAPA.length, matriz: (mz || []).length };
