@@ -1,3 +1,90 @@
+# ERP teste2 - v97 — onde o "produtos_conta_fkey" estava escondido
+
+1421 verificações.
+
+O erro voltava desde a v93 e a consulta no banco insistia que estava
+tudo certo: a conta 8.04 existe, nenhum produto aponta para conta
+inválida, os produtos usam só a 8.04. E a gravação caía mesmo assim.
+
+**A conta inválida não estava em nenhuma coluna.** Estava dentro do
+`extra`.
+
+`extra` é a caixa onde o sistema guarda o que ele tem e o banco
+ainda não. Quando a coluna de verdade nasce depois — foi o caso de
+`cest` e `familia` em produtos, e de treze outras na etapa 34 —, o
+valor antigo continua lá dentro, congelado no dia em que foi
+gravado. E na leitura o `extra` vencia a coluna.
+
+O resultado é o pior tipo de erro que existe: `select conta from
+produtos` devolvia 8.04, válida; o sistema trabalhava com o valor
+velho de dentro do `extra`; e mandava o velho de volta na gravação.
+O banco recusava o lote apontando para uma conta que ninguém
+conseguia encontrar, porque ela não estava em lugar nenhum que se
+pudesse consultar.
+
+Agora **a coluna manda** e o `extra` só preenche o que a linha não
+trouxe. A etapa 40 faz a outra metade: promove para a coluna o que
+está preso no `extra` e tira a chave de lá, para o valor não existir
+em dois lugares com duas respostas. É ela que vai mostrar, no último
+`select`, exatamente qual material derrubava a gravação.
+
+## Um erro meu, da v96, que precisava sair antes de você instalar
+
+A correção da v96 conferia a referência pelo NOME DA COLUNA. Isso
+estava errado de um jeito caro.
+
+`conta` é chave estrangeira em `produtos` e em `parcelas` — aponta
+para o plano de contas. Mas em `credores` e em `bancos`, `conta` é o
+**número da conta bancária**, e `banco` é o código do banco ("237").
+Pela lista por nome, o sistema ia procurar "000000039464" no plano
+de contas, não ia achar, e gravava NULO.
+
+Ou seja: a v96 teria **apagado em silêncio o cadastro bancário dos
+fornecedores** na primeira vez que alguém salvasse um. O pagamento
+sairia sem conta para onde ir, e nada na tela diria o porquê.
+
+A lista agora é tabela por tabela, tirada do `01-schema.sql`, com
+dois testes que a comparam com o schema: toda chave estrangeira do
+banco tem de estar nela, e nada que não seja chave estrangeira pode
+entrar. E dois testes nominais para o caso concreto — `credores` não
+tem chave estrangeira nenhuma, e quem olhar a coluna `conta` ali e
+quiser "completar" a lista vai esbarrar no teste.
+
+Entrou junto a regra de **o que pode ir a branco**. A rede de
+segurança (gravar sem a referência em vez de perder o lançamento) só
+vale onde a referência é sugestão: a natureza do material, o projeto
+do ativo, o fornecedor da OS. O que sustenta o registro — o título
+da parcela, o produto da camada de estoque, o funcionário do décimo
+— fica de fora: é `not null` no banco, e esvaziar trocaria um erro
+por outro, com a diferença de que este mentiria dizendo que gravou.
+
+## O lote recusado agora diz qual linha derrubou
+
+O Postgres recusa o lote inteiro e nomeia a restrição, nunca a
+linha. "violates foreign key constraint produtos_conta_fkey" não diz
+qual material nem qual conta — e foi por isso que este erro custou
+três rodadas de consulta no banco para algo que o sistema tinha na
+mão o tempo todo.
+
+Quando o lote cai por restrição, o sistema agora reenvia linha a
+linha até achar as culpadas e nomeia cada uma com o que dá para
+reconhecer: id, código, descrição e o valor do campo citado. Só roda
+no erro, no máximo nas primeiras 60 linhas, e para nas quatro
+primeiras culpadas. É diagnóstico, não caminho normal.
+
+O aviso na tela deixa de dizer "em geral é falta de permissão"
+quando já tem o nome do registro para mostrar.
+
+## O que rodar
+
+No banco de **teste** e no **real**, nesta ordem, o que ainda não
+rodou: 35, 36, 37, 38, 39 e a **40** desta versão.
+
+A 40 é a que resolve o `produtos_conta_fkey` de vez. Olhe o último
+`select` dela: se vier alguma linha, é exatamente o material que
+derrubava a gravação, e o comentário logo abaixo tem o `update` que
+o zera.
+
 # ERP teste2 - v30 — a política de acesso da empresa vira o padrão
 
 1311 verificações.
