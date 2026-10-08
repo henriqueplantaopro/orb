@@ -7937,3 +7937,46 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v99 — e o que o banco trouxe não é duplicado',
     alvo.filter(x => x.id === 'pr1').length === 1, '');
 })();
+
+// ── ERP teste2 v100: a senha sai do sistema, não do painel ──
+(function () {
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-administracao.js', 'utf8');
+
+  /* O cadastro de usuário terminava pela metade por um texto
+     desatualizado. A mensagem mandava criar o login "no painel do
+     Supabase" — verdade de quando o sistema ainda não criava
+     senha —, e o formulário já tinha fechado, levando junto o
+     botão que resolveria. A pessoa salvava o usuário, lia que
+     precisava ir a outro lugar, e o caminho de dentro ficava
+     invisível. */
+  verificar('v100 — a tela de criar acesso abre sozinha quando falta o login',
+    /motivo === 'login_nao_existe'[\s\S]{0,1400}?criarAcesso\(u2\.email\)/.test(ui), '');
+  verificar('v100 — nenhum texto da Administração manda ao painel do Supabase',
+    !/painel do Supabase|Add user|Auto Confirm/.test(ui), '');
+  verificar('v100 — a ajuda aponta o botão que existe',
+    /Criar acesso \/ redefinir senha/.test(ui), '');
+
+  /* A senha que o administrador escolhe é provisória por
+     definição: alguém além do dono a conhece. Marcar isso era um
+     passo manual num checkbox lá embaixo, e quem não soubesse
+     deixava a senha do administrador valendo para sempre. */
+  verificar('v100 — criar acesso marca a senha como provisória sozinho',
+    /senha_provisoria: true/.test(ui), '');
+  verificar('v100 — e sem dois avisos seguidos se contradizendo',
+    /if \(!\(ERP\.persistencia && ERP\.persistencia\.ligado\(\)\)\) ERP\.app\.aviso\('Usuário salvo\.'/.test(ui), '');
+
+  /* A regra que torna a provisória obrigatória continua no store. */
+  const adm = D.usuarios.find(u => u.perfil === 'admin' && u.ativo !== false);
+  if (adm) S.setUsuario(adm.id);
+  const alvo = D.usuarios.find(u => adm && u.id !== adm.id && u.ativo !== false);
+  if (alvo) {
+    const r = S.salvarUsuario({ id: alvo.id, nome: alvo.nome, perfil: alvo.perfil,
+      email: alvo.email, ativo: true, senha_provisoria: true });
+    verificar('v100 — a marca de senha provisória é gravada no usuário',
+      r.ok && D.usuario(alvo.id).senha_provisoria === true, JSON.stringify(r.erro));
+    S.salvarUsuario({ id: alvo.id, nome: alvo.nome, perfil: alvo.perfil,
+      email: alvo.email, ativo: true, senha_provisoria: false });
+  }
+  S.setUsuario('u8');
+})();

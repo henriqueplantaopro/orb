@@ -1,3 +1,57 @@
+# ERP teste2 - v100 — a senha sai do sistema, e a tela passou a dizer isso
+
+1466 verificações.
+
+Você tinha razão: a criação de acesso pelo sistema está configurada e
+funcionando há versões. Quem estava desatualizado era o **texto**.
+
+## O que acontecia
+
+Ao salvar um usuário novo com e-mail, o sistema procurava um login
+com aquele endereço, não achava, e dizia:
+
+> Falta criar o login no painel do Supabase (Authentication › Users ›
+> Add user…)
+
+Essa frase é de quando o sistema realmente não criava senha. Ficou
+para trás quando a função de criar acesso foi publicada — e ninguém
+voltou para apagá-la.
+
+Pior que estar errada: **o formulário já tinha fechado**, levando
+junto o botão "Criar acesso / redefinir senha", que é onde a coisa se
+resolve em dois cliques. A mensagem apontava para fora e o caminho de
+dentro ficava invisível.
+
+## O que mudou
+
+**A tela de criar acesso abre sozinha.** Salvou o usuário e não existe
+login para aquele e-mail? O sistema já abre a janela da senha
+provisória. É o passo seguinte óbvio — acabou de cadastrar a pessoa,
+ela precisa de senha para entrar.
+
+**A senha provisória é marcada sozinha.** A senha que você escolhe é
+provisória por definição: alguém além do dono a conhece. Marcar isso
+era um passo manual, num checkbox no fim do formulário — e quem não
+soubesse deixava a sua senha valendo para sempre. Agora o próprio
+botão marca.
+
+**Nenhum texto da Administração manda mais ao painel do Supabase.** A
+ajuda da lista de usuários, o aviso de quando o envio de e-mail falha
+e o texto do checkbox apontavam todos para fora. Os três passaram a
+apontar o botão que existe. Há um teste que varre o arquivo e falha se
+a frase voltar.
+
+**Um aviso só.** Antes vinham dois seguidos — "Usuário salvo" e, logo
+depois, outro dizendo que faltava algo. O segundo parecia engano.
+
+A única menção ao painel que sobrou é a de quando a função de criar
+acesso não está publicada no banco — ali ela é verdade, e é o caminho
+de emergência.
+
+## O que rodar
+
+Nada de SQL. Só a atualização do sistema.
+
 # ERP teste2 - v99 — a recarga apagava o que você acabou de cadastrar
 
 1460 verificações.
