@@ -261,6 +261,12 @@ ERP.auth = (function () {
     // 2. a tela
     iniciarComSessao(s);
 
+    /* A POLÍTICA LIDA DO BANCO entra agora, não antes: `store.init()`
+       acabou de recriar `st.parametros` com o padrão do código, e
+       aplicar antes seria escrever num objeto já descartado. Alçada,
+       segregação e trava de competência vêm daqui. */
+    if (ERP.dadosRemoto && ERP.dadosRemoto.aplicarPolitica) ERP.dadosRemoto.aplicarPolitica();
+
     /* O movimento de exemplo sai DEPOIS de montar, não antes.
        `iniciarComSessao` chama o `init` do app, que chama
        `store.init()` — e o `init` recria o seed inteiro. Limpar

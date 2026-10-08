@@ -310,6 +310,40 @@ ERP.persistencia = (function () {
     return error ? { erro: error.message } : { ok: true, linhas: linhas.length };
   }
 
+  /* PARÂMETROS DE POLÍTICA.
+
+     Mesmo defeito da matriz, e pela mesma razão: eram lidos do
+     código e nunca gravados. A alçada que você ajusta em
+     Administração valia só na sua sessão e voltava ao padrão no
+     login seguinte — para você e para todo mundo.
+
+     Não é detalhe de configuração: é a alçada de aprovação de
+     pagamento, a trava de "quem solicita não aprova" e o
+     fechamento de competência. Três controles que o sistema
+     anunciava ter e não tinha de verdade.
+
+     Só o que é POLÍTICA vai ao banco. `plantoes_ajustados` e a
+     matriz têm caminho próprio, e mandar tudo junto faria um ajuste
+     de plantão disputar a mesma linha com a alçada. */
+  const PARAMETROS_POLITICA = ['alcada', 'sem_aprovacao', 'impedir_autoaprovacao',
+    'impedir_autoaprovacao_compras', 'exigir_anexo', 'travar_competencia_ate',
+    'nsa_ini', 'nsa_fim', 'feriados_extras', 'impostos_procedimentos',
+    'plantao_valor', 'plantao_horas'];
+
+  async function gravarParametros() {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    const p = ERP.store && ERP.store.st && ERP.store.st.parametros;
+    if (!p) return { ok: true, nada: true };
+    const valor = {};
+    PARAMETROS_POLITICA.forEach(function (k) {
+      if (p[k] !== undefined) valor[k] = p[k];
+    });
+    const { error } = await c.from('parametros')
+      .upsert([{ chave: 'parametros_gerais', valor: valor }], { onConflict: 'chave' });
+    return error ? { erro: error.message } : { ok: true };
+  }
+
   async function statusLogins() {
     const c = cliente();
     if (!c) return [];
@@ -1327,6 +1361,7 @@ ERP.persistencia = (function () {
            criarLogin: criarLogin,
            listarChamados: listarChamados, responderChamado: responderChamado,
            falhasGravacao: falhasGravacao, gravarMatriz: gravarMatriz,
+           gravarParametros: gravarParametros,
            referenciasDescartadas: referenciasDescartadas,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,

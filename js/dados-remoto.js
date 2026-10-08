@@ -127,6 +127,16 @@ ERP.dadosRemoto = (function () {
      diferentes sem nenhum aviso. */
   let lidoEm = null;
 
+  /* A política lida do banco, guardada até o store existir. */
+  let politicaLida = null;
+  function aplicarPolitica() {
+    if (!politicaLida) return false;
+    const p = ERP.store && ERP.store.st && ERP.store.st.parametros;
+    if (!p) return false;
+    Object.assign(p, politicaLida);
+    return true;
+  }
+
   function minutosDesdeALeitura() {
     if (!lidoEm) return null;
     return Math.floor((Date.now() - lidoEm) / 60000);
@@ -341,7 +351,18 @@ ERP.dadosRemoto = (function () {
       if (p.chave === 'tabela_inss' && p.valor) Object.assign(D.tabelaINSS, p.valor);
       if (p.chave === 'tabela_irrf' && p.valor) Object.assign(D.tabelaIRRF, p.valor);
       if (p.chave === 'parametros_dp' && p.valor) Object.assign(D.parametrosDP, p.valor);
+      /* Política: alçada, segregação, trava de competência. Era lida
+         do código e nunca do banco — o que a Administração ajustava
+         valia só naquela sessão.
+
+         GUARDA em vez de aplicar direto, porque esta carga roda
+         ANTES de `store.init()`, que recria `st.parametros` com o
+         padrão do código. Aplicar aqui seria escrever num objeto
+         que será jogado fora segundos depois — e o efeito seria
+         idêntico ao defeito que estou corrigindo. */
+      if (p.chave === 'parametros_gerais' && p.valor) politicaLida = p.valor;
     });
+    aplicarPolitica();
 
     /* A sombra tem de acompanhar a recarga. Sem isto, o que veio do
        banco é comparado com a foto anterior e a diferença de
@@ -382,5 +403,6 @@ ERP.dadosRemoto = (function () {
   return { carregar: carregar, funcionarios: funcionarios,
            recarregar: recarregar, ligarRecargaAutomatica: ligarRecargaAutomatica,
            ligarTempoReal: ligarTempoReal,
-           minutosDesdeALeitura: minutosDesdeALeitura };
+           minutosDesdeALeitura: minutosDesdeALeitura,
+           aplicarPolitica: aplicarPolitica };
 })();

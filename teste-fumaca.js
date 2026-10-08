@@ -7980,3 +7980,78 @@ function liberarParaFaturar(centro, competencia) {
   }
   S.setUsuario('u8');
 })();
+
+// ── ERP teste2 v101: a política vai ao banco ──
+(function () {
+  const fs = require('fs');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const rem  = fs.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  const aut  = fs.readFileSync(__dirname + '/js/auth.js', 'utf8');
+  const store = fs.readFileSync(__dirname + '/js/store.js', 'utf8');
+
+  /* Mesmo defeito da matriz de acesso, e pela mesma razão: a
+     política era lida do CÓDIGO e nunca gravada. A alçada que a
+     Administração ajustava valia só naquela sessão e voltava ao
+     padrão no login seguinte — para quem ajustou e para todo
+     mundo. E a tela mostrava o valor novo até alguém recarregar a
+     página, então não havia como desconfiar.
+
+     Não é detalhe de configuração: é a alçada de aprovação de
+     pagamento, a trava de "quem solicita não aprova" e o
+     fechamento de competência. Três controles que o sistema
+     anunciava ter e não tinha de verdade. */
+  verificar('v101 — existe a gravação da política no banco',
+    /async function gravarParametros/.test(pers), '');
+  verificar('v101 — e salvar parâmetros a dispara',
+    /ERP\.persistencia\.gravarParametros\(\)/.test(store), '');
+  verificar('v101 — a leitura traz a política do banco',
+    /parametros_gerais/.test(rem), '');
+
+  /* A ordem é o que faz funcionar: `store.init()` recria
+     `st.parametros` com o padrão, e aplicar antes seria escrever
+     num objeto que será jogado fora segundos depois. */
+  verificar('v101 — a política é aplicada DEPOIS de montar o store',
+    /iniciarComSessao\(s\);[\s\S]{0,400}?aplicarPolitica\(\)/.test(aut), '');
+
+  /* Só política vai ao banco. Ajuste de plantão e a matriz têm
+     caminho próprio, e mandar tudo junto faria um ajuste de
+     plantão disputar a mesma linha com a alçada. */
+  const lista = (pers.match(/const PARAMETROS_POLITICA = \[([\s\S]*?)\];/) || [])[1] || '';
+  verificar('v101 — a alçada e as travas estão na lista que vai ao banco',
+    /'alcada'/.test(lista) && /'impedir_autoaprovacao'/.test(lista) &&
+    /'travar_competencia_ate'/.test(lista), lista.slice(0, 90));
+  verificar('v101 — e os ajustes de plantão NÃO vão junto',
+    !/plantoes_ajustados/.test(lista) && !/matriz_acesso/.test(lista), '');
+
+  /* As regras do banco têm de ser as mesmas do store. A etapa 42
+     reescreve alçada, segregação e sem_aprovacao em SQL; se uma
+     das duas mudar sozinha, o celular e o computador passam a
+     decidir diferente sobre o mesmo pagamento. */
+  const sql = fs.readFileSync(__dirname + '/supabase/42-aprovar-no-banco.sql', 'utf8');
+  verificar('v101 — a função do banco confere a alçada',
+    /app_alcada\(\)/.test(sql) && /acima da sua alçada/.test(sql), '');
+  verificar('v101 — confere quem solicitou (por id, não por nome)',
+    /pg\.usuario_id = eu\.id/.test(sql) && /quem solicita não aprova/.test(sql), '');
+  verificar('v101 — confere a lista de perfis sem aprovação',
+    /sem_aprovacao' \? perfil/.test(sql), '');
+  verificar('v101 — e lê a política da mesma linha que o sistema grava',
+    /chave = 'parametros_gerais'/.test(sql), '');
+  verificar('v101 — as funções de aprovação não são abertas ao público',
+    /revoke all on function aprovar_pagamento/.test(sql) &&
+    /grant execute on function aprovar_pagamento\(text\[\]\) *to authenticated/.test(sql), '');
+
+  /* Dinheiro no formato da casa, também nas mensagens do banco. */
+  verificar('v101 — o banco formata dinheiro em 00.000,00',
+    /function app_brl/.test(sql) && /translate\(to_char\(coalesce\(v,0\), 'FM999,999,999,990\.00'\), ',\.', '\.,'\)/.test(sql), '');
+
+  /* A edição em memória continua valendo. */
+  const adm = D.usuarios.find(u => u.perfil === 'admin' && u.ativo !== false);
+  if (adm) {
+    S.setUsuario(adm.id);
+    const r = S.salvarParametros({ alcada: { diretoria: 77000 }, impedir_autoaprovacao: true });
+    verificar('v101 — a alçada editada vale na hora',
+      r.ok && S.parametros().alcada.diretoria === 77000, S.parametros().alcada.diretoria);
+    S.salvarParametros({ alcada: { diretoria: 50000 } });
+  }
+  S.setUsuario('u8');
+})();
