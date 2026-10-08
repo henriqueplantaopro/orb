@@ -679,40 +679,120 @@ ERP.contratos = (function () {
     }
     const jaTem = S.titulosDoContrato(id).length;
     const previstas = S.previsoesDoContrato(id).length;
-    const total = linhas.reduce(function (s, l) { return s + l.valor; }, 0);
+    const hoje = U.hoje();
+
+    /* CONTRATO RETROATIVO.
+
+       Um contrato que começou no ano passado e entra no sistema
+       agora tem o cronograma inteiro, mas quase nada dele é
+       compromisso futuro: a maior parte já foi paga pelo caminho
+       antigo. Gerar tudo encheria o contas a pagar de dívida que
+       não existe — e alguém teria de cancelar parcela por parcela
+       ou, pior, pagaria de novo.
+
+       As já VENCIDAS nascem marcadas como pagas, que é o palpite
+       certo na maioria dos casos, e a pessoa desmarca as que de
+       fato estão em aberto. O contrário — nascerem desmarcadas —
+       faria o caso comum dar trabalho e o raro dar sossego. */
+    const quitadas = {};
+    linhas.forEach(function (l) { if (l.venc < hoje) quitadas[l.venc] = true; });
+    const temVencida = linhas.some(function (l) { return l.venc < hoje; });
+
+    function corpo() {
+      const geradas = linhas.filter(function (l) { return !quitadas[l.venc]; });
+      const total = geradas.reduce(function (s2, l) { return s2 + l.valor; }, 0);
+      const fora = linhas.filter(function (l) { return quitadas[l.venc]; });
+      const totalFora = fora.reduce(function (s2, l) { return s2 + l.valor; }, 0);
+      return (jaTem
+        ? '<div class="aviso" style="margin:0 0 10px">Este contrato já gerou lançamentos — ' +
+          previstas + ' ainda como previsão. Gerar de novo <b>cancela as previsões</b> e ' +
+          'refaz o cronograma. O que já foi efetivado ou pago não é tocado.</div>'
+        : '') +
+      '<div class="resumo-linha"><span>Fornecedor</span><span class="v">' +
+        U.esc((D.credor(c.fornecedor) || {}).nome || '—') + '</span></div>' +
+      '<div class="resumo-linha"><span>Programação</span><span class="v">' +
+        (c.pagamentos_variaveis ? 'cronograma digitado' : 'mensal pela vigência') + '</span></div>' +
+      '<div class="resumo-linha"><span><b>Vai lançar</b></span><span class="v"><b>' +
+        geradas.length + ' parcela(s) · ' + U.brl(total) + '</b></span></div>' +
+      (fora.length
+        ? '<div class="resumo-linha"><span>Já pagas — não lança</span><span class="v">' +
+          fora.length + ' parcela(s) · ' + U.brl(totalFora) + '</span></div>'
+        : '') +
+      (temVencida
+        ? '<div class="aviso" style="margin:10px 0 6px">Este cronograma tem parcelas que já ' +
+          'venceram. Elas vêm marcadas como <b>já pagas</b> — desmarque as que ainda estão em ' +
+          'aberto. Só o que ficar desmarcado vai para o contas a pagar.</div>'
+        : '') +
+      '<div class="ap-acoes" style="margin:8px 0">' +
+        '<button type="button" class="btn-sm" id="cg-nenhuma">Nenhuma paga</button>' +
+        '<button type="button" class="btn-sm" id="cg-vencidas">Marcar as vencidas</button>' +
+        '<button type="button" class="btn-sm" id="cg-todas">Todas pagas</button></div>' +
+      '<table style="margin-top:4px"><thead><tr><th style="width:62px">Já paga</th>' +
+      '<th style="width:34px">#</th><th>Vencimento</th><th>Competência</th>' +
+      '<th class="num">Valor</th></tr></thead><tbody>' +
+      linhas.map(function (l, i2) {
+        const venceu = l.venc < hoje;
+        return '<tr' + (quitadas[l.venc] ? ' class="cancelada"' : '') + '>' +
+          '<td><input type="checkbox" data-cg="' + U.esc(l.venc) + '" style="width:auto"' +
+            (quitadas[l.venc] ? ' checked' : '') + '></td>' +
+          '<td class="sub">' + (i2 + 1) + '</td>' +
+          '<td>' + U.fData(l.venc) +
+            (venceu ? ' <span class="sub">vencida</span>' : '') + '</td>' +
+          '<td class="sub">' + U.fComp(l.comp) + '</td>' +
+          '<td class="num">' + U.brl(l.valor) + '</td></tr>';
+      }).join('') +
+      '</tbody></table>' +
+      '<div class="ajuda">O que for lançado entra como <b>previsão</b>: aparece no fluxo de caixa ' +
+      'e no orçamento, mas não pode ser pago antes de alguém efetivar com a nota do período na ' +
+      'mão. As marcadas como já pagas ficam registradas no contrato — não somem, para quem abrir ' +
+      'daqui a seis meses não achar que o contrato começa no meio.</div>';
+    }
+
+    /* Redesenha SÓ o corpo: o total "vai lançar" precisa acompanhar
+       cada clique, senão a pessoa confirma sem saber quanto está
+       entrando no contas a pagar. */
+    function redesenhar() {
+      const box = document.querySelector('.modal .corpo');
+      if (!box) return;
+      box.innerHTML = corpo();
+      ligarQuitadas();
+    }
+
+    function ligarQuitadas() {
+      document.querySelectorAll('[data-cg]').forEach(function (cb) {
+        cb.addEventListener('change', function () {
+          if (this.checked) quitadas[this.dataset.cg] = true;
+          else delete quitadas[this.dataset.cg];
+          redesenhar();
+        });
+      });
+      const marcar = function (fn) {
+        Object.keys(quitadas).forEach(function (k) { delete quitadas[k]; });
+        linhas.forEach(function (l) { if (fn(l)) quitadas[l.venc] = true; });
+        redesenhar();
+      };
+      if (U.el('cg-nenhuma')) U.el('cg-nenhuma').addEventListener('click', function () { marcar(function () { return false; }); });
+      if (U.el('cg-vencidas')) U.el('cg-vencidas').addEventListener('click', function () { marcar(function (l) { return l.venc < hoje; }); });
+      if (U.el('cg-todas')) U.el('cg-todas').addEventListener('click', function () { marcar(function () { return true; }); });
+    }
+
     ERP.app.modal({
       titulo: 'Contas a pagar do contrato ' + U.esc(c.numero),
       fecharTxt: jaTem ? 'Fechar' : 'Agora não',
-      corpo:
-        (jaTem
-          ? '<div class="aviso" style="margin:0 0 10px">Este contrato já gerou lançamentos — ' +
-            previstas + ' ainda como previsão. Gerar de novo <b>cancela as previsões</b> e ' +
-            'refaz o cronograma. O que já foi efetivado ou pago não é tocado.</div>'
-          : '') +
-        '<div class="resumo-linha"><span>Fornecedor</span><span class="v">' +
-          U.esc((D.credor(c.fornecedor) || {}).nome || '—') + '</span></div>' +
-        '<div class="resumo-linha"><span>Programação</span><span class="v">' +
-          (c.pagamentos_variaveis ? 'cronograma digitado' : 'mensal pela vigência') + '</span></div>' +
-        '<div class="resumo-linha"><span>Total</span><span class="v">' +
-          linhas.length + ' parcela(s) · ' + U.brl(total) + '</span></div>' +
-        '<table style="margin-top:10px"><thead><tr><th>#</th><th>Vencimento</th>' +
-        '<th>Competência</th><th class="num">Valor</th></tr></thead><tbody>' +
-        linhas.slice(0, 24).map(function (l) {
-          return '<tr><td class="sub">' + l.num + '</td><td>' + U.fData(l.venc) + '</td>' +
-            '<td class="sub">' + U.fComp(l.comp) + '</td>' +
-            '<td class="num">' + U.brl(l.valor) + '</td></tr>';
-        }).join('') +
-        (linhas.length > 24 ? '<tr><td colspan="4" class="sub">… e mais ' + (linhas.length - 24) + '</td></tr>' : '') +
-        '</tbody></table>' +
-        '<div class="ajuda">Entram como <b>previsão</b>: aparecem no fluxo de caixa e no orçamento, ' +
-        'mas não podem ser pagas antes de alguém efetivar com a nota do período na mão.</div>',
+      corpo: corpo(),
       acoes: [{ txt: jaTem ? 'Refazer previsões' : 'Gerar previsões', cls: 'btn-aprovar', fn: function () {
-        const r = S.gerarTitulosContrato(id, { refazer: !!jaTem });
+        const r = S.gerarTitulosContrato(id, {
+          refazer: !!jaTem,
+          pular: Object.keys(quitadas)
+        });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
-        ERP.app.aviso(r.parcelas + ' previsão(ões) no contas a pagar · ' + U.brl(r.total) + '.', 'ok');
+        ERP.app.aviso(r.parcelas + ' previsão(ões) no contas a pagar · ' + U.brl(r.total) +
+          (r.quitadas ? '. ' + r.quitadas + ' parcela(s) ficaram de fora por já estarem pagas.' : '.'),
+          'ok');
         render();
-      } }]
+      } }],
+      aposAbrir: function () { ligarQuitadas(); }
     });
   }
 

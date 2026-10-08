@@ -40,7 +40,13 @@ alter table contratos
   add column if not exists pagamentos_variaveis boolean not null default false,
   add column if not exists parcelas_previstas   jsonb not null default '[]'::jsonb,
   add column if not exists total_previsto       numeric(14,2),
-  add column if not exists previsoes_geradas_em timestamptz;
+  add column if not exists previsoes_geradas_em timestamptz,
+  -- Parcelas do cronograma que JÁ ESTAVAM PAGAS quando o contrato
+  -- entrou no sistema. Um contrato que começou no ano passado tem o
+  -- cronograma inteiro, mas quase nada dele é compromisso futuro.
+  -- Ficam registradas aqui para quem abrir o contrato depois não
+  -- achar que ele começa no meio.
+  add column if not exists parcelas_quitadas_fora jsonb not null default '[]'::jsonb;
 
 -- Traz o que está no `extra` para as colunas recém-criadas. A etapa
 -- 40 faz isso para o banco inteiro; aqui fica a parte do contrato,

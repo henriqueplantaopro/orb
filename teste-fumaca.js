@@ -8316,3 +8316,80 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     semComentario.indexOf('toLocaleString') < 0, '');
   verificar('v102 — e tem o formatador próprio', /function fmt\(/.test(t), '');
 })();
+
+// ── ERP teste2 v103: contrato retroativo não lança o que já foi pago ──
+(function () {
+  const Ut = sandbox.window.ERP.util;
+  S.setUsuario('u3');
+  const forn = D.credores.find(c => c.tipo !== 'medico' && c.tipo !== 'funcionario' && c.ativo !== false);
+
+  /* Contrato que começou no ano passado e entra no sistema agora.
+     O cronograma inteiro tem 12 parcelas, mas quase nenhuma é
+     compromisso futuro: a maior parte já foi paga pelo caminho
+     antigo. Gerar tudo encheria o contas a pagar de dívida que não
+     existe — e alguém teria de cancelar parcela por parcela, ou
+     pagaria de novo. */
+  const r = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-RETRO', fornecedor: forn.id, conta: '6.01',
+    objeto: 'Aluguel que começou antes do sistema',
+    vigencia_ini: '2025-01-01', vigencia_fim: '2025-12-31',
+    dia_vencimento: 15, itens: [{ centro: 'cc100', valor: 3000 }]
+  });
+  verificar('v103 — contrato retroativo é salvo', r.ok, JSON.stringify(r.erro));
+
+  const cron = S.cronogramaContrato(r.contrato);
+  verificar('v103 — o cronograma tem as 12 parcelas do ano', cron.length === 12, cron.length);
+
+  /* Marca as nove primeiras como já pagas. */
+  const pular = cron.slice(0, 9).map(l => l.venc);
+  const g = S.gerarTitulosContrato(r.contrato.id, { pular: pular });
+  verificar('v103 — gera só o que ficou desmarcado', g.ok && g.parcelas === 3,
+    JSON.stringify(g.erro) || g.parcelas);
+  verificar('v103 — e informa quantas ficaram de fora', g.quitadas === 9, g.quitadas);
+  verificar('v103 — o valor lançado é só o das três', g.total === 9000, g.total);
+
+  const pcs = S.previsoesDoContrato(r.contrato.id);
+  verificar('v103 — nenhuma parcela paga virou contas a pagar',
+    pcs.every(p => pular.indexOf(p.venc) < 0), pcs.map(p => p.venc).join(','));
+  verificar('v103 — só as três últimas entraram',
+    pcs.map(p => p.venc).sort().join(',') === '2025-10-15,2025-11-15,2025-12-15',
+    pcs.map(p => p.venc).sort().join(','));
+
+  /* As já pagas ficam GRAVADAS. Sem isso, quem abrir o contrato
+     daqui a seis meses vê doze no cronograma e três no financeiro,
+     e não tem como saber se foi decisão ou esquecimento. */
+  const ct = S.contrato(r.contrato.id);
+  verificar('v103 — as já pagas ficam registradas no contrato',
+    (ct.parcelas_quitadas_fora || []).length === 9,
+    (ct.parcelas_quitadas_fora || []).length);
+  verificar('v103 — com quem marcou e quando',
+    (ct.parcelas_quitadas_fora || []).every(x => x.marcado_em && x.marcado_por), '');
+  verificar('v103 — e a observação do título conta a história',
+    /NÃO entraram aqui porque/.test(S.titulosDoContrato(r.contrato.id)[0].obs || ''),
+    S.titulosDoContrato(r.contrato.id)[0].obs);
+
+  /* Marcar tudo como pago não gera título nenhum — e diz por quê,
+     em vez de criar um título vazio. */
+  const r2 = S.salvarContrato({
+    parte: 'fornecedor', numero: 'QA-CT-RETRO2', fornecedor: forn.id, conta: '6.01',
+    vigencia_ini: '2025-01-01', vigencia_fim: '2025-03-31', dia_vencimento: 15,
+    itens: [{ centro: 'cc100', valor: 1000 }]
+  });
+  const todas = S.cronogramaContrato(r2.contrato).map(l => l.venc);
+  const g2 = S.gerarTitulosContrato(r2.contrato.id, { pular: todas });
+  verificar('v103 — marcar todas como pagas não cria título vazio',
+    !g2.ok && /Todas as parcelas foram marcadas/.test(g2.erro || ''), g2.erro);
+
+  /* A tela: checkbox por parcela, vencidas pré-marcadas, e o total
+     "vai lançar" acompanhando cada clique. */
+  const fs = require('fs');
+  const ui = fs.readFileSync(__dirname + '/js/ui-contratos.js', 'utf8');
+  verificar('v103 — a tela tem checkbox por parcela', /data-cg="/.test(ui), '');
+  verificar('v103 — as vencidas nascem marcadas',
+    /if \(l\.venc < hoje\) quitadas\[l\.venc\] = true;/.test(ui), '');
+  verificar('v103 — e há atalho para marcar e desmarcar em bloco',
+    /cg-nenhuma/.test(ui) && /cg-vencidas/.test(ui) && /cg-todas/.test(ui), '');
+  verificar('v103 — o total a lançar acompanha cada clique',
+    /function redesenhar\(\)/.test(ui) && /Vai lançar/.test(ui), '');
+  S.setUsuario('u8');
+})();
