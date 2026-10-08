@@ -203,11 +203,16 @@ ERP.administracao = (function () {
         (souAdmin() && ERP.persistencia && ERP.persistencia.ligado()
           ? '<button class="btn-sm" id="ad-ver-logins">Verificar logins</button>' : '') +
       '</div>' +
-      '<div class="ajuda">O cadastro aqui define <b>o que a pessoa pode fazer</b>. A senha ' +
-      'dela é criada uma única vez no painel do Supabase (Authentication › Users › Add user, ' +
-      'com "Auto Confirm User" marcado) — o sistema não cria senha por conta própria, de ' +
-      'propósito: para isso ele precisaria carregar a chave de administração do banco, e quem ' +
-      'abrisse o console teria acesso a tudo. Criado o login, o vínculo é automático.</div>' +
+      /* Este texto é de quando a senha realmente tinha de ser
+         criada fora. Hoje o sistema cria: a chave de administração
+         fica no servidor, numa função que só responde a quem já
+         está autenticado como administração — nunca no navegador,
+         que era a razão original de mandar a pessoa ao painel. */
+      '<div class="ajuda">O cadastro aqui define <b>o que a pessoa pode fazer</b>. A senha sai ' +
+      'daqui também: abra o usuário e use <b>"Criar acesso / redefinir senha"</b>. Você informa ' +
+      'uma senha provisória, passa à pessoa, e ela é obrigada a trocar no primeiro acesso — a ' +
+      'sua deixa de valer na hora. A chave de administração fica no servidor; o navegador nunca ' +
+      'a recebe.</div>' +
       '<table><thead><tr><th>Nome</th><th>Perfil</th><th>E-mail</th>' +
       '<th class="num">Alçada</th><th>Login</th><th>Situação</th><th></th></tr></thead><tbody>' +
       D.usuarios.map(function (u) {
@@ -259,8 +264,9 @@ ERP.administracao = (function () {
     const { error } = await c.auth.resetPasswordForEmail(email);
     if (error) {
       return diz('Não foi possível enviar: ' + error.message +
-        ' Enquanto o envio de e-mail não estiver configurado, redefina pelo painel do Supabase ' +
-        '(Authentication › Users › a pessoa › Reset password).', 'login-erro');
+        ' Enquanto o envio de e-mail não estiver configurado, use o botão ' +
+        '"Criar acesso / redefinir senha" ao lado — ele define uma senha provisória na hora, ' +
+        'sem depender de e-mail.', 'login-erro');
     }
     diz('Link enviado para ' + email + '.');
   }
@@ -296,6 +302,19 @@ ERP.administracao = (function () {
         diz2('Criando…');
         ERP.persistencia.criarLogin(email, senha).then(function (r) {
           if (r.erro) return diz2(r.erro, 'login-erro');
+          /* A senha que o administrador escolheu é provisória POR
+             DEFINIÇÃO — alguém além do dono a conhece. Marcar isso
+             era um passo manual à parte, num checkbox lá embaixo
+             do formulário, e quem não soubesse deixava a senha do
+             administrador valendo para sempre. */
+          const dono = (D.usuarios || []).find(function (x) {
+            return String(x.email || '').toLowerCase() === String(email).toLowerCase();
+          });
+          if (dono) {
+            const rs = S.salvarUsuario({ id: dono.id, nome: dono.nome, perfil: dono.perfil,
+              email: dono.email, ativo: dono.ativo !== false, senha_provisoria: true });
+            if (rs.ok && ERP.persistencia.ligado()) ERP.persistencia.salvarUsuario(dono);
+          }
           ERP.app.fecharModal();
           ERP.app.aviso((r.redefinido ? 'Senha redefinida' : 'Acesso criado') + ' para ' + email +
             '. Passe a senha provisória — a troca é obrigatória no primeiro acesso.', 'ok');
@@ -342,8 +361,8 @@ ERP.administracao = (function () {
           '<input type="checkbox" id="us-provisoria" style="width:auto;margin-top:3px"' +
           (u.senha_provisoria ? ' checked' : '') + '>' +
           '<span>Senha provisória — exigir troca no próximo acesso' +
-          '<div class="sub">Marque depois de definir a senha da pessoa no painel do Supabase. ' +
-          'Ela entra com a provisória, escolhe a dela, e a sua deixa de valer.</div>' +
+          '<div class="sub">O botão "Criar acesso" acima já marca isto sozinho. ' +
+          'A pessoa entra com a provisória, escolhe a dela, e a sua deixa de valer.</div>' +
           '</span></label>'
         : ''),
       aposAbrir: function () {
@@ -376,9 +395,19 @@ ERP.administracao = (function () {
               if (v && v.ok) {
                 ERP.app.aviso('Usuário salvo e login vinculado — já pode entrar.', 'ok');
               } else if (v && v.motivo === 'login_nao_existe') {
-                ERP.app.aviso('Usuário salvo. Falta criar o login de ' + u2.email +
-                  ' no painel do Supabase (Authentication › Users › Add user, com ' +
-                  '"Auto Confirm User" marcado). Depois clique em "Verificar logins".', 'erro');
+                /* ESTE TEXTO MANDAVA VOCÊ AO PAINEL DO SUPABASE, e
+                   isso parou de ser verdade quando a criação de
+                   acesso passou a ser feita pelo próprio sistema.
+                   Pior: o formulário já tinha fechado, levando
+                   junto o botão que resolveria — então a mensagem
+                   apontava para fora e o caminho de dentro ficava
+                   invisível.
+
+                   Agora a tela de criar acesso ABRE sozinha. É o
+                   passo seguinte óbvio: acabou de cadastrar a
+                   pessoa, ela precisa de senha para entrar. */
+                ERP.app.aviso('Usuário salvo. Falta a senha de acesso — abrindo a tela.', 'ok');
+                criarAcesso(u2.email);
               } else if (v && v.erro) {
                 ERP.app.aviso('Usuário salvo, mas o vínculo falhou: ' + v.erro, 'erro');
               }
@@ -387,7 +416,11 @@ ERP.administracao = (function () {
           });
         }
         ERP.app.fecharModal();
-        ERP.app.aviso('Usuário salvo.', 'ok');
+        /* Só quando NÃO há banco: com banco, o aviso que vale é o
+           da cadeia acima (vinculou, falta senha, falhou). Dois
+           avisos seguidos, o primeiro dizendo "salvo" e o segundo
+           dizendo que falta algo, fazem o segundo parecer engano. */
+        if (!(ERP.persistencia && ERP.persistencia.ligado())) ERP.app.aviso('Usuário salvo.', 'ok');
         ERP.app.montarSeletorUsuario && ERP.app.montarSeletorUsuario();
         render();
       } }]
