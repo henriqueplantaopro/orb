@@ -360,7 +360,7 @@ ERP.persistencia = (function () {
     });
     if (!mudaram.length) return null;
 
-    const linhas = mudaram.map(function (f) { return paraBanco(f, COLUNAS_FUNCIONARIO); });
+    const linhas = mudaram.map(function (f) { return paraBanco(f, COLUNAS_FUNCIONARIO, 'funcionarios'); });
     const { error } = await c.from('funcionarios')
       .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
     if (error) return 'funcionarios: ' + error.message;
@@ -426,33 +426,102 @@ ERP.persistencia = (function () {
     return linha;
   }
 
-  /* Colunas que apontam para outra tabela. Levantadas do schema:
-     centros.empresa, produtos.conta, armazens.centro e pai,
-     titulos.credor, parcelas.conta e centro, compras.armazem...
-     São vinte tabelas, e em qualquer uma delas um campo em branco
-     derruba a gravação inteira com erro de chave estrangeira. */
-  const APONTA_PARA_OUTRA = /^(credor|conta|centro|cliente|empresa|empresa_tomadora|banco|armazem|pai|projeto|contrato|lote_origem|fornecedor|centro_padrao|titulo_id|extrato_id|usuario_id|parcela_id|produto|ativo)$/;
+  /* CHAVES ESTRANGEIRAS, TABELA POR TABELA.
 
-  /* ONDE CADA CHAVE ESTRANGEIRA APONTA. Serve para conferir, antes
-     de enviar, se o registro referenciado existe — porque o banco
-     recusa o lote inteiro quando não existe, e a mensagem fala de
-     uma tabela que a pessoa nem tocou.
+     A versão anterior desta lista era por NOME DE COLUNA, e isso
+     estava errado de um jeito caro: o nome `conta` é chave
+     estrangeira em `produtos` e em `parcelas` (aponta para o plano
+     de contas), mas em `credores` e em `bancos` é o NÚMERO DA CONTA
+     BANCÁRIA — texto puro, sem referência nenhuma. Pela lista por
+     nome, o número da conta do fornecedor não era achado no plano
+     de contas e ia a NULO na gravação: o cadastro bancário do
+     fornecedor seria apagado em silêncio, e o pagamento sairia sem
+     conta. O mesmo valia para `banco` (em `credores` e `bancos` é o
+     código do banco, "237", não o id de uma conta nossa) e para
+     `ativo`, que é booleano em produtos e armazéns.
 
-     Aconteceu com `produtos_conta_fkey`: o material apontava para
-     uma conta do plano que estava no sistema e não no banco. Em
-     vez de insistir e derrubar tudo, o campo vai NULO e o resto
-     grava — o lançamento é o que a pessoa fez; a referência que
-     falta é problema de cadastro, e cabe a outra conversa. */
-  const ONDE_APONTA = {
-    conta: function (v) { return (ERP.dados.plano || []).some(function (x) { return x.cod === v; }); },
-    centro: function (v) { return (ERP.dados.centros || []).some(function (x) { return x.id === v; }); },
-    credor: function (v) { return (ERP.dados.credores || []).some(function (x) { return x.id === v; }); },
-    cliente: function (v) { return (ERP.dados.clientes || []).some(function (x) { return x.id === v; }); },
-    armazem: function (v) { return (ERP.dados.armazens || []).some(function (x) { return x.id === v; }); },
-    banco: function (v) { return (ERP.dados.bancos || []).some(function (x) { return x.id === v; }); },
-    empresa: function (v) { return (ERP.dados.empresas || []).some(function (x) { return x.id === v; }); },
-    produto: function (v) { return (ERP.dados.produtos || []).some(function (x) { return x.id === v; }); }
+     Agora a lista é a do schema, tabela por tabela — e há um teste
+     que a compara com o `01-schema.sql`, para não voltar a divergir.
+
+     Cada entrada: coluna → onde procurar o registro apontado. */
+  const ONDE = {
+    plano:        function (v) { return (ERP.dados.plano || []).some(function (x) { return x.cod === v; }); },
+    centros:      function (v) { return (ERP.dados.centros || []).some(function (x) { return x.id === v; }); },
+    credores:     function (v) { return (ERP.dados.credores || []).some(function (x) { return x.id === v; }); },
+    clientes:     function (v) { return (ERP.dados.clientes || []).some(function (x) { return x.id === v; }); },
+    armazens:     function (v) { return (ERP.dados.armazens || []).some(function (x) { return x.id === v; }); },
+    bancos:       function (v) { return (ERP.dados.bancos || []).some(function (x) { return x.id === v; }); },
+    empresas:     function (v) { return (ERP.dados.empresas || []).some(function (x) { return x.id === v; }); },
+    produtos:     function (v) { return (ERP.dados.produtos || []).some(function (x) { return x.id === v; }); },
+    contratos:    function (v) { return (ERP.store.st.contratos || []).some(function (x) { return x.id === v; }); },
+    ativos:       function (v) { return (ERP.store.st.ativos || []).some(function (x) { return x.id === v; }); },
+    /* Usuário e funcionário não são conferidos: a lista na memória
+       depende do perfil de quem está logado (quem não tem DP lê a
+       visão pública), e conferir contra uma lista incompleta
+       apagaria a autoria de um lançamento legítimo. */
+    nao_confere: function () { return true; }
   };
+
+  const CHAVES_ESTRANGEIRAS = {
+    centros:                   { empresa: 'empresas' },
+    clientes:                  { centro_padrao: 'centros' },
+    bancos:                    { empresa: 'empresas' },
+    titulos:                   { credor: 'credores', empresa_tomadora: 'empresas', criado_por: 'nao_confere' },
+    parcelas:                  { titulo_id: 'nao_confere', credor: 'credores', conta: 'plano',
+                                 centro: 'centros', criado_por: 'nao_confere' },
+    pagamentos:                { parcela_id: 'nao_confere', banco: 'bancos', empresa: 'empresas',
+                                 usuario: 'nao_confere' },
+    retencoes_registradas:     { titulo_id: 'nao_confere' },
+    guias_retencao:            { titulo_id: 'nao_confere' },
+    receber:                   { centro: 'centros', empresa: 'empresas', cliente: 'clientes' },
+    previsoes:                 { centro: 'centros' },
+    contratos:                 { cliente: 'clientes' },
+    extratos:                  { banco: 'bancos', usuario_id: 'nao_confere' },
+    linhas_extrato:            { extrato_id: 'nao_confere', banco: 'bancos' },
+    saldos_informados:         { banco: 'bancos', usuario_id: 'nao_confere' },
+    transferencias_banco:      { origem: 'bancos', destino: 'bancos' },
+    regras_conciliacao:        { conta: 'plano', centro: 'centros', credor: 'credores' },
+    produtos:                  { conta: 'plano' },
+    armazens:                  { centro: 'centros', pai: 'armazens' },
+    posicoes_estoque:          { produto: 'produtos', armazem: 'armazens' },
+    estoque_camadas:           { produto: 'produtos', armazem: 'armazens' },
+    estoque_movimentos:        { produto: 'produtos', armazem: 'armazens', usuario: 'nao_confere' },
+    minimos_estoque:           { produto: 'produtos', armazem: 'armazens' },
+    compras:                   { armazem: 'armazens', centro: 'centros', credor: 'credores' },
+    procedimentos:             { centro: 'centros', armazem: 'armazens', usuario_id: 'nao_confere' },
+    fechamentos_procedimentos: { centro: 'centros' },
+    lotes_produtividade:       { centro: 'centros' },
+    funcionarios:              { cargo: 'nao_confere', centro: 'centros' },
+    decimos:                   { funcionario: 'nao_confere' },
+    ativos:                    { projeto: 'centros', contrato: 'contratos', lote_origem: 'ativos' },
+    ativo_movimentos:          { ativo: 'ativos', usuario_id: 'nao_confere' },
+    ordens_servico:            { ativo: 'ativos', fornecedor: 'credores' },
+    /* `credores` não tem NENHUMA chave estrangeira: `conta`,
+       `agencia` e `banco` ali são o cadastro bancário do
+       fornecedor, não referências. Está escrito para quem vier
+       depois não "completar" a lista por semelhança de nome. */
+    credores:                  {}
+  };
+
+  /* QUAIS PODEM IR A BRANCO quando o apontado não existe.
+
+     A rede de segurança só vale para referência que é SUGESTÃO: a
+     natureza do material, o projeto do ativo, o fornecedor da OS.
+     Perder isso é um campo vazio que alguém preenche depois.
+
+     O que sustenta o registro — o título da parcela, o produto da
+     camada de estoque, o funcionário do décimo — não entra: são
+     `not null` no banco, e esvaziar só trocaria um erro por outro,
+     com a diferença de que este mentiria dizendo que gravou. */
+  const ANULAVEL = /^(conta|centro|cliente|empresa|empresa_tomadora|banco|armazem|pai|projeto|contrato|lote_origem|fornecedor|centro_padrao|credor|cargo)$/;
+
+  /* Colunas que apontam para outra tabela — para a regra do vazio.
+     Montada a partir do mapa acima, não escrita à mão: era a cópia
+     à mão que tinha deixado `ativo` (booleano) na lista. */
+  const COLUNAS_DE_REFERENCIA = {};
+  Object.keys(CHAVES_ESTRANGEIRAS).forEach(function (t) {
+    COLUNAS_DE_REFERENCIA[t] = CHAVES_ESTRANGEIRAS[t];
+  });
 
   /* O que foi descartado nesta gravação, para avisar depois: some
      calado é pior que não gravar. */
@@ -460,7 +529,8 @@ ERP.persistencia = (function () {
   function referenciasDescartadas() { return refsDescartadas.slice(); }
 
   /* Separa o registro entre colunas conhecidas e `extra`. */
-  function paraBanco(item, colunas) {
+  function paraBanco(item, colunas, tabela) {
+    const fks = COLUNAS_DE_REFERENCIA[tabela] || {};
     const linha = {};
     const extra = {};
     Object.keys(item).forEach(function (k) {
@@ -473,11 +543,14 @@ ERP.persistencia = (function () {
            vai procurar o registro de código "" e não vai achar —
            "produtos_conta_fkey". Vazio ali significa "sem conta
            definida", não "a conta cujo código é nada". */
-        if (v === '' && APONTA_PARA_OUTRA.test(k)) v = null;
+        if (v === '' && fks[k]) v = null;
         /* E se o registro apontado NÃO EXISTE, melhor gravar sem a
-           referência do que perder o lançamento inteiro. */
-        if (v !== null && v !== undefined && ONDE_APONTA[k] && !ONDE_APONTA[k](v)) {
-          refsDescartadas.push(k + ' = ' + v);
+           referência do que perder o lançamento inteiro — mas só
+           onde a referência é sugestão (ver ANULAVEL). */
+        if (v !== null && v !== undefined && fks[k] && ANULAVEL.test(k) &&
+            !(ONDE[fks[k]] || ONDE.nao_confere)(v)) {
+          refsDescartadas.push(tabela + '.' + k + ' = ' + v +
+            ' (registro ' + (item.id || '?') + ')');
           v = null;
         }
         linha[k] = v;
@@ -489,16 +562,68 @@ ERP.persistencia = (function () {
     return linha;
   }
 
+  /* QUAL LINHA DERRUBOU O LOTE.
+
+     O Postgres recusa o lote inteiro e nomeia a restrição, nunca a
+     linha: "violates foreign key constraint produtos_conta_fkey"
+     não diz QUAL material nem QUAL conta. Era por isso que o mesmo
+     erro voltava sessão após sessão — cada rodada custava uma
+     consulta no banco para descobrir algo que o sistema tinha na
+     mão o tempo todo.
+
+     Quando o lote falha por restrição, reenvia uma a uma até achar
+     as que falham, e nomeia cada uma com o que dá para reconhecer:
+     id, descrição e o valor do campo citado na restrição. Só roda
+     no erro, e no máximo nas primeiras 60 linhas — é diagnóstico,
+     não caminho normal. */
+  async function culpadas(c, tabela, linhas, originais, mensagem) {
+    if (!/violates (foreign key|check|not-null|unique)|duplicate key/i.test(mensagem || '')) return '';
+    if (!linhas.length || linhas.length > 60) return '';
+    const campo = (String(mensagem).match(/"\w+?_(\w+?)_fkey"/) || [])[1] || '';
+    const nomes = [];
+    for (let i = 0; i < linhas.length && nomes.length < 4; i++) {
+      const r = await c.from(tabela).upsert([linhas[i]], { onConflict: 'id', returning: 'minimal' });
+      if (!r.error) continue;
+      const o = originais[i] || {};
+      const rotulo = [o.id, o.codigo, o.descricao || o.nome]
+        .filter(Boolean).join(' · ') || '(sem identificação)';
+      nomes.push(rotulo + (campo && o[campo] !== undefined ? ' — ' + campo + ' = ' + o[campo] : ''));
+    }
+    if (!nomes.length) return '';
+    return ' — quem derrubou: ' + nomes.join('; ') +
+      (nomes.length >= 4 ? ' e possivelmente outros' : '');
+  }
+
   /* E a volta: o que estava em `extra` vira campo normal de novo,
-     para o resto do sistema não saber que essa divisão existe. */
+     para o resto do sistema não saber que essa divisão existe.
+
+     COM UMA REGRA: `extra` nunca sobrepõe uma coluna de verdade.
+
+     `extra` guarda o que o sistema tem e o banco não. Quando a
+     coluna é criada depois — foi o caso de `cest` e `familia` em
+     produtos, e de várias outras na etapa 34 —, o valor antigo
+     continua lá dentro, congelado no dia em que foi gravado. Se
+     ele vencesse, a tela mostraria o valor velho sobre o novo, e,
+     pior, a próxima gravação mandaria o velho de volta ao banco:
+     uma conta que não existe mais derrubando o lote por chave
+     estrangeira, enquanto a consulta no banco mostra tudo certo —
+     porque o errado só vive dentro do `extra`.
+
+     Então a coluna manda. `extra` só preenche o que a linha não
+     trouxe. */
   function doBanco(linha) {
     const o = {};
+    const temColuna = {};
     Object.keys(linha).forEach(function (k) {
       if (k === 'extra') return;
+      temColuna[k] = true;
       if (linha[k] !== null) o[k] = linha[k];
     });
     if (linha.extra && typeof linha.extra === 'object') {
-      Object.keys(linha.extra).forEach(function (k) { o[k] = linha.extra[k]; });
+      Object.keys(linha.extra).forEach(function (k) {
+        if (temColuna[k]) return;
+        o[k] = linha.extra[k];
+      });
     }
     return o;
   }
@@ -706,7 +831,7 @@ ERP.persistencia = (function () {
          campo preenchido daqui é mais barato que depender só do
          outro lado. */
       return m.novos.map(function (it) {
-        return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+        return completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
       });
     };
     const posicoes = Object.keys(ERP.store.st.posicoes || {}).map(function (k) {
@@ -887,7 +1012,7 @@ ERP.persistencia = (function () {
         });
         if (inserir.length) {
           const linhas = inserir.map(function (it) {
-            return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+            return completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
           });
           const { error } = await c.from(m.def.tabela).insert(linhas);
           if (error && /duplicate key|23505/i.test(error.message || '')) {
@@ -895,24 +1020,25 @@ ERP.persistencia = (function () {
                erro: é o sistema reenviando o que já gravou. Vira
                atualização, uma a uma, e segue sem alarmar ninguém. */
             for (const it of inserir) {
-              const linha = completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+              const linha = completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
               delete linha.id;
               const r2 = await c.from(m.def.tabela).update(linha).eq('id', it.id);
               if (r2.error) falhas.push(m.def.tabela + ' (' + it.id + '): ' + r2.error.message);
             }
           } else if (error) {
-            falhas.push(m.def.tabela + ': ' + error.message);
+            falhas.push(m.def.tabela + ': ' + error.message +
+              await culpadas(c, m.def.tabela, linhas, inserir, error.message));
           }
         }
         for (const it of atualizar) {
-          const linha = completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+          const linha = completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
           delete linha.id;
           const { error } = await c.from(m.def.tabela).update(linha).eq('id', it.id);
           if (error) falhas.push(m.def.tabela + ' (atualizar ' + it.id + '): ' + error.message);
         }
       } else if (m.novos.length) {
         const linhas = m.novos.map(function (it) {
-          return completarObrigatorias(paraBanco(it, m.def.colunas), m.def.tabela);
+          return completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
         });
         /* `returning: 'minimal'` — sem isto, o supabase-js manda
            `Prefer: return=representation`, o Postgres faz RETURNING *,
@@ -926,7 +1052,8 @@ ERP.persistencia = (function () {
              acontece quando a tabela tem outra chave única. */
           tirarFotoDe(m.nome);
         } else if (error) {
-          falhas.push(m.def.tabela + ': ' + error.message);
+          falhas.push(m.def.tabela + ': ' + error.message +
+            await culpadas(c, m.def.tabela, linhas, m.novos, error.message));
         }
       }
       /* Registro que saiu do estado. O sistema cancela e estorna em
@@ -1044,10 +1171,16 @@ ERP.persistencia = (function () {
       const alvo = (t.match(/"(\w+?)_(\w+?)_fkey"/) || [])[2] || '';
       const nomes = { credor: 'o fornecedor ou médico', produto: 'o material',
         centro: 'o projeto', cliente: 'o cliente', banco: 'a conta bancária',
-        armazem: 'o armazém', ativo: 'o equipamento' };
+        armazem: 'o armazém', ativo: 'o equipamento',
+        conta: 'a natureza (conta do plano de contas)' };
       const quem = nomes[alvo] || 'um cadastro';
-      return t + ' — na prática: ' + quem + ' deste lançamento não foi gravado no banco. ' +
-        'Em geral é falta de permissão para criar cadastro. Avise quem cuida do sistema.';
+      /* Quando o isolamento linha a linha achou a culpada, ela já
+         está na mensagem — e aí dizer "em geral é permissão" só
+         atrapalha quem tem o nome do registro na frente. */
+      const achou = /quem derrubou:/.test(t);
+      return t + ' — na prática: ' + quem + ' deste lançamento não existe no banco.' +
+        (achou ? ' Corrija o cadastro acima e tente de novo.'
+               : ' Em geral é falta de permissão para criar cadastro. Avise quem cuida do sistema.');
     }
     if (/row-level security/i.test(t)) {
       return t + ' — na prática: seu perfil não tem permissão para gravar nesta tabela.';

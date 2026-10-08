@@ -7400,8 +7400,11 @@ function liberarParaFaturar(centro, competencia) {
      gravação inteira cai, e o erro fala de uma tabela que não tem
      nada a ver com o que a pessoa fez. São vinte tabelas com esse
      risco. */
+  /* A v97 trocou a lista por nome de coluna pela lista por tabela:
+     a regra do vazio continua, mas agora só na coluna que é mesmo
+     chave estrangeira NAQUELA tabela. */
   verificar('v91 — vazio em chave estrangeira vira nulo na gravação',
-    /APONTA_PARA_OUTRA/.test(pers), '');
+    /if \(v === '' && fks\[k\]\) v = null;/.test(pers), '');
 
   S.setUsuario('u5');
   const m = S.cadastrarMaterial({ descricao: 'QA conta nula v91' });
@@ -7581,10 +7584,122 @@ function liberarParaFaturar(centro, competencia) {
      some calado é pior que erro: o lançamento parece perfeito e o
      relatório sai errado meses depois. */
   verificar('v96 — a gravação confere se a referência existe antes de enviar',
-    /ONDE_APONTA/.test(pers), '');
+    /CHAVES_ESTRANGEIRAS/.test(pers), '');
   verificar('v96 — e avisa o que foi gravado sem a referência',
     /refsDescartadas/.test(pers) &&
     /ficaram em branco porque/.test(pers), '');
   verificar('v96 — a lista é zerada a cada gravação',
     /refsDescartadas = \[\];\n    const mudou = diferencas\(\);/.test(pers), '');
+})();
+
+// ── ERP teste2 v97: a lista de chaves estrangeiras é a do banco ──
+(function () {
+  /* A lista da v96 era por NOME DE COLUNA, e isso apagava dado.
+
+     `conta` é chave estrangeira em produtos e parcelas — aponta
+     para o plano de contas. Em `credores` e em `bancos`, `conta` é
+     o NÚMERO DA CONTA BANCÁRIA, e `banco` é o código do banco
+     ("237"). Pela lista por nome, o sistema procurava "000000039464"
+     no plano de contas, não achava, e gravava NULO: o cadastro
+     bancário do fornecedor desaparecia em silêncio e o pagamento
+     sairia sem conta para onde ir.
+
+     A lista agora é tabela por tabela. Este teste a compara com o
+     `01-schema.sql`: cada chave estrangeira do banco tem de estar
+     nela, e nada que não seja chave estrangeira pode entrar. */
+  const fs = require('fs');
+  const sch = fs.readFileSync(__dirname + '/supabase/01-schema.sql', 'utf8');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* O que o banco tem. */
+  const real = {};
+  const reTab = /create table (\w+) \(([\s\S]*?)\n\);/g;
+  let t;
+  while ((t = reTab.exec(sch))) {
+    const corpo = t[2].replace(/--[^\n]*/g, '');
+    const cols = {};
+    const reRef = /(\w+)\s+[\w()\[\], ]*?references\s+(\w+)\s*\(/g;
+    let r;
+    while ((r = reRef.exec(corpo))) cols[r[1]] = r[2];
+    if (Object.keys(cols).length) real[t[1]] = cols;
+  }
+
+  /* O que o sistema declara. */
+  const bloco = (pers.match(/const CHAVES_ESTRANGEIRAS = \{([\s\S]*?)\n  \};/) || [])[1] || '';
+  const declarado = {};
+  const reEnt = /^\s{4}(\w+):\s*\{([^}]*)\}/gm;
+  let e;
+  while ((e = reEnt.exec(bloco))) {
+    const cols = {};
+    (e[2].match(/(\w+):\s*'(\w+)'/g) || []).forEach(function (p) {
+      const kv = p.match(/(\w+):\s*'(\w+)'/);
+      cols[kv[1]] = kv[2];
+    });
+    declarado[e[1]] = cols;
+  }
+
+  const faltando = [], inventadas = [];
+  Object.keys(real).forEach(function (tab) {
+    /* Só as tabelas que o sistema grava — `perfis`, `eventos` e as
+       demais não passam por `paraBanco`. */
+    if (!declarado[tab]) return;
+    Object.keys(real[tab]).forEach(function (col) {
+      if (!declarado[tab][col]) faltando.push(tab + '.' + col);
+    });
+  });
+  Object.keys(declarado).forEach(function (tab) {
+    Object.keys(declarado[tab]).forEach(function (col) {
+      if (!real[tab] || !real[tab][col]) inventadas.push(tab + '.' + col);
+    });
+  });
+
+  verificar('v97 — toda chave estrangeira do banco está na lista do sistema',
+    faltando.length === 0, faltando.join(', '));
+  verificar('v97 — e a lista não inventa chave que o banco não tem',
+    inventadas.length === 0, inventadas.join(', '));
+
+  /* O caso concreto que motivou tudo: credores não tem chave
+     estrangeira nenhuma, e o teste existe para o próximo que
+     olhar a coluna `conta` ali e quiser "completar" a lista. */
+  verificar('v97 — a conta bancária do fornecedor não é tratada como referência',
+    declarado.credores && !declarado.credores.conta && !declarado.credores.banco,
+    JSON.stringify(declarado.credores || null));
+  verificar('v97 — nem a do cadastro de contas bancárias',
+    declarado.bancos && !declarado.bancos.conta && !declarado.bancos.banco,
+    JSON.stringify(declarado.bancos || null));
+
+  /* Só vai a branco o que é sugestão. O que sustenta o registro é
+     `not null` no banco: esvaziar trocaria um erro por outro, com
+     a diferença de que este mentiria dizendo que gravou. */
+  const anulavel = (pers.match(/const ANULAVEL = \/\^\(([^)]*)\)/) || [])[1] || '';
+  const estruturais = ['titulo_id', 'parcela_id', 'extrato_id', 'produto', 'ativo', 'funcionario'];
+  const indevidos = estruturais.filter(function (c) {
+    return anulavel.split('|').indexOf(c) >= 0;
+  });
+  verificar('v97 — referência que sustenta o registro nunca vai a branco',
+    indevidos.length === 0, indevidos.join(', '));
+
+  /* E quando o lote cai assim mesmo, o sistema diz QUAL linha. */
+  verificar('v97 — o lote recusado é reenviado linha a linha para achar a culpada',
+    /async function culpadas\(/.test(pers) && /quem derrubou:/.test(pers), '');
+})();
+
+// ── ERP teste2 v97: `extra` não sobrepõe coluna de verdade ──
+(function () {
+  const fs = require('fs');
+  const pers = fs.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* O erro mais caro desta leva não estava em nenhuma coluna: a
+     conta inválida vivia dentro do `extra`, de quando a coluna
+     ainda não existia. A consulta no banco mostrava 8.04 (válida),
+     o sistema trabalhava com o valor velho, e a gravação caía com
+     "produtos_conta_fkey" apontando para algo que ninguém achava.
+
+     Agora a coluna manda e `extra` só preenche o que faltou. A
+     etapa 40 limpa o que já ficou para trás. */
+  verificar('v97 — `extra` só preenche o que a coluna não trouxe',
+    /if \(temColuna\[k\]\) return;/.test(pers), '');
+
+  verificar('v97 — e existe a limpeza do que ficou duplicado',
+    fs.existsSync(__dirname + '/supabase/40-extra-para-colunas.sql'), '');
 })();
