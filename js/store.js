@@ -12914,11 +12914,34 @@ ERP.store = (function () {
       return { erro: 'A natureza (plano de contas) do contrato não existe ou não foi informada.', campo: 'ct-conta' };
     }
 
-    const linhas = cronogramaContrato(c);
-    if (!linhas.length) {
+    const todas = cronogramaContrato(c);
+    if (!todas.length) {
       return { erro: c.pagamentos_variaveis
         ? 'Nenhuma parcela informada no cronograma de pagamentos variáveis.'
         : 'Sem valor mensal ou sem vigência — não há o que prever.' };
+    }
+
+    /* O QUE JÁ FOI PAGO FORA DO SISTEMA.
+
+       Contrato que começou no ano passado e entra no sistema agora
+       tem doze parcelas no cronograma e nenhuma delas é compromisso
+       futuro: a maioria já foi paga pelo caminho antigo. Gerar
+       todas encheria o contas a pagar de dívida que não existe, e
+       alguém teria de cancelar uma por uma — ou, pior, pagaria de
+       novo.
+
+       `pular` traz os vencimentos que a pessoa marcou como já
+       pagos na tela de confirmação. Eles ficam REGISTRADOS no
+       contrato (não somem), para o contrato não parecer que começa
+       no meio quando alguém for conferir depois. */
+    const pular = (opcoes.pular || []).map(String);
+    const linhas = todas.filter(function (l) { return pular.indexOf(l.venc) < 0; })
+      .map(function (l, i) { return Object.assign({}, l, { num: i + 1 }); });
+    const quitadas = todas.filter(function (l) { return pular.indexOf(l.venc) >= 0; });
+
+    if (!linhas.length) {
+      return { erro: 'Todas as parcelas foram marcadas como já pagas — não há o que lançar. ' +
+        'Se o contrato está quitado, não é preciso gerar nada.' };
     }
 
     /* JÁ GERADO. Refazer só o que ainda é previsão: o que já virou
@@ -12988,7 +13011,13 @@ ERP.store = (function () {
       })(),
       obs: (c.pagamentos_variaveis ? 'Cronograma digitado no contrato' : 'Previsão mensal do contrato') +
         ' — ' + linhas.length + ' parcela(s), ' + U.brl(total) + '. ' +
-        'Cada parcela é efetivada quando a nota do período chegar.'
+        'Cada parcela é efetivada quando a nota do período chegar.' +
+        (quitadas.length
+          ? ' ' + quitadas.length + ' parcela(s) do cronograma NÃO entraram aqui porque ' +
+            'já estavam pagas fora do sistema (' +
+            U.fData(quitadas[0].venc) + ' a ' + U.fData(quitadas[quitadas.length - 1].venc) +
+            ', ' + U.brl(quitadas.reduce(function (t, l) { return t + l.valor; }, 0)) + ').'
+          : '')
     }, linhas);
     if (!r.ok) return r;
 
@@ -12999,9 +13028,24 @@ ERP.store = (function () {
       .forEach(function (p) { p.status = 'previsto'; });
 
     c.previsoes_geradas_em = new Date();
+    /* As quitadas ficam GRAVADAS no contrato. Sem isso, quem abrir
+       o contrato daqui a seis meses vê um cronograma de doze
+       parcelas e um financeiro com cinco, e não tem como saber se
+       foi decisão ou esquecimento. */
+    if (quitadas.length) {
+      c.parcelas_quitadas_fora = (c.parcelas_quitadas_fora || []).concat(
+        quitadas.map(function (l) {
+          return { venc: l.venc, valor: l.valor, marcado_em: U.hoje(),
+                   marcado_por: (usuario() || {}).nome || '' };
+        })).filter(function (x, i, a) {
+          return a.findIndex(function (y) { return y.venc === x.venc; }) === i;
+        });
+    }
     logar('contrato', c.id, 'gerou contas a pagar do contrato',
-      linhas.length + ' parcela(s) · ' + U.brl(total));
-    return { ok: true, titulo: r.titulo, parcelas: linhas.length, total: total };
+      linhas.length + ' parcela(s) · ' + U.brl(total) +
+      (quitadas.length ? ' · ' + quitadas.length + ' já paga(s) fora do sistema, não lançada(s)' : ''));
+    return { ok: true, titulo: r.titulo, parcelas: linhas.length, total: total,
+             quitadas: quitadas.length };
   }
 
   /* Alertas de vigência e de reajuste: 90, 60 e 30 dias. */

@@ -1,3 +1,56 @@
+# ERP teste2 - v103 — contrato que já estava rodando
+
+1536 verificações.
+
+Lançar hoje um contrato que começou em janeiro do ano passado com
+vencimento todo dia 15: o cronograma tem doze parcelas, e quase
+nenhuma é compromisso futuro — a maior parte já foi paga pelo
+caminho antigo.
+
+Gerar todas encheria o contas a pagar de dívida que não existe. E
+alguém teria de cancelar parcela por parcela ou, pior, pagaria de
+novo.
+
+## Como ficou
+
+Na tela que pergunta antes de gerar, **cada parcela tem um checkbox
+"já paga"**, e as que já venceram **nascem marcadas**. Você desmarca
+as que de fato continuam em aberto; só o que ficar desmarcado vai
+para o contas a pagar.
+
+Nascerem marcadas é a escolha certa: num contrato retroativo, a
+parcela vencida paga é a regra e a vencida em aberto é a exceção. O
+contrário faria o caso comum dar trabalho e o raro dar sossego.
+
+Três atalhos no alto — **Nenhuma paga**, **Marcar as vencidas**,
+**Todas pagas** — para contrato de dois anos não virar vinte e quatro
+cliques.
+
+O total **"Vai lançar"** acompanha cada clique. Confirmar sem saber
+quanto está entrando no contas a pagar seria o mesmo tipo de cegueira
+que a tela existe para evitar.
+
+## O que não some
+
+As parcelas marcadas como já pagas **ficam registradas no contrato**,
+com a data e o nome de quem marcou, e a observação do título conta a
+história: *"3 parcela(s) do cronograma NÃO entraram aqui porque já
+estavam pagas fora do sistema (15/01/2025 a 15/09/2025,
+R$ 27.000,00)"*.
+
+Sem isso, quem abrisse o contrato daqui a seis meses veria doze
+parcelas no cronograma e três no financeiro, e não teria como saber
+se foi decisão ou esquecimento.
+
+Marcar todas como pagas não cria um título vazio: o sistema recusa e
+diz por quê.
+
+## O que rodar
+
+A etapa **41** de novo — ela ganhou a coluna `parcelas_quitadas_fora`.
+É a mesma etapa, segura de rodar outra vez, e o `add column if not
+exists` não mexe no que já está lá.
+
 # ERP teste2 - v102 — DRE gerencial, no sistema e no celular
 
 1521 verificações.
