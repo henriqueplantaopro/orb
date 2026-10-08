@@ -1188,7 +1188,6 @@ ERP.store = (function () {
       if (!p || p.status === 'cancelado' || p.aprovacao === 'aprovado') return;
       p.aprovacao = 'aprovado';
       p.aprovado_por = usuario().nome;
-    p.aprovado_por_id = (usuario() || {}).id || null;
       p.aprovado_por_id = (usuario() || {}).id || null;
       p.aprovado_em = new Date();
       p.motivo = '';
@@ -11188,6 +11187,19 @@ ERP.store = (function () {
       ' · auto-aprovação ' + (p.impedir_autoaprovacao ? 'bloqueada' : 'liberada') +
       ' · anexo ' + (p.exigir_anexo ? 'obrigatório' : 'opcional') +
       (p.travar_competencia_ate ? ' · competência fechada até ' + U.fComp(p.travar_competencia_ate) : ''));
+    /* VAI AO BANCO, como a matriz. Isto era lido do código e nunca
+       gravado: a alçada ajustada aqui valia só nesta sessão e
+       voltava ao padrão no próximo login — e a pessoa não tinha
+       como desconfiar, porque a tela mostrava o valor novo até
+       alguém recarregar a página. */
+    if (ERP.persistencia && ERP.persistencia.gravarParametros) {
+      ERP.persistencia.gravarParametros().then(function (r) {
+        if (r && r.erro && ERP.app && ERP.app.aviso) {
+          ERP.app.aviso('Parâmetros alterados na tela, MAS não gravados no banco: ' + r.erro +
+            ' — valem só até você sair.', 'erro');
+        }
+      });
+    }
     return { ok: true };
   }
 

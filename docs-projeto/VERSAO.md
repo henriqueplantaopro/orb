@@ -1,3 +1,78 @@
+# ERP teste2 - v101 — a alçada passou a existir de verdade
+
+1479 verificações.
+
+Esta versão é o par do aplicativo de celular, e o que ela conserta
+vale muito além dele.
+
+## A alçada nunca era gravada
+
+A alçada de aprovação de pagamento, a trava de "quem solicita não
+aprova", a segregação de compras e o fechamento de competência eram
+lidos do **código** e nunca gravados. O que você ajustava em
+Administração › Políticas valia só naquela sessão, e voltava ao
+padrão no login seguinte — para você e para todos.
+
+E a tela mostrava o valor novo até alguém recarregar a página, então
+não havia como desconfiar. É o mesmo defeito que a matriz de acesso
+tinha, e pela mesma razão.
+
+Não é detalhe de configuração: são três controles que o sistema
+anunciava ter e não tinha.
+
+Agora a política vai ao banco quando você salva, e volta de lá no
+login. **Vale a pena abrir Administração › Políticas e salvar uma
+vez**, mesmo sem mudar nada: é o que grava os valores atuais.
+
+Um detalhe de ordem que importa: a política é aplicada **depois** de
+o sistema montar, não antes. `store.init()` recria os parâmetros com
+o padrão do código, e aplicar antes seria escrever num objeto
+descartado segundos depois — exatamente o defeito que estou
+corrigindo.
+
+## As regras de aprovação saíram da tela e foram para o banco
+
+Até aqui a alçada era uma regra de **tela**. O Supabase expõe o
+banco direto pela internet; quem decide quem grava o quê são as
+políticas de lá. Uma regra em JavaScript roda no navegador de quem
+usa — e quem abrisse o console conseguiria marcar como autorizado um
+pagamento de qualquer valor.
+
+A etapa 42 leva para o banco, em SQL:
+
+- quem tem perfil de aprovação;
+- a alçada por perfil;
+- a lista de perfis que não aprovam, qualquer que seja o valor;
+- "quem solicitou não aprova", comparando por **id** e não por nome
+  (renomear o usuário derrubava a trava, e dois homônimos também);
+- a segregação de compras;
+- o protocolo obrigatório na autorização de faturamento.
+
+As funções rodam como donas da tabela e só respondem a quem está
+autenticado. Testei cada regra contra um Postgres de verdade antes
+de mandar: alçada estourada, auto-aprovação, perfil sem permissão,
+pagamento que já não está aguardando, cotação feita pela própria
+pessoa, previsão não confirmada, protocolo em branco e substituição
+de protocolo.
+
+Um achado do teste: a mensagem de alçada saía **"R$ 50,000.00"**,
+no formato americano — o `to_char` do Postgres usa o idioma do
+servidor, e o Supabase responde em inglês. Num aviso sobre dinheiro,
+essa ambiguidade é exatamente o que não se quer. Há agora uma função
+de formatação e um teste que a trava em 00.000,00.
+
+## E uma linha duplicada
+
+`aprovar` gravava `aprovado_por_id` duas vezes, uma delas com a
+indentação fora do bloco. Sem efeito prático, mas é o tipo de coisa
+que confunde quem for ler depois.
+
+## O que rodar
+
+Nos dois bancos: **42**. E, se ainda não rodou: 35 a 41.
+
+Depois, no sistema: Administração › Políticas › Salvar, uma vez.
+
 # ERP teste2 - v100 — a senha sai do sistema, e a tela passou a dizer isso
 
 1466 verificações.
