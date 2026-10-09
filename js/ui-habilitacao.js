@@ -59,6 +59,8 @@ ERP.habilitacao = (function () {
      foto anterior. Então o que foi lido vive aqui. */
   let dados = { tipos: [], documentos: [], tarefas: [], lido: null, erro: null };
   let carregando = false;
+  /* O que está marcado no cofre para alteração em massa. */
+  const marcados = new Set();
   /* Empresa e tipo sugeridos pelo botão "Subir nova" da fila do
      painel: o lote que vier nasce com eles onde o leitor não
      souber. */
@@ -406,19 +408,32 @@ ERP.habilitacao = (function () {
 
     return filtros() +
       (lista.length
-        ? '<div class="tabela-rolagem"><table><thead><tr>' +
-          '<th>Documento</th><th>Empresa</th><th>Número</th><th>Emissão</th>' +
+        ? barraMassa(lista) +
+          '<div class="tabela-rolagem"><table><thead><tr>' +
+          (podeMexer()
+            ? '<th style="width:24px"><input type="checkbox" id="hb-marca-todos"' +
+              (lista.length && lista.every(function (d) { return marcados.has(d.id); })
+                ? ' checked' : '') + '></th>'
+            : '') +
+          '<th>Documento</th><th>Pertence a</th><th>Número</th><th>Emissão</th>' +
           '<th>Validade</th><th>Situação</th><th></th></tr></thead><tbody>' +
           lista.map(function (d) {
             const s = situacao(d), vale = valem[d.id];
             return '<tr' + (vale ? '' : ' class="hb-velho"') + '>' +
+              (podeMexer()
+                ? '<td><input type="checkbox" data-hb-marca="' + U.esc(d.id) + '"' +
+                  (marcados.has(d.id) ? ' checked' : '') + '></td>'
+                : '') +
               '<td class="desc">' + U.esc(d.tipo_nome || d.tipo) +
                 (d.tipo_dado_pessoal
                   ? ' <span class="badge b-reprovado">dado de sócio</span>' : '') +
                 (vale ? '' : ' <span class="badge b-cancelado">substituído</span>') +
                 (d.arquivo_nome ? '<div class="sub">' + U.esc(d.arquivo_nome) + '</div>' : '') + '</td>' +
-              '<td>' + U.esc(nomeEmpresa(d.empresa)) +
-                (d.abrangencia === 'matriz' ? '<div class="sub">cobre as filiais</div>' : '') + '</td>' +
+              '<td>' + U.esc(d.abrangencia === 'matriz' ? 'Único' : nomeEmpresa(d.empresa)) +
+                (d.abrangencia === 'matriz'
+                  ? '<div class="sub">' + U.esc(empresasCobertas(d).map(nomeEmpresa).join(' e ')) +
+                    '</div>'
+                  : '') + '</td>' +
               '<td class="mono">' + U.esc(d.numero || '—') + '</td>' +
               '<td class="mono">' + (d.data_emissao ? U.fData(d.data_emissao) : '—') + '</td>' +
               '<td class="mono">' +
@@ -442,6 +457,88 @@ ERP.habilitacao = (function () {
       'num lugar que qualquer um alcança sabendo o caminho. A linha cinza é o documento já ' +
       'substituído por uma renovação — fica guardado porque provar regularidade numa data passada ' +
       'exige o documento daquela data.</div>';
+  }
+
+  /* ── alterar em massa ────────────────────────────────────
+     Subir trinta atestados como "Matriz" e depois descobrir que
+     quase todos são do grupo é o caso normal — e corrigir um a
+     um, abrindo e fechando trinta formulários, é o tipo de
+     trabalho que faz a pessoa desistir e deixar errado.
+
+     A barra só aparece com algo marcado, e cada campo é
+     OPCIONAL: muda o que você escolher e deixa o resto como
+     está. A gravação é UM pedido ao banco com todos os ids, não
+     trinta — além de rápido, ou grava tudo ou não grava nada. */
+  function barraMassa(lista) {
+    if (!podeMexer()) return '';
+    const n = marcados.size;
+    if (!n) {
+      return '<div class="ajuda" style="margin:-4px 0 8px">Marque as linhas para alterar ' +
+        'várias de uma vez — útil para corrigir a quem pertencem os atestados.</div>';
+    }
+    return '<div class="filtros" id="hb-barra-massa" ' +
+      'style="background:var(--brand-soft);padding:8px;border-radius:6px">' +
+      '<div class="f" style="min-width:auto;align-self:center"><b>' + n + ' marcado(s)</b></div>' +
+      '<div class="f" style="min-width:200px"><label for="hb-m-pert">Passar a pertencer a</label>' +
+        '<select id="hb-m-pert"><option value="">não mudar</option>' +
+        opcoesPertence().map(function (o) {
+          return '<option value="' + U.esc(o.v) + '">' + U.esc(o.rot) + '</option>'; }).join('') +
+        '</select></div>' +
+      '<div class="f" style="min-width:200px"><label for="hb-m-tipo">Passar a ser do tipo</label>' +
+        '<select id="hb-m-tipo"><option value="">não mudar</option>' +
+        (dados.tipos || []).map(function (t) {
+          return '<option value="' + U.esc(t.id) + '">' + U.esc(t.nome) + '</option>'; }).join('') +
+        '</select></div>' +
+      '<button class="btn-linha" id="hb-m-aplicar">Aplicar aos ' + n + '</button>' +
+      (podeAdmin()
+        ? '<button class="btn-sm btn-cancelar" id="hb-m-arquivar">Arquivar os ' + n + '</button>' : '') +
+      '<button class="btn-sm" id="hb-m-limpar">Desmarcar</button>' +
+      '</div>';
+  }
+
+  async function aplicarEmMassa() {
+    const ids = Array.from(marcados);
+    if (!ids.length) return;
+    const pert = U.val('hb-m-pert'), tipo = U.val('hb-m-tipo');
+    if (!pert && !tipo) {
+      return ERP.app.aviso('Escolha o que mudar — pertence a, tipo, ou os dois.', 'erro');
+    }
+    const campos = {};
+    if (pert) {
+      const q = dePertence(pert);
+      campos.empresa = q.empresa;
+      campos.abrangencia = q.abrangencia;
+    }
+    if (tipo) {
+      campos.tipo = tipo;
+      /* Virar um tipo que NÃO VENCE tem de apagar a validade: ela
+         deixaria o documento no semáforo para sempre, com uma data
+         que o tipo novo não tem. */
+      if (tipoDe(tipo).sem_validade) campos.data_validade = null;
+    }
+    const r = await cli().from('hab_documento').update(campos).in('id', ids);
+    if (r.error) return ERP.app.aviso('Não alterou: ' + r.error.message, 'erro');
+    marcados.clear();
+    ERP.app.aviso(ids.length + ' documento(s) alterado(s).');
+    carregar();
+  }
+
+  async function arquivarEmMassa() {
+    const ids = Array.from(marcados);
+    if (!ids.length) return;
+    ERP.app.modal({
+      titulo: 'Arquivar ' + ids.length + ' documento(s)',
+      corpo: '<div class="ajuda">Arquivar tira da lista e <b>mantém guardado</b> — o arquivo ' +
+        'continua no cofre e pode ser reaberto no banco. Nada é apagado.</div>',
+      acoes: [{ txt: 'Arquivar', cls: 'btn-cancelar', fn: async function () {
+        const r = await cli().from('hab_documento').update({ arquivado: true }).in('id', ids);
+        if (r.error) return ERP.app.aviso('Não arquivou: ' + r.error.message, 'erro');
+        marcados.clear();
+        ERP.app.fecharModal();
+        ERP.app.aviso(ids.length + ' documento(s) arquivado(s).');
+        carregar();
+      } }]
+    });
   }
 
   function filtros() {
@@ -546,6 +643,26 @@ ERP.habilitacao = (function () {
     });
     liga('hb-f-tipo', 'change', function () { filtro.tipo = this.value; render(); });
     liga('hb-baixar-lote', 'click', abrirBaixaEmLote);
+    liga('hb-m-aplicar', 'click', aplicarEmMassa);
+    liga('hb-m-arquivar', 'click', arquivarEmMassa);
+    liga('hb-m-limpar', 'click', function () { marcados.clear(); render(); });
+    liga('hb-marca-todos', 'change', function () {
+      /* "Todos" é todos os que ESTÃO NO FILTRO, não os do cofre
+         inteiro: marcar o que não está na tela é o jeito mais
+         fácil de alterar o que não se queria. */
+      const visiveis = Array.from(document.querySelectorAll('[data-hb-marca]'))
+        .map(function (c) { return c.dataset.hbMarca; });
+      if (this.checked) visiveis.forEach(function (id) { marcados.add(id); });
+      else visiveis.forEach(function (id) { marcados.delete(id); });
+      render();
+    });
+    document.querySelectorAll('[data-hb-marca]').forEach(function (c) {
+      c.addEventListener('change', function () {
+        if (this.checked) marcados.add(this.dataset.hbMarca);
+        else marcados.delete(this.dataset.hbMarca);
+        render();
+      });
+    });
     liga('hb-f-sit', 'change', function () { filtro.situacao = this.value; render(); });
     liga('hb-f-busca', 'input', function () {
       filtro.busca = this.value; render();

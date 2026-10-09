@@ -23,6 +23,7 @@ carregar('ofx.js');
    arquivo aqui dá acesso às regras puras dele, como a separação
    das contribuições sociais, sem precisar de navegador. */
 carregar('nfse.js');
+carregar('nfe.js');
 
 const S = sandbox.window.ERP.store;
 const D = sandbox.window.ERP.dados;
@@ -9333,6 +9334,73 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   D.bancos.pop();
 
   S.setUsuario(antes || 'u8');
+})();
+
+// ── v107b: a CSRF no leitor que o LANÇAMENTO usa ─────────────
+(function () {
+  /* A primeira correção foi para o `nfse.js`, que é lido pelo
+     FATURAMENTO — notas que a empresa EMITE. O lançamento de NF a
+     pagar passa pelo `nfe.js`, outro arquivo. A regra tem de valer
+     nos dois, e este teste existe para a diferença não voltar a
+     passar despercebida. */
+  const a = sandbox.window.ERP.nfe.separarCsrf;
+  const b = sandbox.window.ERP.nfse.separarCsrf;
+  verificar('v107 — o leitor do lançamento também separa a CSRF',
+    typeof a === 'function', typeof a);
+
+  [[10000, 465], [7333.33, 340], [2500, 116.25]].forEach(function (c) {
+    const ra = a(c[0], c[1]), rb = b(c[0], c[1]);
+    verificar('v107 — os dois leitores dão o mesmo resultado para ' +
+      c[0].toFixed(2) + ' / ' + c[1].toFixed(2),
+      JSON.stringify(ra) === JSON.stringify(rb) && ra &&
+      Math.round((ra.PIS + ra.COFINS + ra.CSLL) * 100) / 100 === c[1],
+      JSON.stringify({ nfe: ra, nfse: rb }));
+  });
+  verificar('v107 — e os dois recusam o que não é CSRF',
+    a(10000, 100) === null && b(10000, 100) === null, '');
+
+  const fs6 = require('fs');
+  const nfe6 = fs6.readFileSync(__dirname + '/js/nfe.js', 'utf8');
+  verificar('v107 — a separação é aplicada nos dois layouts de NFS-e',
+    /* Conta só as CHAMADAS: o padrão anterior casava também com a
+       declaração da função e dava três. */
+    (nfe6.match(/if \(aplicarCsrf\(ret,/g) || []).length === 2,
+    (nfe6.match(/if \(aplicarCsrf\(ret,/g) || []).length);
+  verificar('v107 — e os três já separados pelo emissor não são mexidos',
+    /if \(!csll \|\| pis \|\| cofins\) return false;/.test(nfe6), '');
+  verificar('v107 — a tela é avisada de que a separação aconteceu',
+    /separadas em PIS, COFINS e CSLL/.test(nfe6), '');
+})();
+
+// ── v108: alterar em massa no cofre ──────────────────────────
+(function () {
+  const fs7 = require('fs');
+  const hab7 = fs7.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+
+  /* Subir trinta atestados como "Matriz" e corrigir um a um,
+     abrindo trinta formulários, é o trabalho que faz a pessoa
+     desistir e deixar errado. */
+  verificar('v108 — o cofre tem marcação por linha e marcar todos',
+    /data-hb-marca=/.test(hab7) && /id="hb-marca-todos"/.test(hab7), '');
+  verificar('v108 — "todos" marca só o que está no filtro, não o cofre inteiro',
+    /querySelectorAll\('\[data-hb-marca\]'\)[\s\S]{0,200}visiveis/.test(hab7), '');
+  verificar('v108 — a alteração em massa é UM pedido ao banco, com todos os ids',
+    /\.update\(campos\)\.in\('id', ids\)/.test(hab7), '');
+  verificar('v108 — e cada campo é opcional, muda só o que foi escolhido',
+    /if \(!pert && !tipo\)/.test(hab7) && /não mudar/.test(hab7), '');
+  /* Virar um tipo que não vence tem de apagar a validade: ela
+     deixaria o documento no semáforo com uma data que o tipo novo
+     não tem. */
+  verificar('v108 — trocar para tipo que não vence apaga a validade',
+    /if \(tipoDe\(tipo\)\.sem_validade\) campos\.data_validade = null;/.test(hab7), '');
+  verificar('v108 — arquivar em massa pede confirmação e não apaga',
+    /function arquivarEmMassa/.test(hab7) && /arquivado: true/.test(hab7) &&
+    /mantém guardado/.test(hab7), '');
+  /* A coluna mostra "Único" em vez do nome de uma empresa só —
+     senão a correção em massa não tem como ser conferida de
+     relance. */
+  verificar('v108 — a lista mostra Único em vez de uma empresa só',
+    /d\.abrangencia === 'matriz' \? 'Único' : nomeEmpresa\(d\.empresa\)/.test(hab7), '');
 })();
 
 concluir();

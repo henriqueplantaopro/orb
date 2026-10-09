@@ -55,6 +55,54 @@ ERP.nfe = (function () {
      qual indicador cada leiaute usa, então por ora só evita CONTAR O
      MESMO TRIBUTO DUAS VEZES quando duas tags concorrentes (uma do
      padrão "novo", outra do "antigo") aparecem na mesma nota. */
+  /* ── contribuições sociais somadas num campo só ──────────
+     A NFS-e traz com frequência PIS, COFINS e CSLL somados: a CSRF
+     da Lei 10.833, 4,65% do serviço (0,65 + 3,00 + 1,00). O
+     emissor costuma pôr o total no campo do CSLL, por ser o
+     último dos três.
+
+     Gravando tudo como CSLL, a guia de CSLL fica inflada em quase
+     cinco vezes e as de PIS e COFINS ficam vazias — e é com esses
+     números que se recolhe imposto de terceiro.
+
+     Separar não é chute: a proporção é fixa em lei, e só vale
+     quando o total BATE com 4,65% do serviço. Quando não bate, não
+     é CSRF e fica como veio. Cada parte sai do serviço, como a lei
+     define; a sobra de centavo fica na COFINS, a maior das três.
+
+     Mora aqui, perto dos outros auxiliares, porque os DOIS
+     layouts de NFS-e deste arquivo precisam dela — e porque a
+     primeira vez que escrevi esta regra foi no `nfse.js`, que é
+     lido pelo FATURAMENTO. O lançamento a pagar passa por aqui.
+     Mesma regra, dois leitores: deixar em um só já custou uma
+     correção que não corrigia nada. */
+  function separarCsrf(servicos, total) {
+    if (!(total > 0) || !(servicos > 0)) return null;
+    const esperado = Math.round(servicos * 0.0465 * 100) / 100;
+    if (Math.abs(total - esperado) > Math.max(0.05, servicos * 0.0002)) return null;
+    const pis = Math.round(servicos * 0.0065 * 100) / 100;
+    const csll = Math.round(servicos * 0.01 * 100) / 100;
+    return { PIS: pis, COFINS: Math.round((total - pis - csll) * 100) / 100, CSLL: csll };
+  }
+
+  /* Aplica a separação numa lista de retenções já montada. Devolve
+     true quando separou, para a tela poder dizer. */
+  function aplicarCsrf(ret, servicos) {
+    const achar = t => ret.find(function (r) { return r.tributo === t; });
+    const pis = achar('PIS'), cofins = achar('COFINS'), csll = achar('CSLL');
+    /* Os três já separados pelo emissor estão certos — mexer neles
+       seria estragar o que ele acertou. */
+    if (!csll || pis || cofins) return false;
+    const partes = separarCsrf(servicos, csll.valor);
+    if (!partes) return false;
+    const campo = csll.campo;
+    ret.splice(ret.indexOf(csll), 1);
+    ret.push({ tributo: 'PIS', valor: partes.PIS, campo: campo + ' (CSRF separada)' });
+    ret.push({ tributo: 'COFINS', valor: partes.COFINS, campo: campo + ' (CSRF separada)' });
+    ret.push({ tributo: 'CSLL', valor: partes.CSLL, campo: campo + ' (CSRF separada)' });
+    return true;
+  }
+
   function retencoesDe(ctx, tags) {
     const lista = [];
     const vistos = {};
@@ -184,6 +232,15 @@ ERP.util.brl(        somar(ret)) +
         ' por tributo — confira e ajuste os campos de retenção à mão antes de lançar.');
     }
 
+    /* Contribuições sociais somadas: separa antes de somar o
+       retido, senão o total fica certo e a divisão por tributo
+       errada. */
+    const vServParaCsrf = n2(texto(doc, 'vServ')) || n2(texto(doc, 'vServPrest'));
+    if (aplicarCsrf(ret, vServParaCsrf)) {
+      alertasRet.push('As contribuições sociais vieram somadas num campo só (4,65%) e foram ' +
+        'separadas em PIS, COFINS e CSLL. Confira antes de lançar.');
+    }
+
     // bruto: vServ do DPS; na falta, reconstitui pelo líquido + retenções
     const vServ = n2(texto(doc, 'vServ'));
     const vLiq = n2(texto(valNFSe, 'vLiq'));
@@ -238,6 +295,10 @@ ERP.util.brl(        vLiq) + ' — confira as retenções.');
     if (issRetExplicito > 0) ret.push({ tributo: 'ISS', valor: issRetExplicito, campo: 'ValorIssRetido' });
     else if (flagIssRetido === '1' && valorIss > 0) ret.push({ tributo: 'ISS', valor: valorIss, campo: 'ValorIss (IssRetido=1)' });
     const vServA = n2(texto(valores, 'ValorServicos')), vLiqA = n2(texto(doc, 'ValorLiquidoNfse'));
+    if (aplicarCsrf(ret, vServA)) {
+      alertasRet.push('As contribuições sociais vieram somadas num campo só (4,65%) e foram ' +
+        'separadas em PIS, COFINS e CSLL. Confira antes de lançar.');
+    }
     const somaRetA = Math.round(ret.reduce(function (a, r) { return a + r.valor; }, 0) * 100) / 100;
     if (vServA > 0 && vLiqA > 0 && Math.abs(vServA - somaRetA - vLiqA) >= 0.01) {
       alertasRet.push('Bruto menos retenções identificadas dá ' +
@@ -331,5 +392,5 @@ ERP.util.brl(        vLiqA) + ' — pode haver desconto condicionado/incondicion
     return nf;
   }
 
-  return { ler: ler };
+  return { ler: ler, separarCsrf: separarCsrf };
 })();
