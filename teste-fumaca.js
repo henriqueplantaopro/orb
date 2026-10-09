@@ -9403,4 +9403,96 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /d\.abrangencia === 'matriz' \? 'Único' : nomeEmpresa\(d\.empresa\)/.test(hab7), '');
 })();
 
+// ── v109: o catálogo decide, não o programa ──────────────────
+(function () {
+  const fs8 = require('fs');
+  const hab8 = fs8.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  const sql46 = fs8.readFileSync(__dirname + '/supabase/46-documentacao-catalogo.sql', 'utf8');
+
+  /* Três decisões que eram minhas e passam a ser dele. Enquanto
+     dependiam de uma linha de SQL, eram decisões que não se
+     tomava: ficava-se com o padrão, errado para o caso de quem
+     usa. */
+  verificar('v109 — o seletor de tipo é um só, agrupado por categoria',
+    /function opcoesTipo\(/.test(hab8) && /<optgroup label="/.test(hab8), '');
+  verificar('v109 — e os quatro seletores usam esse mesmo gerador',
+    (hab8.match(/opcoesTipo\(/g) || []).length === 5,
+    (hab8.match(/opcoesTipo\(/g) || []).length + ' usos (1 declaração + 4 seletores)');
+  verificar('v109 — dentro do grupo a ordem é alfabética em português',
+    /localeCompare\(String\(b\.nome\), 'pt-BR'\)/.test(hab8), '');
+  /* Tipo de categoria fora do mapa não pode sumir do seletor:
+     sumir do seletor é sumir do cadastro. */
+  verificar('v109 — e tipo sem categoria conhecida não desaparece da lista',
+    /Sem categoria/.test(hab8), '');
+
+  /* `!== false` e não `=== true`: antes de o 46 rodar as colunas
+     não existem, e o indefinido tem de continuar valendo como
+     antes — exigido e comum. Trocar por `=== true` esvaziaria o
+     painel e o zip de quem ainda não rodou o SQL. */
+  verificar('v109 — exigido e comum valem por padrão enquanto o SQL não rodou',
+    /const ehExigido = t => !t \|\| t\.exigido !== false;/.test(hab8) &&
+    /const ehComum   = t => !t \|\| t\.comum   !== false;/.test(hab8), '');
+  verificar('v109 — o painel só cobra o que está marcado como pendência',
+    /const exigidos = tipos\.filter\(ehExigido\);/.test(hab8) &&
+    /extrasTipo\.filter\(function \(t\) \{/.test(hab8), '');
+  verificar('v109 — e o extra ausente não vira chip nenhum',
+    /return !!mapa\[e\.id \+ '\|' \+ t\.id\];/.test(hab8), '');
+  verificar('v109 — a aba Tipos tem botão de criar e de editar',
+    /id="hb-tipo-novo"/.test(hab8) && /data-hb-tipo-edit="/.test(hab8) &&
+    /function abrirTipo/.test(hab8), '');
+  verificar('v109 — a marcação do catálogo salva sozinha e volta atrás se o banco recusar',
+    /function marcarBandeira/.test(hab8) && /caixa\.checked = antes;/.test(hab8), '');
+  /* Sem alçada, a aba é de leitura: o banco recusaria pela
+     política hab_tipo_mexer, e a tela tem de dizer antes do
+     clique, não depois do erro. */
+  verificar('v109 — sem nível A a aba é só leitura',
+    /const adm = podeAdmin\(\);/.test(hab8) && /\(adm \? '' : ' disabled'\)/.test(hab8), '');
+  /* O id vem do nome e nunca muda: ele está em hab_documento.tipo
+     e dentro de cobre_tambem. */
+  verificar('v109 — o id do tipo novo é derivado do nome e não se repete',
+    /function slugDe/.test(hab8) &&
+    /while \(\(dados\.tipos \|\| \[\]\)\.some\(function \(t\) \{ return t\.id === id; \}\)\)/.test(hab8), '');
+  verificar('v109 — tipo que não vence não aceita prazo',
+    /Tipo que não vence não tem prazo/.test(hab8), '');
+
+  /* COBRE TAMBÉM: um papel valendo por dois campos. */
+  verificar('v109 — um documento pode cobrir mais de um tipo',
+    /function cobreTambem/.test(hab8) && /const tiposCobertos = d =>/.test(hab8) &&
+    /cobre_tambem: cobre/.test(hab8), '');
+  verificar('v109 — e o próprio tipo não entra na lista de cobertura',
+    /c\.dataset\.hbCobre !== tipo/.test(hab8), '');
+  verificar('v109 — o painel conta a cobertura dupla',
+    /const tps = tiposCobertos\(d\);/.test(hab8) && /coberto por/.test(hab8), '');
+  verificar('v109 — e o zip leva o arquivo na pasta da categoria pedida',
+    /cats\.filter\(function \(x\) \{ return marcadas\.indexOf\(x\) >= 0; \}\)\[0\]/.test(hab8), '');
+  verificar('v109 — o pouco comum fica fora do zip até ser pedido',
+    /id="bl-raros"/.test(hab8) && /if \(!raros && !tiposCobertos\(d\)\.some/.test(hab8), '');
+
+  /* O SQL. A view foi criada com `select d.*`, e o `*` é expandido
+     NA CRIAÇÃO: acrescentar a coluna à tabela não a acrescenta à
+     view, e a tela lê a view. Sem refazer a view, a cobertura
+     dupla salvaria no banco e a tela nunca a veria de volta. */
+  verificar('v109 — o SQL 46 refaz a view, senão a coluna nova não chega à tela',
+    /drop view if exists hab_documento_vigente;/.test(sql46) &&
+    /create view hab_documento_vigente as/.test(sql46) &&
+    /grant select on hab_documento_vigente to authenticated;/.test(sql46), '');
+  verificar('v109 — e estoura se a view ficar sem as colunas novas',
+    /raise exception 'A view hab_documento_vigente ficou sem/.test(sql46), '');
+  /* A conferência é UMA consulta no fim: o editor do Supabase
+     mostra só o resultado da última, e select de conferência no
+     meio é select que ninguém lê. Foi a lição do 44. */
+  /* Conta só a consulta SOLTA — a do `create view` vem presa ao
+     `as` da linha de cima, e a do `do $$` vem indentada. Foi o
+     primeiro desenho deste teste que contou as três e reprovou
+     um arquivo correto. */
+  verificar('v109 — e a conferência é uma consulta só, no fim',
+    (sql46.match(/\n\nselect /g) || []).length === 1 &&
+    /select categoria,[\s\S]*from hab_tipo_documento[\s\S]*order by min\(ordem\);\s*(--[^\n]*\n)*\s*$/.test(sql46),
+    (sql46.match(/\n\nselect /g) || []).length + ' consulta(s) solta(s)');
+  /* Reexecução não pode reverter o que ele ajustar na tela. */
+  verificar('v109 — rodar o 46 de novo não desfaz o que foi ajustado na tela',
+    /padrao_exigido_aplicado/.test(sql46) && /padrao_comum_aplicado/.test(sql46) &&
+    (sql46.match(/and not \(extra \? '/g) || []).length === 2, '');
+})();
+
 concluir();

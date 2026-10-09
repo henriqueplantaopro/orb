@@ -73,7 +73,7 @@ ERP.dados = (function () {
     { id: 'baixar_ativo', nome: 'Dar baixa em ativo (venda, sucata, perda)', grupo: 'Estoque' },
     { id: 'autorizar_faturamento', nome: 'Registrar a autorização do órgão para faturar', grupo: 'Faturamento' },
     { id: 'liberar_faturamento', nome: 'Liberar o faturamento (permite emitir NF/fatura)', grupo: 'Faturamento' },
-    { id: 'ver_doc_socio', nome: 'Ver documento com dado pessoal de sócio (RG, CPF, residência)', grupo: 'Habilitação' },
+    { id: 'ver_doc_socio', nome: 'Ver documento com dado pessoal de sócio (RG, CPF, residência)', grupo: 'Documentação' },
     { id: 'admin',         nome: 'Administrar usuários e políticas',grupo: 'Administração' }
   ];
 
