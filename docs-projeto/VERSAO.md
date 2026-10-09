@@ -1,3 +1,53 @@
+# ERP teste2 - v108 — a CSRF no leitor certo, e alteração em massa
+
+1697 verificações.
+
+## Alterar vários documentos de uma vez
+
+Subir trinta atestados como "Matriz" e descobrir que quase todos
+são do grupo é o caso normal. Corrigir um a um, abrindo e fechando
+trinta formulários, é o tipo de trabalho que faz desistir e deixar
+errado.
+
+No cofre, cada linha agora tem uma marcação, com um "marcar todos"
+que pega **só o que está no filtro** — marcar o que não está na
+tela é o jeito mais fácil de alterar o que não se queria. Com algo
+marcado aparece uma barra: **passar a pertencer a** e **passar a
+ser do tipo**, os dois opcionais, muda o que você escolher e deixa
+o resto. Quem administra também pode arquivar o lote.
+
+A gravação é **um pedido só** ao banco com todos os ids: além de
+rápido, ou grava tudo ou não grava nada.
+
+A coluna da empresa passou a mostrar **Único** quando o documento
+vale para as duas, com as empresas cobertas embaixo — sem isso não
+dá para conferir de relance se a correção em massa pegou.
+
+## A CSRF, agora no leitor certo
+
+Correção da correção. Na v107 eu separei as contribuições sociais
+no `js/nfse.js` — que é lido pelo **faturamento**, as notas que a
+empresa emite. O lançamento de NF a pagar passa por outro arquivo,
+o `js/nfe.js`. A regra estava certa e no lugar errado: por isso a
+retenção continuou caindo inteira no CSLL.
+
+Agora a separação vale nos **dois layouts de NFS-e** do leitor do
+lançamento (o padrão nacional e o ABRASF), e a bateria compara os
+dois leitores entre si — se um mudar e o outro não, ela acusa.
+
+Quando a separação acontece, a tela avisa: *"as contribuições
+sociais vieram somadas num campo só (4,65%) e foram separadas em
+PIS, COFINS e CSLL"*. Campo preenchido em silêncio é campo que
+ninguém confere.
+
+O resto da v107 está igual — se você já subiu a v107, esta troca
+só mexe em `js/nfe.js`, `teste-fumaca.js` e no marcador de versão.
+
+## Precisa rodar no banco
+
+O mesmo da v107: **`supabase/45-documentacao-categorias.sql`**, se
+ainda não rodou.
+
 # ERP teste2 - v107 — o que você apontou hoje
 
 1682 verificações.
