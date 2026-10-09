@@ -784,3 +784,27 @@ body.ambiente-teste .barra-modulo {
 }
 /* O rótulo acompanha: o olho vai primeiro ao texto, não à caixa. */
 .campo-erro-rotulo { color: var(--red); font-weight: 650; }
+
+/* ── Habilitação ────────────────────────────────────────────────
+   Três regras, e nenhuma delas é componente novo: o módulo usa a
+   tabela, o cartão de indicador, os crachás e a caixa tracejada de
+   importação que o resto do sistema já usa. Isto é só o que não
+   existia.
+
+   `.hb-velho` é o documento que uma renovação substituiu. Ele
+   continua na lista de propósito — provar regularidade numa data
+   passada exige o documento daquela data —, mas não pode competir
+   visualmente com o que vale hoje. */
+.hb-titulo { font-size: 12px; margin: 16px 0 6px; color: var(--ink3);
+  text-transform: uppercase; letter-spacing: .5px; }
+.hb-velho td { color: var(--ink3); background: #fafbfb; }
+.hb-velho td.desc { font-weight: 400; }
+/* O arquivo arrastado por cima da caixa: sem este retorno visual, a
+   pessoa solta o PDF no meio da página e o navegador o abre numa
+   aba, saindo do formulário. */
+.importar.sobre { border-color: var(--brand); border-style: solid; background: #eef3f7; }
+/* `.tabela-rolagem` nasceu para ser a ÚLTIMA coisa do cartão: a
+   margem negativa embaixo encosta a tabela no fim dele. Nas telas
+   de Habilitação vem texto depois, e sem isto a linha de ajuda
+   subia por cima da última linha da tabela. */
+#hb-saida .tabela-rolagem { margin-bottom: 0; }

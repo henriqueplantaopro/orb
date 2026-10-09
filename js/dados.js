@@ -73,6 +73,7 @@ ERP.dados = (function () {
     { id: 'baixar_ativo', nome: 'Dar baixa em ativo (venda, sucata, perda)', grupo: 'Estoque' },
     { id: 'autorizar_faturamento', nome: 'Registrar a autorização do órgão para faturar', grupo: 'Faturamento' },
     { id: 'liberar_faturamento', nome: 'Liberar o faturamento (permite emitir NF/fatura)', grupo: 'Faturamento' },
+    { id: 'ver_doc_socio', nome: 'Ver documento com dado pessoal de sócio (RG, CPF, residência)', grupo: 'Habilitação' },
     { id: 'admin',         nome: 'Administrar usuários e políticas',grupo: 'Administração' }
   ];
 
@@ -87,6 +88,7 @@ ERP.dados = (function () {
     { id: 'dp',            nome: 'Pessoal' },
     { id: 'cadastros',     nome: 'Cadastros' },
     { id: 'procedimentos', nome: 'Procedimentos' },
+    { id: 'habilitacao',   nome: 'Habilitação' },
     { id: 'administracao', nome: 'Administração' }
   ];
 
@@ -136,7 +138,8 @@ ERP.dados = (function () {
      Quem não aparece neste mapa tem os quatro. */
   const NIVEIS_DO_MODULO = {
     cadastros: ['ver', 'mover', 'aprovar'],
-    administracao: ['ver', 'mover', 'aprovar']
+    administracao: ['ver', 'mover', 'aprovar'],
+    habilitacao: ['ver', 'mover', 'aprovar']
   };
   const niveisDoModulo = id => (NIVEIS_DO_MODULO[id] ||
     NIVEIS_ACESSO.map(function (n) { return n.id; }));
@@ -154,6 +157,7 @@ ERP.dados = (function () {
     ativos:        'Aprovar baixa e venda de ativo',
     contratos:     'Aprovar aditivo de contrato',
     cadastros:     'Aprovar dados bancários de credor e funcionário',
+    habilitacao:   'Administrar o catálogo de tipos e arquivar documento do cofre',
     administracao: 'Autorização de última instância (quebra de segregação)'
   };
 
@@ -176,7 +180,7 @@ ERP.dados = (function () {
     assistente: {
       financeiro: 'VMF', produtividade: 'VMF', estoque: 'VF', ativos: 'VMF',
       faturamento: 'VMF', compras: 'VMF', contratos: 'VMF', dp: 'VF',
-      cadastros: 'VM', procedimentos: 'VF',
+      cadastros: 'VM', procedimentos: 'VF', habilitacao: 'VM',
       /* Só LEITURA em Administração: com M, este perfil editava a
          matriz de acesso e podia promover a si mesmo. Quem mexe em
          acesso é Administração, Diretoria e Sócio. */
@@ -185,24 +189,24 @@ ERP.dados = (function () {
     diretoria: {
       financeiro: 'VMFA', produtividade: 'VMFA', estoque: 'VMFA', ativos: 'VMFA',
       faturamento: 'VMFA', compras: 'VMFA', contratos: 'VMFA', dp: 'VMFA',
-      cadastros: 'VMA', procedimentos: 'VMFA', administracao: 'VM'
+      cadastros: 'VMA', procedimentos: 'VMFA', habilitacao: 'VMA', administracao: 'VM'
     },
     /* Vê, vê valor e aprova — não movimenta. */
     socio: {
       financeiro: 'VFA', produtividade: 'VFA', estoque: 'VFA', ativos: 'VFA',
       faturamento: 'VFA', compras: 'VFA', contratos: 'VFA', dp: 'VFA',
-      cadastros: 'VA', procedimentos: 'VFA', administracao: 'VM'
+      cadastros: 'VA', procedimentos: 'VFA', habilitacao: 'VMA', administracao: 'VM'
     },
     admin: {
       financeiro: 'VMFA', produtividade: 'VMFA', estoque: 'VMFA', ativos: 'VMFA',
       faturamento: 'VMFA', compras: 'VMFA', contratos: 'VMFA', dp: 'VMFA',
-      cadastros: 'VMA', procedimentos: 'VMFA', administracao: 'VMA'
+      cadastros: 'VMA', procedimentos: 'VMFA', habilitacao: 'VMA', administracao: 'VMA'
     },
     /* Consulta vê tudo com valor e não mexe em nada. */
     consulta: {
       financeiro: 'VF', produtividade: 'VF', estoque: 'VF', ativos: 'VF',
       faturamento: 'VF', compras: 'VF', contratos: 'VF', dp: 'VF',
-      cadastros: 'V', procedimentos: 'VF'
+      cadastros: 'V', procedimentos: 'VF', habilitacao: 'V'
     },
     estoquista: {
       estoque: 'VM', ativos: 'VM', compras: 'VM', cadastros: 'V', procedimentos: 'VM'
@@ -237,23 +241,23 @@ ERP.dados = (function () {
          V$: sem M não lança nada, sem A não fecha a folha. */
       acoes: ['lancar', 'pagar', 'faturar', 'ver_custo', 'estoque', 'requisitar', 'comprar', 'receber',
               'autorizar_faturamento', 'ver_dados_pessoais'],
-      modulos: ['financeiro', 'produtividade', 'estoque', 'faturamento', 'compras', 'contratos', 'cadastros', 'procedimentos', 'dp'] },
+      modulos: ['financeiro', 'produtividade', 'estoque', 'faturamento', 'compras', 'contratos', 'cadastros', 'procedimentos', 'dp', 'habilitacao'] },
     { id: 'diretoria', nome: 'Diretoria', sistema: true,
       acoes: ['lancar', 'pagar', 'aprovar', 'cancelar', 'estornar', 'faturar', 'ver_custo',
               'estoque', 'requisitar', 'comprar', 'aprovar_compra', 'receber', 'dp', 'ver_dados_pessoais',
-              'ver_pacientes', 'autorizar_faturamento', 'liberar_faturamento', 'baixar_ativo'],
+              'ver_pacientes', 'autorizar_faturamento', 'liberar_faturamento', 'baixar_ativo', 'ver_doc_socio'],
       modulos: TODOS_MODULOS.filter(function (m) { return m !== 'administracao'; }) },
     { id: 'socio', nome: 'Sócio', sistema: true,
       acoes: ['lancar', 'pagar', 'aprovar', 'cancelar', 'estornar', 'faturar', 'ver_custo',
               'estoque', 'requisitar', 'comprar', 'aprovar_compra', 'receber', 'dp', 'ver_dados_pessoais',
-              'ver_pacientes', 'autorizar_faturamento', 'liberar_faturamento', 'baixar_ativo'],
+              'ver_pacientes', 'autorizar_faturamento', 'liberar_faturamento', 'baixar_ativo', 'ver_doc_socio'],
       modulos: TODOS_MODULOS },
     { id: 'admin', nome: 'Administração', sistema: true,
       acoes: ACOES.map(function (a) { return a.id; }),
       modulos: TODOS_MODULOS },
     { id: 'consulta', nome: 'Consulta', sistema: true,
       acoes: ['ver_custo'],
-      modulos: ['financeiro', 'faturamento', 'contratos'] },
+      modulos: ['financeiro', 'faturamento', 'contratos', 'habilitacao'] },
 
     /* Perfis operacionais: material sim, dinheiro não. */
     { id: 'estoquista', nome: 'Controle de estoque',

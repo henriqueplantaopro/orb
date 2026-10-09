@@ -12816,6 +12816,61 @@ ERP.store = (function () {
         texto: resumo(reaj), modulo: 'contratos', destino: 'contratos' });
     }
 
+    /* 9. HABILITAÇÃO: certidão vencida ou vencendo.
+
+       O escalonamento pedido é 30 / 15 / 7 / 1. Aqui ele vira dois
+       cartões, e não quatro: quatro cartões de alerta sobre o mesmo
+       assunto na mesma home competem entre si e acabam todos
+       ignorados. O que muda de verdade a decisão é "já venceu" (não
+       dá para habilitar hoje) e "vence dentro do mês" (entra na
+       fila de renovação); o degrau fino de 15 e de 7 fica no
+       semáforo do módulo, que é onde alguém está trabalhando o
+       assunto.
+
+       A lista vem da carga da sessão (dados-remoto), não da tela do
+       módulo: o alerta tem de alcançar quem nunca abre Habilitação.
+       Vazia enquanto o 43-habilitacao.sql não tiver rodado, e aí
+       nenhum cartão aparece — que é o certo, porque não há cofre. */
+    if (veModulo('habilitacao')) {
+      /* O que vale de cada empresa+tipo é o de validade mais longa:
+         renovar não apaga o anterior, e o anterior venceria
+         sozinho acendendo um alerta já resolvido. */
+      const valem = {};
+      (D.habilitacaoResumo || []).forEach(function (d) {
+        if (d.tipo_sem_validade) return;
+        const k = d.empresa + '|' + d.tipo;
+        if (!valem[k] || String(d.validade_efetiva || '') > String(valem[k].validade_efetiva || '')) {
+          valem[k] = d;
+        }
+      });
+      const todos = Object.keys(valem).map(function (k) { return valem[k]; });
+      const nome = function (d) {
+        const e = (D.empresas || []).find(function (x) { return x.id === d.empresa; });
+        return (e ? (e.apelido || e.nome) : d.empresa) + ' · ' + (d.tipo_nome || d.tipo);
+      };
+      const resumir = function (ls) {
+        const txt = ls.slice(0, 3).map(nome).join(' · ');
+        return ls.length > 3 ? txt + ' · e mais ' + (ls.length - 3) : txt;
+      };
+      const venceram = todos.filter(function (d) {
+        return d.dias_para_vencer !== null && d.dias_para_vencer < 0;
+      });
+      add({ id: 'hab_vencida', nivel: 'erro', n: venceram.length,
+        titulo: 'Certidões vencidas',
+        texto: resumir(venceram) + ' — inabilitam a empresa hoje',
+        /* Sem `destino`: o módulo já abre no painel, e o painel já
+           abre pela fila do que precisa de ação. Um destino que não
+           leva a lugar nenhum é peso morto que o próximo leitor
+           tenta entender. */
+        modulo: 'habilitacao' });
+      const vencendo = todos.filter(function (d) {
+        return d.dias_para_vencer !== null && d.dias_para_vencer >= 0 && d.dias_para_vencer <= 30;
+      });
+      add({ id: 'hab_vencendo', nivel: 'alerta', n: vencendo.length,
+        titulo: 'Certidões vencendo em 30 dias',
+        texto: resumir(vencendo), modulo: 'habilitacao' });
+    }
+
     const ordem = { erro: 0, alerta: 1, info: 2 };
     return lista.sort(function (a2, b2) { return ordem[a2.nivel] - ordem[b2.nivel] || b2.n - a2.n; });
   }

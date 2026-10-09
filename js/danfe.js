@@ -607,5 +607,8 @@ ERP.danfe = (function () {
     return out;
   }
 
-  return { ler: ler, lerChave: lerChave, acharItens: acharItens };
+  /* `textoDoPDF` sai para fora porque a Habilitação precisa da MESMA
+     extração para ler certidão. Duplicar daria duas versões da
+     dança do worker, e a de lá envelheceria calada. */
+  return { ler: ler, lerChave: lerChave, acharItens: acharItens, textoDoPDF: textoDoPDF };
 })();
