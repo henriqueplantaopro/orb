@@ -225,21 +225,88 @@
      que vocês já usavam fazia, e funcionou: a frase inteira do
      cabeçalho ("certificado de regularidade do fgts", peso 8) pesa
      mais que a sigla solta ("fgts", peso 3), que aparece em
-     qualquer documento trabalhista. */
-  function classificar(txt, tipos) {
+     qualquer documento trabalhista.
+
+     O NOME DO ARQUIVO também conta, com peso reduzido.
+
+     Quem organiza uma pasta de habilitação batiza os arquivos:
+     "CND Federal matriz.pdf", "crf-fgts.pdf", "cndt 2026.pdf". É
+     informação de graça, e salva os dois casos em que o conteúdo
+     não resolve — a digitalização sem camada de texto e o PDF cujo
+     cabeçalho não bate com palavra-chave nenhuma.
+
+     Pesa METADE porque é menos confiável: o nome é o que alguém
+     digitou, o conteúdo é o que o órgão emitiu. Uma certidão
+     salva por engano como "fgts.pdf" não pode vencer o texto que
+     diz, dentro, que é outra coisa. Com metade do peso, o nome
+     decide quando o conteúdo cala e perde quando o conteúdo fala.
+
+     A SIGLA entra como palavra-chave só na busca pelo nome: "CND"
+     solto no meio do texto de uma certidão qualquer não diz nada,
+     mas "CND.pdf" diz. */
+  function classificar(txt, tipos, nome) {
+    const noNome = normalizar(nome || '').replace(/\.[a-z0-9]{1,5}$/, '');
     const notas = (tipos || []).map(function (t) {
       let chaves = t.palavras_chave;
       if (typeof chaves === 'string') { try { chaves = JSON.parse(chaves); } catch (e) { chaves = []; } }
-      let pontos = 0; const achou = [];
+      let pontos = 0; const achou = []; const peloNome = [];
       (chaves || []).forEach(function (par) {
         const termo = normalizar(Array.isArray(par) ? par[0] : par);
         const peso = Array.isArray(par) ? (+par[1] || 1) : 1;
-        if (termo && txt.indexOf(termo) >= 0) { pontos += peso; achou.push(termo); }
+        if (!termo) return;
+        if (txt.indexOf(termo) >= 0) { pontos += peso; achou.push(termo); }
+        else if (noNome && noNome.indexOf(termo) >= 0) { pontos += peso / 2; peloNome.push(termo); }
       });
-      return { tipo: t.id, nome: t.nome, pontos: pontos, achou: achou };
+      /* A sigla, só pelo nome, e só quando aparece separada — para
+         "ie.pdf" não casar dentro de "cnpj-ie-municipal". */
+      const sigla = normalizar(t.sigla || '');
+      if (sigla && noNome && new RegExp('(^|[^a-z0-9])' + sigla + '([^a-z0-9]|$)').test(noNome)) {
+        pontos += 3; peloNome.push(sigla);
+      }
+      return { tipo: t.id, nome: t.nome, pontos: pontos, achou: achou, peloNome: peloNome,
+               soPeloNome: achou.length === 0 && peloNome.length > 0 };
     }).filter(function (n) { return n.pontos > 0; })
       .sort(function (a, b) { return b.pontos - a.pontos; });
     return notas;
+  }
+
+  /* ── de que empresa é ────────────────────────────────────
+     O CNPJ lido do documento manda; o nome do arquivo é o
+     recurso de quando ele não foi lido.
+
+     Isto importa mais do que parece: guardar a certidão da filial
+     como sendo da matriz deixa DUAS empresas erradas de uma vez —
+     a matriz com um documento que não é dela, e a filial parecendo
+     não ter o documento que tem. */
+  function empresaDe(cnpjs, nome, empresas) {
+    const lista = empresas || [];
+    const soDig = s => String(s || '').replace(/\D/g, '');
+
+    for (let i = 0; i < (cnpjs || []).length; i++) {
+      const e = lista.find(function (x) { return soDig(x.cnpj) === cnpjs[i]; });
+      if (e) return { id: e.id, por: 'o CNPJ no documento' };
+    }
+
+    const n = normalizar(nome || '');
+    /* CNPJ escrito no próprio nome do arquivo. */
+    const noNome = cnpjsDe(n);
+    for (let i = 0; i < noNome.length; i++) {
+      const e = lista.find(function (x) { return soDig(x.cnpj) === noNome[i]; });
+      if (e) return { id: e.id, por: 'o CNPJ no nome do arquivo' };
+    }
+    /* Apelido da empresa no nome do arquivo — o jeito mais comum
+       de batizar: "CND Dom Pedro.pdf". Casa o apelido mais longo
+       primeiro, para "Dom Pedro RJ" não perder para "Dom Pedro". */
+    const porApelido = lista.slice().sort(function (a, b) {
+      return String(b.apelido || b.nome || '').length - String(a.apelido || a.nome || '').length;
+    });
+    for (let i = 0; i < porApelido.length; i++) {
+      const ap = normalizar(porApelido[i].apelido || '');
+      if (ap && ap.length >= 4 && n.indexOf(ap) >= 0) {
+        return { id: porApelido[i].id, por: 'o nome do arquivo' };
+      }
+    }
+    return null;
   }
 
   /* ── soma de dias ────────────────────────────────────────
@@ -255,18 +322,43 @@
 
   /* ── a leitura ───────────────────────────────────────────
      texto cru + catálogo de tipos → campos do formulário.
+
+     `opcoes.nome`     — nome do arquivo, usado como segundo sinal
+     `opcoes.empresas` — cadastro, para casar o CNPJ lido
+
      `avisos` é o que a pessoa precisa conferir à mão. */
   function ler(textoCru, tipos, opcoes) {
     opcoes = opcoes || {};
+    const nomeArq = opcoes.nome || '';
     const txt = normalizar(textoCru);
     const avisos = [];
 
+    /* Digitalização: sem camada de texto não há o que ler DENTRO.
+       Mas o NOME do arquivo continua valendo, e numa pasta inteira
+       é ele que salva a linha de virar trabalho manual. Então, em
+       vez de devolver nada, devolve o que o nome entrega e diz o
+       que falta. */
     if (txt.replace(/[^a-z0-9]/g, '').length < 40) {
-      return { vazio: true, avisos: ['O arquivo não tem texto — deve ser uma digitalização. ' +
-        'Dá para guardar assim, mas as datas precisam ser digitadas.'] };
+      const porNome = classificar('', tipos, nomeArq);
+      const qual = porNome[0] || null;
+      const emp = empresaDe([], nomeArq, opcoes.empresas);
+      return {
+        vazio: true,
+        tipo: qual ? qual.tipo : '',
+        tipo_nome: qual ? qual.nome : '',
+        confianca: qual ? qual.pontos : 0,
+        candidatos: porNome.slice(0, 4),
+        numero: '', data_emissao: null, data_validade: null,
+        validade_calculada: false, cnpj: '', cnpjs: [],
+        empresa: emp ? emp.id : '', empresa_por: emp ? emp.por : '',
+        abrangencia: 'estabelecimento',
+        avisos: ['Sem texto dentro do arquivo — é digitalização ou foto. ' +
+          (qual ? 'Pelo nome parece "' + qual.nome + '". ' : '') +
+          'As datas precisam ser digitadas.']
+      };
     }
 
-    const candidatos = classificar(txt, tipos);
+    const candidatos = classificar(txt, tipos, nomeArq);
     const escolhido = candidatos[0] || null;
     const tipo = escolhido ? escolhido.tipo : '';
     const doCatalogo = (tipos || []).find(function (t) { return t.id === tipo; }) || {};
@@ -312,11 +404,28 @@
     }
 
     const cnpjs = cnpjsDe(txt);
+    const emp = empresaDe(cnpjs, nomeArq, opcoes.empresas);
+
+    if (!tipo) {
+      avisos.push('Não reconheci o tipo deste documento — escolha na lista.');
+    } else if (escolhido.soPeloNome) {
+      /* Classificado só pelo nome do arquivo: é um palpite mais
+         fraco que o normal, e quem vai conferir precisa saber
+         disso em vez de ver um campo preenchido com a mesma cara
+         de um lido do documento. */
+      avisos.push('O tipo veio do nome do arquivo, não do conteúdo — confirme.');
+    }
+    if (!emp) {
+      avisos.push(cnpjs.length
+        ? 'O CNPJ ' + cnpjs[0] + ' não é de nenhuma empresa cadastrada — escolha a empresa.'
+        : 'Não achei o CNPJ no documento — escolha a empresa.');
+    }
 
     return {
       tipo: tipo,
       tipo_nome: escolhido ? escolhido.nome : '',
       confianca: escolhido ? escolhido.pontos : 0,
+      so_pelo_nome: !!(escolhido && escolhido.soPeloNome),
       candidatos: candidatos.slice(0, 4),
       numero: numeroDe(txt),
       data_emissao: emissao,
@@ -324,12 +433,15 @@
       validade_calculada: validadeCalculada,
       cnpj: cnpjs[0] || '',
       cnpjs: cnpjs,
+      empresa: emp ? emp.id : '',
+      empresa_por: emp ? emp.por : '',
       abrangencia: abrangenciaDe(txt),
       avisos: avisos
     };
   }
 
-  const api = { ler: ler, classificar: classificar, datasDe: datasDe, dataApos: dataApos,
+  const api = { ler: ler, classificar: classificar, empresaDe: empresaDe,
+                datasDe: datasDe, dataApos: dataApos,
                 cnpjsDe: cnpjsDe, cnpjValido: cnpjValido, numeroDe: numeroDe,
                 abrangenciaDe: abrangenciaDe, normalizar: normalizar, maisDias: maisDias,
                 FRASES_VALIDADE: FRASES_VALIDADE, FRASES_EMISSAO: FRASES_EMISSAO };

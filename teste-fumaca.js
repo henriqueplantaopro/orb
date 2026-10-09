@@ -145,8 +145,35 @@ testar('calcularRescisao básico', () => {
 });
 
 // ── verificações de conteúdo, não só ausência de exceção ──
+/* O placar existe porque a ausência de "FALHOU" na saída NÃO era
+   prova de nada: um `throw` no meio do arquivo mata a bateria sem
+   imprimir falha nenhuma, e quem olhasse só pelo grep leria o
+   silêncio como aprovação. Aconteceu — rodei três verificações de
+   regressão sobre uma bateria que estava estourando na última
+   linha.
+
+   Agora o arquivo termina com um resumo e um código de saída. Se o
+   resumo não aparecer, a bateria morreu no caminho, e isso é tão
+   grave quanto uma falha. */
+const placar = { ok: 0, falhou: 0 };
 function verificar(nome, condicao, detalhe) {
+  if (condicao) placar.ok++; else placar.falhou++;
   console.log((condicao ? 'OK   -' : 'FALHOU -'), nome, condicao ? '' : ('(' + detalhe + ')'));
+}
+process.on('exit', function (codigo) {
+  /* Só o fim natural do arquivo chama `concluir`. Chegando aqui
+     sem ele, alguma coisa estourou antes. */
+  if (!placar.concluido && codigo === 0) {
+    console.log('\n*** A BATERIA PAROU NO MEIO — ' + (placar.ok + placar.falhou) +
+      ' verificações rodaram e o resumo não foi alcançado. ***');
+    process.exitCode = 1;
+  }
+});
+function concluir() {
+  placar.concluido = true;
+  console.log('\n' + (placar.ok + placar.falhou) + ' verificações · ' +
+    placar.ok + ' ok · ' + placar.falhou + ' falharam');
+  if (placar.falhou) process.exitCode = 1;
 }
 
 const dec2 = S.decimos({ ano: '2099' }).find(d => d.parcela === 2);
@@ -8583,23 +8610,35 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      a tela mostra botão que o RLS recusa — ou esconde o que a
      pessoa poderia fazer. */
   const sql = fs.readFileSync(__dirname + '/supabase/43-habilitacao.sql', 'utf8');
+  /* O `case` do SQL nomeia só quem RECEBE nível; todo o resto cai
+     no `else ''`. Comparar apenas os nomeados deixava passar o
+     desacordo mais fácil de cometer: a tela conceder a um perfil
+     que o banco deixa fechado. Foi o que aconteceu com o perfil
+     Consulta, e este teste passava. Agora a comparação é sobre
+     TODOS os perfis, com o `else` aplicado. */
   const doBanco = {};
+  Object.keys(D.MATRIZ_PADRAO).forEach(function (p) { doBanco[p] = ''; });
   (sql.match(/when p\.id (?:in \([^)]*\)|= '[^']+') then '[A-Z]+'/g) || []).forEach(function (l) {
     const niveis = (l.match(/then '([A-Z]+)'/) || [])[1];
     (l.replace(/then '[A-Z]+'/, '').match(/'([a-z_]+)'/g) || []).forEach(function (q) {
       doBanco[q.replace(/'/g, '')] = niveis;
     });
   });
-  /* Esta conferência é inútil se o extrator não achar nada, e um
-     teste que passa vazio é pior que teste nenhum: ele parece
-     cobertura. Então primeiro se prova que ele leu o SQL. */
+  /* E a conferência é inútil se o extrator não achar nada: um teste
+     que passa vazio é pior que teste nenhum, porque parece
+     cobertura. Primeiro se prova que ele leu o SQL. */
   verificar('v104 — a leitura da matriz do SQL encontrou os perfis',
-    Object.keys(doBanco).length >= 4 && doBanco.assistente === 'VM',
+    doBanco.assistente === 'VM' && doBanco.admin === 'VMA' && doBanco.dp === '',
     JSON.stringify(doBanco));
-  verificar('v104 — a matriz da tela concorda com a do banco',
+  verificar('v104 — a matriz da tela concorda com a do banco, perfil por perfil',
     Object.keys(doBanco).every(function (p) {
-      return (D.MATRIZ_PADRAO[p] || {}).habilitacao === doBanco[p];
-    }), JSON.stringify(doBanco));
+      return ((D.MATRIZ_PADRAO[p] || {}).habilitacao || '') === doBanco[p];
+    }), Object.keys(doBanco).filter(function (p) {
+      return ((D.MATRIZ_PADRAO[p] || {}).habilitacao || '') !== doBanco[p];
+    }).map(function (p) {
+      return p + ': tela=' + ((D.MATRIZ_PADRAO[p] || {}).habilitacao || '(nada)') +
+             ' banco=' + (doBanco[p] || '(nada)');
+    }).join('; '));
 
   /* O balde é PRIVADO e abre por link assinado de cinco minutos:
      endereço público deixaria o RG do sócio alcançável para sempre
@@ -8644,6 +8683,11 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   };
   const empresasAntes = D.empresas;
   D.empresas = [{ id: 'E1', nome: 'DOM PEDRO LTDA', apelido: 'Dom Pedro', ativo: true }];
+  /* Quem está logado decide se o cartão existe. A bateria chega
+     aqui como a Carol do DP, que não vê Habilitação — e foi assim
+     que este bloco nasceu falhando, mostrando que a guarda
+     funciona. O usuário é devolvido no fim. */
+  const usuarioAntes = (S.usuario() || {}).id;
   D.habilitacaoResumo = [
     // vencida de verdade, sem renovação
     { id: 'a1', empresa: 'E1', tipo: 'cnd-federal', tipo_nome: 'CND Federal',
@@ -8729,3 +8773,148 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v104 — e a falta das tabelas não derruba a carga',
     /try \{[\s\S]{0,400}hab_documento_vigente[\s\S]{0,400}catch/.test(remoto), '');
 })();
+
+// ── ERP teste2 v105: a pasta inteira de uma vez ───────────────
+(function () {
+  const fs = require('fs');
+  const L = require(__dirname + '/js/hab-leitura.js');
+
+  const TIPOS = [
+    { id: 'cnd-federal', nome: 'CND Federal (RFB/PGFN)', sigla: 'CND', categoria: 'certidoes',
+      prazo_padrao_dias: 180, sem_validade: false,
+      palavras_chave: '[["creditos tributarios federais",6],["divida ativa da uniao",6]]' },
+    { id: 'fgts', nome: 'CRF — FGTS', sigla: 'CRF', categoria: 'certidoes',
+      prazo_padrao_dias: 30, sem_validade: false,
+      palavras_chave: '[["certificado de regularidade do fgts",8],["fgts",3]]' },
+    { id: 'cndt', nome: 'CNDT — Trabalhista', sigla: 'CNDT', categoria: 'certidoes',
+      prazo_padrao_dias: 180, sem_validade: false,
+      palavras_chave: '[["debitos trabalhistas",8]]' }
+  ];
+  const EMPRESAS = [
+    { id: 'EMP1', nome: 'HJM DOM PEDRO LTDA', apelido: 'Dom Pedro', cnpj: '18.432.556/0001-12' },
+    { id: 'EMP2', nome: 'HJM DOM PEDRO FILIAL CE', apelido: 'Filial Fortaleza',
+      cnpj: '18.432.556/0002-01' }
+  ];
+  const CNDT_TXT = 'CERTIDAO NEGATIVA DE DEBITOS TRABALHISTAS. Expedicao: 15/08/2026. ' +
+    'CNPJ 18.432.556/0001-12';
+
+  /* ── o nome do arquivo como segundo sinal ─────────────────
+     Quem organiza a pasta batiza os arquivos, e numa remessa de
+     trinta documentos é isso que separa "corrigir três linhas" de
+     "digitar tudo". */
+  const digital = L.ler('   ', TIPOS, { nome: 'CRF FGTS - Dom Pedro.pdf', empresas: EMPRESAS });
+  verificar('v105 — digitalização sem texto ainda é classificada pelo nome',
+    digital.vazio === true && digital.tipo === 'fgts' && digital.empresa === 'EMP1',
+    JSON.stringify({ t: digital.tipo, e: digital.empresa }));
+  verificar('v105 — e ela diz que as datas precisam ser digitadas',
+    /digitaliza/i.test(digital.avisos.join(' ')) && !digital.data_validade, '');
+
+  /* O NOME NÃO PODE VENCER O CONTEÚDO. Um arquivo salvo por engano
+     como "fgts.pdf" que por dentro é uma CNDT tem de ser
+     classificado pelo que o órgão emitiu, não pelo que alguém
+     digitou. É por isso que o nome pesa metade. */
+  const enganado = L.ler(CNDT_TXT, TIPOS, { nome: 'fgts.pdf', empresas: EMPRESAS });
+  verificar('v105 — o conteúdo ganha do nome do arquivo',
+    enganado.tipo === 'cndt', enganado.tipo);
+
+  /* Mas o nome resolve quando o conteúdo cala. */
+  const soNome = L.ler('texto generico sem palavra chave alguma apenas para passar do minimo',
+    TIPOS, { nome: 'CNDT 2026.pdf', empresas: EMPRESAS });
+  verificar('v105 — a sigla no nome resolve quando o conteúdo cala',
+    soNome.tipo === 'cndt', soNome.tipo);
+  verificar('v105 — e o sistema avisa que foi só pelo nome',
+    soNome.so_pelo_nome === true && /nome do arquivo/.test(soNome.avisos.join(' ')), '');
+
+  /* ── de que empresa é ────────────────────────────────────
+     Guardar a certidão da filial como sendo da matriz deixa DUAS
+     empresas erradas: a matriz com documento que não é dela, e a
+     filial parecendo não ter o que tem. */
+  const porCnpj = L.ler('CERTIFICADO DE REGULARIDADE DO FGTS. CNPJ: 18.432.556/0002-01. ' +
+    'Validade: 01/10/2026 a 30/10/2026', TIPOS, { nome: 'crf Dom Pedro.pdf', empresas: EMPRESAS });
+  verificar('v105 — o CNPJ do documento ganha do apelido no nome',
+    porCnpj.empresa === 'EMP2' && /CNPJ no documento/.test(porCnpj.empresa_por),
+    porCnpj.empresa + ' por ' + porCnpj.empresa_por);
+  const porApelido = L.ler('CERTIFICADO DE REGULARIDADE DO FGTS. Validade: 01/10/2026 a 30/10/2026',
+    TIPOS, { nome: 'crf Filial Fortaleza.pdf', empresas: EMPRESAS });
+  verificar('v105 — sem CNPJ no documento, o apelido no nome resolve',
+    porApelido.empresa === 'EMP2', porApelido.empresa);
+  const semNada = L.ler(CNDT_TXT.replace('18.432.556/0001-12', '11.222.333/0001-81'),
+    TIPOS, { nome: 'certidao.pdf', empresas: EMPRESAS });
+  verificar('v105 — CNPJ de fora do cadastro não vira empresa nenhuma',
+    !semNada.empresa && /não é de nenhuma empresa cadastrada/.test(semNada.avisos.join(' ')),
+    semNada.empresa);
+
+  /* ── a tela de lote ──────────────────────────────────────
+     Estes casos leem o arquivo porque a tabela depende de DOM. O
+     comportamento de ponta a ponta foi exercitado num Chromium com
+     nove PDFs; aqui ficam as invariantes que não podem sumir numa
+     refatoração. */
+  const hab = fs.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  verificar('v105 — a tela aceita vários arquivos de uma vez',
+    /id="hb-arqs"[^>]*multiple/.test(hab), '');
+  verificar('v105 — e aceita uma pasta inteira',
+    /webkitdirectory/.test(hab), '');
+  /* Arrastar uma PASTA não entrega os arquivos em
+     `dataTransfer.files`; sem a API de entradas, não acontecia
+     nada, em silêncio. */
+  verificar('v105 — a pasta arrastada é percorrida pela API de entradas',
+    /webkitGetAsEntry/.test(hab) && /createReader/.test(hab), '');
+  verificar('v105 — e a leitura de uma pasta insiste até vir vazio',
+    /do \{[\s\S]{0,400}readEntries[\s\S]{0,300}while \(parte\.length\)/.test(hab), '');
+  verificar('v105 — a recursão tem fundo, para pasta errada não travar a aba',
+    /nivel > 5/.test(hab), '');
+
+  /* Um PDF de cada vez: o pdf.js carrega o arquivo inteiro na
+     memória e vinte em paralelo derrubam a aba. */
+  verificar('v105 — os PDFs são lidos um de cada vez',
+    /for \(const l of fila\) \{\s*\n\s*await lerUm/.test(hab), '');
+
+  /* O foco: redesenhar a tabela a cada tecla torna a correção
+     impossível numa lista de vinte linhas. */
+  verificar('v105 — mexer num campo repinta só a própria linha',
+    /const cx = U\.el\('hb-sit' \+ i\);/.test(hab) &&
+    /data-hb-num[\s\S]{0,400}addEventListener\('input'/.test(hab), '');
+
+  /* Nada é gravado antes do clique, e a falha de uma linha não
+     derruba as outras. */
+  verificar('v105 — guardar percorre linha a linha e segue após falha',
+    /for \(const l of fila\)[\s\S]{0,2000}catch \(e\) \{[\s\S]{0,200}l\.estado = 'erro'/.test(hab), '');
+  verificar('v105 — registro que não gravou tem o arquivo removido do balde',
+    /\.remove\(\[caminho\]\)/.test(hab), '');
+
+  /* Repetido: o índice do banco é por empresa+hash e recusaria no
+     fim, depois de subir o arquivo à toa. */
+  verificar('v105 — o repetido é reconhecido pelo conteúdo, antes de subir',
+    /SHA-256/.test(hab) && /arquivo_hash === l\.hash/.test(hab), '');
+  verificar('v105 — inclusive o repetido dentro do próprio lote',
+    /mesmo conteúdo de/.test(hab), '');
+
+  /* ── a versão saiu do config.js ──────────────────────────
+     Os dois mudavam por motivos opostos e garantiam conflito no
+     git a cada publicação — e resolver conflito à mão foi o que
+     estragou a codificação da v104 no ramo de teste. */
+  const cfg = fs.readFileSync(__dirname + '/js/config.js', 'utf8');
+  const ver = fs.readFileSync(__dirname + '/js/versao.js', 'utf8');
+  const indice = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  verificar('v105 — o config.js não guarda mais a versão',
+    !/versao:\s*'/.test(cfg), '');
+  verificar('v105 — e ela vive em js/versao.js',
+    /ERP\.config\.versao = '/.test(ver), '');
+  verificar('v105 — o versao.js carrega depois do config.js',
+    indice.indexOf('js/versao.js') > indice.indexOf('js/config.js') &&
+    indice.indexOf('js/versao.js') > 0, '');
+  verificar('v105 — quem lia ERP.config.versao continua lendo do mesmo lugar',
+    /ERP\.config = ERP\.config \|\| \{\}/.test(ver), '');
+  /* O marcador precisa casar com a forma NOVA. Com o padrão antigo
+     ele trocava nada e dizia "(nenhuma)", deixando a versão velha
+     no ar — o defeito que ele existe para evitar. */
+  const marc = fs.readFileSync(__dirname + '/marcar-versao.js', 'utf8');
+  verificar('v105 — o marcador de versão aponta para o arquivo novo',
+    /js\/versao\.js/.test(marc) && !/js\/config\.js/.test(marc), '');
+  verificar('v105 — e ele para com erro se não achar a linha',
+    /process\.exit\(1\)/.test(marc) && /nada foi gravado/.test(marc), '');
+  verificar('v105 — a versão publicada é a v105',
+    /ERP\.config\.versao = 'v105 /.test(ver), (ver.match(/versao = '[^']*'/) || [])[0]);
+})();
+
+concluir();

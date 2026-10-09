@@ -206,7 +206,12 @@ ERP.dados = (function () {
     consulta: {
       financeiro: 'VF', produtividade: 'VF', estoque: 'VF', ativos: 'VF',
       faturamento: 'VF', compras: 'VF', contratos: 'VF', dp: 'VF',
-      cadastros: 'V', procedimentos: 'VF', habilitacao: 'V'
+      cadastros: 'V', procedimentos: 'VF'
+      /* Consulta NÃO entra em Habilitação. É o perfil mais largo da
+         casa em leitura (vê tudo, inclusive valor), e o cofre
+         guarda contrato social, balanço e documento de sócio —
+         coisa que não se abre por padrão para um perfil genérico
+         de consulta. Quem precisar recebe pela tela de perfis. */
     },
     estoquista: {
       estoque: 'VM', ativos: 'VM', compras: 'VM', cadastros: 'V', procedimentos: 'VM'

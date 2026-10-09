@@ -40,15 +40,11 @@ ERP.config = {
      para outro projeto. Mesmo código, dados separados. */
   ambiente: 'producao',
 
-  /* Marcador da versão publicada. Serve para saber, em dois
-     segundos, se o navegador está com o código novo ou com uma
-     cópia velha em cache — pergunta que já custou duas rodadas de
-     diagnóstico em cima de um erro que não existia mais. */
-  /* A versão é gravada no empacotamento, não à mão: escrita
-     manualmente, ela envelhece sem ninguém notar e passa a mentir
-     sobre o que está no ar — foi o que aconteceu com o "v54" que
-     ficou parado enquanto o código avançava. */
-  versao: 'v104 · 09/10/2026',
+  /* A versão publicada vive em js/versao.js, carregado logo depois
+     deste arquivo. Ela saiu daqui porque mudava a cada entrega
+     enquanto as chaves abaixo mudam por ramo: juntas, as duas
+     coisas faziam este arquivo conflitar no git em toda
+     publicação. */
 
   url: 'https://jsdyowuqehryfwqyklax.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpzZHlvd3VxZWhyeWZ3cXlrbGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDM4ODIsImV4cCI6MjEwNjUxOTg4Mn0.UPFhyMPwmM9DzyiRnjTg3EQGPg9KvcIQcP6wHM5WRSg'

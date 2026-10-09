@@ -51,10 +51,32 @@ alter table contratos
 -- Traz o que está no `extra` para as colunas recém-criadas. A etapa
 -- 40 faz isso para o banco inteiro; aqui fica a parte do contrato,
 -- para quem rodar só esta.
-update contratos
-   set fornecedor = coalesce(fornecedor, nullif(extra ->> 'fornecedor', '')),
-       conta      = coalesce(conta,      nullif(extra ->> 'conta', ''))
- where extra ? 'fornecedor' or extra ? 'conta';
+--
+-- SÓ PROMOVE O QUE EXISTE NO CADASTRO, e isso não é zelo: é o que
+-- torna o script repetível.
+--
+-- A primeira versão promovia tudo e limpava o órfão logo abaixo,
+-- antes de criar a trava. Funcionava na primeira passada. Na
+-- SEGUNDA, a trava já existia e a promoção tentava gravar de novo
+-- o fornecedor que o passo seguinte tinha acabado de apagar —
+-- `violates foreign key constraint` e o arquivo inteiro abortava
+-- ali, sem chegar na parte 2. Peguei rodando duas vezes num
+-- Postgres de teste com um contrato apontando para fornecedor que
+-- saiu do cadastro.
+--
+-- Com a checagem aqui dentro, o valor órfão simplesmente não sobe
+-- do `extra` — e ele continua guardado lá, caso o cadastro volte.
+update contratos c
+   set fornecedor = coalesce(c.fornecedor, x.id)
+  from credores x
+ where c.fornecedor is null
+   and x.id = nullif(c.extra ->> 'fornecedor', '');
+
+update contratos c
+   set conta = coalesce(c.conta, x.cod)
+  from plano_contas x
+ where c.conta is null
+   and x.cod = nullif(c.extra ->> 'conta', '');
 
 -- ──────────────────────────────────────────────────────────────
 -- Chaves estrangeiras.
