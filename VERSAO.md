@@ -1,3 +1,32 @@
+# v106 — previsão de faturamento no módulo de Faturamento
+
+## Mudou de lugar
+A aba **Previsões** saiu do Financeiro e virou a primeira aba do
+**Faturamento** — é dali que a esteira parte (previsão → valor
+confirmado → autorizado → liberado → faturado), e o módulo agora abre
+nela. A ordem das abas passou a seguir esse fluxo: Previsões, Esteira,
+RPS em lote, Notas do portal, Fatura, Cobertura.
+
+"Despesas previstas" continua no Financeiro: é previsão de saída, não
+de faturamento.
+
+## Um botão, um ato
+"Salvar previsões" e "Confirmar mês" viraram **"Salvar e confirmar o
+mês"**. Separados, o valor ficava digitado mas invisível no contas a
+receber até alguém lembrar de clicar no segundo botão. Agora um clique
+grava a grade e leva tudo ao contas a receber como "previsto".
+
+"Encerrar mês" segue como botão próprio — é o ato oposto, do fim do
+mês, e cancela o previsto que não virou nota.
+
+Quando a grade tenta sobrescrever valor confirmado pela produtividade, a
+pergunta continua: confirmando a troca, o valor é gravado e confirmado
+no mesmo passo.
+
+teste-fumaca.js: 501 verificações.
+
+---
+
 # v105 — retenção por cliente e parâmetros fiscais editáveis
 
 ## Retenção é do cliente, não do sistema

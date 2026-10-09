@@ -39,6 +39,16 @@
    tem a permissão — quem filtra é a política do banco, não esta
    tela. */
 
+/* O MÓDULO SE CHAMA "DOCUMENTAÇÃO" NA TELA; o id continua
+   `habilitacao`, e isso é de propósito.
+
+   O id está gravado na matriz de acesso e dentro das políticas do
+   banco (`tem_nivel('habilitacao', ...)`), nas sete tabelas e no
+   balde de arquivos. Trocar o id junto com o rótulo exigiria
+   migração de SQL em dois bancos e, no intervalo entre uma coisa e
+   outra, tiraria o acesso de todo mundo ao cofre. O nome que
+   aparece é o que importa para quem usa; o identificador é
+   encanamento. */
 ERP.habilitacao = (function () {
   const U = ERP.util, S = ERP.store, D = ERP.dados;
 
@@ -165,7 +175,7 @@ ERP.habilitacao = (function () {
     if (bNovo) bNovo.style.display = (podeVer() && podeMexer()) ? '' : 'none';
 
     if (!podeVer()) {
-      saida.innerHTML = '<div class="vazio"><strong>Seu perfil não tem acesso a Habilitação.</strong>' +
+      saida.innerHTML = '<div class="vazio"><strong>Seu perfil não tem acesso a Documentação.</strong>' +
         'O cofre guarda contrato social, balanço e documento de sócio. O acesso é liberado em ' +
         'Administração, na matriz de perfis.</div>';
       return;

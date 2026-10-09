@@ -1,3 +1,63 @@
+# ERP teste2 - v106 — o líquido da NF que não existia
+
+1633 verificações.
+
+## O defeito
+
+NF de R$ 10.000,00 com R$ 1.650,00 de retenção, lançada pelo
+líquido de R$ 8.350,00 — tudo certo no contas a pagar. Mas o
+detalhe do título mostrava:
+
+> Valor do título menos retenções: **R$ 6.700,00**
+
+Esse número não é nada. Não é o bruto, não é o líquido, não é o que
+sai do caixa. A tela fazia "valor da parcela menos retenções", e
+isso só está certo quando a parcela foi lançada pelo bruto — que
+não é o caminho normal, porque o que vai para o contas a pagar é o
+líquido.
+
+Pior: o texto de ajuda ao lado pedia para você *"conferir se a
+parcela foi lançada pelo bruto ou pelo líquido"*. Pedir isso era o
+sintoma de que a tela não sabia o que estava mostrando — sendo que
+o sistema sabe: o bruto da nota é gravado no título desde o
+lançamento.
+
+## Como ficou
+
+O detalhe agora mostra a conta inteira, e ela fecha:
+
+| Valor da nota (bruto) | 10.000,00 |
+| IRRF | − 150,00 |
+| PIS/COFINS/CSLL | − 465,00 |
+| ISS | − 1.035,00 |
+| **Total retido** | **− 1.650,00** |
+| **Líquido a pagar** | **8.350,00** |
+
+Em nota parcelada, o líquido é a soma de todas as parcelas e o
+valor da que está aberta aparece à parte — a retenção é da NOTA e
+ficava repetida em cada parcela, então subtraí-la de uma só era o
+mesmo erro, multiplicado.
+
+Quando o bruto não foi informado no lançamento (notas antigas), a
+tela diz isso em vez de arriscar uma subtração que acerta metade
+das vezes. E se bruto menos retenções não bater com o que foi
+parcelado — sinal de que alguém editou depois —, ela avisa em
+vermelho antes de você pagar.
+
+Quem faz a conta passou a ser o `store`, não a tela.
+
+## Habilitação virou Documentação
+
+Só o rótulo. O identificador interno continua `habilitacao`, porque
+ele está gravado na matriz de acesso e dentro das políticas do
+banco, nas sete tabelas e no balde de arquivos — trocá-lo exigiria
+migração nos dois bancos e, no intervalo, tiraria o acesso de todo
+mundo ao cofre. O nome que aparece é o que importa para quem usa.
+
+## Não precisa rodar nada no banco
+
+O `44-ATUALIZAR-v104.sql` continua sendo o último.
+
 # ERP teste2 - v105 — a pasta inteira de uma vez
 
 1611 verificações.

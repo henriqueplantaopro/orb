@@ -88,7 +88,7 @@ ERP.dados = (function () {
     { id: 'dp',            nome: 'Pessoal' },
     { id: 'cadastros',     nome: 'Cadastros' },
     { id: 'procedimentos', nome: 'Procedimentos' },
-    { id: 'habilitacao',   nome: 'Habilitação' },
+    { id: 'habilitacao',   nome: 'Documentação' },
     { id: 'administracao', nome: 'Administração' }
   ];
 

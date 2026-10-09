@@ -1489,16 +1489,32 @@ ERP.contas = (function () {
     if (!ret.length && !itens.length) return '';
     let html = '';
     if (ret.length) {
-      const tot = ret.reduce(function (s, r) { return s + r.valor; }, 0);
+      /* Quem monta a conta é o store: ele sabe o bruto da nota, que
+         fica gravado no título. A tela só desenha. */
+      const nf = S.notaDaParcela(p.id) || {};
       html += '<h2 style="margin-top:16px;font-size:12px">Retenções da nota</h2>' +
-        '<table><tbody>' + ret.map(function (r) {
-          return '<tr><td>' + U.esc(r.tributo) + '</td><td class="num">' + U.brl(r.valor) + '</td></tr>';
+        '<table><tbody>' +
+        (nf.bruto_conhecido
+          ? '<tr><td>Valor da nota (bruto)</td><td class="num">' + U.brl(nf.bruto) + '</td></tr>' : '') +
+        ret.map(function (r) {
+          return '<tr><td>' + U.esc(r.tributo) + '</td><td class="num">− ' + U.brl(r.valor) + '</td></tr>';
         }).join('') +
-        '<tr class="total"><td>Total retido</td><td class="num">' + U.brl(tot) + '</td></tr>' +
-        '<tr><td>Valor do título menos retenções</td><td class="num">' + U.brl(p.valor - tot) + '</td></tr>' +
+        '<tr class="total"><td>Total retido</td><td class="num">− ' + U.brl(nf.retido) + '</td></tr>' +
+        '<tr class="total"><td>Líquido a pagar' +
+          (nf.parcelas > 1 ? ' (em ' + nf.parcelas + ' parcelas)' : '') +
+          '</td><td class="num">' + U.brl(nf.liquido) + '</td></tr>' +
+        (nf.parcelas > 1
+          ? '<tr><td>Esta parcela</td><td class="num">' + U.brl(nf.valor_desta) + '</td></tr>' : '') +
         '</tbody></table>' +
-        '<div class="ajuda">Retenção é informação da nota: quem recolhe é a empresa, em guia própria. ' +
-        'Confira se a parcela foi lançada pelo bruto ou pelo líquido.</div>';
+        (nf.bruto_conhecido === false
+          ? '<div class="ajuda">O valor bruto da nota não foi informado no lançamento, então não dá ' +
+            'para mostrar a conta inteira — só as retenções. Informe o bruto ao editar o título e ' +
+            'esta tela passa a fechar sozinha.</div>'
+          : nf.fecha === false
+            ? '<div class="ajuda erro">Bruto menos retenções não bate com o que foi parcelado. ' +
+              'Alguma coisa foi editada depois do lançamento — confira antes de pagar.</div>'
+            : '<div class="ajuda">A retenção é informação da nota: quem recolhe é a empresa, em guia ' +
+              'própria. O líquido acima é o que está no contas a pagar e o que sai do caixa.</div>');
     }
     if (itens.length) {
       html += '<h2 style="margin-top:16px;font-size:12px">Itens da nota</h2>' +

@@ -8917,4 +8917,136 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /ERP\.config\.versao = 'v105 /.test(ver), (ver.match(/versao = '[^']*'/) || [])[0]);
 })();
 
+// ── v106: o detalhe da NF mostrava um líquido que não existe ──
+(function () {
+  S.setUsuario('u3');
+  const U2 = sandbox.window.ERP.util;
+
+  /* O CASO RELATADO. NF de R$ 10.000,00 bruto, R$ 1.650,00 de
+     retenção, lançada — corretamente — pelo LÍQUIDO de R$ 8.350,00
+     no contas a pagar.
+
+     A tela do título fazia "valor da parcela menos retenções" e
+     mostrava R$ 6.700,00, que não é nada: nem o bruto, nem o
+     líquido, nem o que sai do caixa. */
+  const nf = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-05-05', origem: 'manual', documento: 'NF-9001',
+    descricao: 'Serviço com retenção — lançado pelo líquido',
+    valor_bruto: 10000,
+    retencoes: [{ tributo: 'IRRF', valor: 150 },
+                { tributo: 'PIS/COFINS/CSLL', valor: 465 },
+                { tributo: 'ISS', valor: 1035 }]
+  }, [{ num: 1, venc: '2027-06-10', comp: '2027-05', valor: 8350 }]);
+  verificar('v106 — a NF com retenção lançada pelo líquido entra',
+    nf.ok, nf.erro);
+
+  const pid = S.todasParcelas().filter(function (p) {
+    return p.titulo_id === nf.titulo.id; })[0].id;
+  const r = S.notaDaParcela(pid);
+
+  verificar('v106 — o resumo sabe o bruto da nota',
+    r.bruto_conhecido === true && r.bruto === 10000, JSON.stringify(r.bruto));
+  verificar('v106 — o retido é a soma dos três tributos',
+    r.retido === 1650, r.retido);
+  verificar('v106 — o líquido é o que está no contas a pagar',
+    r.liquido === 8350, r.liquido);
+  verificar('v106 — e a conta fecha: bruto − retido = líquido',
+    r.fecha === true, JSON.stringify({ b: r.bruto, r: r.retido, l: r.liquido }));
+  /* A prova do defeito: a conta antiga daria 6.700, e esse número
+     não pode aparecer em lugar nenhum. */
+  verificar('v106 — o número fantasma (líquido − retenções) não é mais calculado',
+    r.liquido - r.retido === 6700 && r.liquido !== 6700, '');
+
+  /* Nota parcelada: a retenção é da NOTA e fica repetida em cada
+     parcela. "Líquido" é a soma de todas, não o valor da que está
+     aberta — subtrair a retenção inteira de uma parcela era o
+     mesmo erro, multiplicado. */
+  const nf3 = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-05-06', origem: 'manual', documento: 'NF-9002',
+    descricao: 'Serviço com retenção em três parcelas',
+    valor_bruto: 12000,
+    retencoes: [{ tributo: 'ISS', valor: 600 }]
+  }, [{ num: 1, venc: '2027-06-10', comp: '2027-05', valor: 3800 },
+      { num: 2, venc: '2027-07-10', comp: '2027-05', valor: 3800 },
+      { num: 3, venc: '2027-08-10', comp: '2027-05', valor: 3800 }]);
+  verificar('v106 — nota parcelada com retenção entra', nf3.ok, nf3.erro);
+  const p3 = S.todasParcelas().filter(function (p) { return p.titulo_id === nf3.titulo.id; })[0];
+  const r3 = S.notaDaParcela(p3.id);
+  verificar('v106 — o líquido é a soma das três parcelas, não o de uma',
+    r3.liquido === 11400 && r3.parcelas === 3, JSON.stringify({ l: r3.liquido, n: r3.parcelas }));
+  verificar('v106 — e o valor da parcela aberta vem à parte',
+    r3.valor_desta === 3800, r3.valor_desta);
+  verificar('v106 — a conta da nota parcelada fecha', r3.fecha === true, '');
+
+  /* Sem o bruto informado, a resposta certa é dizer que não se
+     sabe — não arriscar uma subtração que acerta metade das vezes. */
+  const nf2 = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-05-07', origem: 'manual', documento: 'NF-9003',
+    descricao: 'NF antiga, sem o bruto informado',
+    retencoes: [{ tributo: 'ISS', valor: 40 }]
+  }, [{ num: 1, venc: '2027-06-12', comp: '2027-05', valor: 760 }]);
+  const r2 = S.notaDaParcela(S.todasParcelas()
+    .filter(function (p) { return p.titulo_id === nf2.titulo.id; })[0].id);
+  verificar('v106 — sem o bruto informado, o resumo assume que não sabe',
+    r2.bruto_conhecido === false && r2.bruto === null && r2.fecha === null,
+    JSON.stringify({ b: r2.bruto, f: r2.fecha }));
+  verificar('v106 — mas as retenções continuam aparecendo',
+    r2.retido === 40 && r2.liquido === 760, JSON.stringify(r2));
+
+  /* Título sem retenção nenhuma não tem resumo — e a tela não
+     desenha o bloco. */
+  const semRet = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-05-08', origem: 'manual', documento: 'NF-9004',
+    descricao: 'NF sem retenção'
+  }, [{ num: 1, venc: '2027-06-13', comp: '2027-05', valor: 500 }]);
+  verificar('v106 — título sem retenção não tem resumo de nota',
+    S.notaDaParcela(S.todasParcelas()
+      .filter(function (p) { return p.titulo_id === semRet.titulo.id; })[0].id) === null, '');
+
+  /* A tela: quem faz a conta é o store, e o texto que mandava a
+     pessoa adivinhar saiu. */
+  const fs2 = require('fs');
+  const tela = fs2.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  verificar('v106 — a tela usa o resumo do store',
+    /S\.notaDaParcela\(p\.id\)/.test(tela), '');
+  verificar('v106 — e não faz mais a subtração errada',
+    !/U\.brl\(p\.valor - tot\)/.test(tela), '');
+  verificar('v106 — o texto que mandava a pessoa adivinhar saiu',
+    !/foi lançada pelo bruto ou pelo líquido/.test(tela), '');
+  verificar('v106 — e a tela avisa quando o bruto não foi informado',
+    /não foi informado no lançamento/.test(tela), '');
+  S.setUsuario('u8');
+})();
+
+// ── v106: o módulo passou a se chamar Documentação ───────────
+(function () {
+  const fs2 = require('fs');
+  /* O RÓTULO muda; o ID não. O id está gravado na matriz de acesso
+     e dentro das políticas do banco (`tem_nivel('habilitacao',…)`),
+     nas sete tabelas e no balde de arquivos. Trocar os dois juntos
+     exigiria migração em dois bancos e, no intervalo, tiraria o
+     acesso de todo mundo ao cofre. */
+  verificar('v106 — o módulo aparece como Documentação',
+    (D.MODULOS.find(function (m) { return m.id === 'habilitacao'; }) || {}).nome === 'Documentação',
+    (D.MODULOS.find(function (m) { return m.id === 'habilitacao'; }) || {}).nome);
+  verificar('v106 — e o id continua habilitacao, que é o que o banco conhece',
+    D.MODULOS.some(function (m) { return m.id === 'habilitacao'; }) &&
+    !D.MODULOS.some(function (m) { return m.id === 'documentacao'; }), '');
+  const indice2 = fs2.readFileSync(__dirname + '/index.html', 'utf8');
+  const app2 = fs2.readFileSync(__dirname + '/js/app.js', 'utf8');
+  verificar('v106 — a tela e a home usam o nome novo',
+    /<h2>Documentação/.test(indice2) && /nome: 'Documentação'/.test(app2), '');
+  verificar('v106 — nenhum rótulo visível ficou com o nome antigo',
+    !/>Habilitação</.test(indice2) &&
+    !/acesso a Habilitação/.test(fs2.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8')), '');
+  /* O SQL continua falando `habilitacao` — e tem de continuar. */
+  const sql2 = fs2.readFileSync(__dirname + '/supabase/43-habilitacao.sql', 'utf8');
+  verificar('v106 — as políticas do banco seguem com o id antigo',
+    /tem_nivel\('habilitacao'/.test(sql2), '');
+})();
+
 concluir();
