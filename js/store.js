@@ -15346,6 +15346,54 @@ ERP.store = (function () {
   }
 
   const parcela = id => st.parcelas.find(p => p.id === id) || null;
+
+  /* ── o resumo da nota, para a tela do título ─────────────
+     A tela mostrava "valor do título menos retenções" e fazia a
+     conta com o valor DA PARCELA. Isso só está certo quando a
+     parcela foi lançada pelo BRUTO. Lançada pelo líquido — que é o
+     caminho normal, porque é o líquido que sai do caixa — a conta
+     subtraía a retenção uma segunda vez e mostrava um número que
+     não existe em lugar nenhum.
+
+     O texto de ajuda ao lado pedia para a pessoa "conferir se a
+     parcela foi lançada pelo bruto ou pelo líquido". Pedir isso é
+     o sintoma: o sistema SABE. O bruto da nota é gravado no título
+     no lançamento (`valor_bruto`), justamente para a trava
+     "parcelas + retenções = bruto" poder ser reconferida depois.
+
+     E quando o bruto NÃO foi informado, a resposta certa é dizer
+     que não foi — não arriscar uma subtração que acerta metade das
+     vezes.
+
+     Devolve também quantas parcelas o título tem: a retenção é da
+     NOTA e fica repetida em cada parcela, então "líquido" é a soma
+     de todas, não o valor da que está aberta na tela. */
+  function notaDaParcela(parcelaId) {
+    const p = parcela(parcelaId);
+    if (!p) return null;
+    const ret = (p.retencoes || []).filter(function (r) { return (r.valor || 0) > 0; });
+    if (!ret.length) return null;
+    const retido = Math.round(ret.reduce(function (a, r) { return a + (r.valor || 0); }, 0) * 100) / 100;
+    const t = st.titulos.find(function (x) { return x.id === p.titulo_id; }) || {};
+    const irmas = st.parcelas.filter(function (x) { return x.titulo_id === p.titulo_id; });
+    /* O líquido é o que foi PARCELADO — a soma validada contra o
+       bruto no lançamento —, não a soma do que restou depois de
+       cancelamentos. */
+    const liquido = t.valor_total !== undefined && t.valor_total !== null
+      ? Math.round(t.valor_total * 100) / 100
+      : Math.round(irmas.reduce(function (a, x) { return a + (x.valor || 0); }, 0) * 100) / 100;
+    const bruto = (t.valor_bruto === undefined || t.valor_bruto === null)
+      ? null : Math.round(t.valor_bruto * 100) / 100;
+    /* Só existe uma forma de o bruto não fechar: alguém editou a
+       parcela ou a retenção depois do lançamento. Vale dizer, em
+       vez de mostrar três números que não somam. */
+    const fecha = bruto === null ? null : Math.abs(bruto - liquido - retido) <= 0.02;
+    return {
+      retencoes: ret, retido: retido, liquido: liquido, bruto: bruto,
+      bruto_conhecido: bruto !== null, fecha: fecha,
+      parcelas: irmas.length, valor_desta: Math.round((p.valor || 0) * 100) / 100
+    };
+  }
   const eventosDe = id => st.eventos.filter(e => e.entidade_id === id);
   const pagamentosTodos = pid => st.pagamentos.filter(p => p.parcela_id === pid);
   const pendentesAprovacao = () => st.parcelas.filter(p => p.aprovacao === 'pendente' && p.status !== 'cancelado');
@@ -17288,7 +17336,8 @@ ERP.store = (function () {
     formaDoCredor, impedimentos, editarParcela, CAMPOS_EDITAVEIS,
     pagamentosAguardando, pagamento, autorizarPagamento, recusarPagamento,
     autorizadosDe, enviadosDe, emCursoDe, pagoDe, caixaDe, pagamentosDe, pagamentosTodos, eventosDe,
-    pendentesAprovacao, semAnexo, pagoSemNota, temNota, dispensaNota, informarNF, todasParcelas, custosPorSetorTipo, setoresTiposDe, unidadesComProdutividade,
+    pendentesAprovacao, semAnexo, pagoSemNota, temNota, dispensaNota, informarNF, todasParcelas,
+    notaDaParcela, custosPorSetorTipo, setoresTiposDe, unidadesComProdutividade,
     credorPorNome, tipoCredorPorConta, lancarReceberAvulso,
     aptasParaRemessa, remessaProntas, remessaBloqueadas, informarCodigoBarras,
     chaveDoGrupo, agruparRepasses, agruparPagamentos, nomeDoGrupo, aptasParaSolicitar, prontasParaRemessa, pendentesDeDados, solicitarLote, cancelarSolicitacao,
