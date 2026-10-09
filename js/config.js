@@ -10,6 +10,6 @@ ERP.config = {
   url: 'https://kwaxtnooxupqlqxcjevs.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXh0bm9veHVwcWxxeGNqZXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyODg2OTUsImV4cCI6MjEwNjg2NDY5NX0.jlOUnxoSfctwNtzTwKWsrwHtgQciwVIMNVqTdfSJNvA',
   funcaoCriarLogin: 'dynamic-responder',
-  versao: 'v104 Â· 09/10/2026',
+  versao: 'v104 · 09/10/2026',
   ambiente: 'teste'
 };
