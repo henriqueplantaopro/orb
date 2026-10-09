@@ -1,3 +1,33 @@
+# v105 — retenção por cliente e parâmetros fiscais editáveis
+
+## Retenção é do cliente, não do sistema
+Cada tomador retém de um jeito, então o arquivo de RPS passou a usar as
+retenções do **cadastro do cliente** (Cadastros › Clientes, onde já
+existiam ISS, IRRF, PIS, COFINS, CSLL e INSS com alíquota). Cliente sem
+retenção cadastrada gera arquivo sem nenhuma linha de retenção.
+
+O ISS é a exceção: entra no líquido do contas a receber, mas fica fora
+do arquivo. O registro 3 do layout de Barueri só tem código para os
+tributos federais — a retenção do ISS ali decorre do código do serviço
+e da natureza do tomador, não de um campo do RPS. O total de retenções
+do registro 2 e o rodapé passaram a somar só os federais, coerente com
+isso.
+
+## Parâmetros fiscais na tela
+Nova aba **Administração › Parâmetros fiscais (NF-e)**: inscrição
+municipal, código IBGE, código do serviço, série do RPS, NBS, indicador
+de operação, classificação e situação tributária do IBS/CBS, e o
+enquadramento no Simples (a HJM fica como **não optante**). Cada campo
+traz onde encontrar o valor certo.
+
+Os valores de fábrica são uma sugestão razoável para serviços médicos —
+servem para testar a emissão de ponta a ponta e podem ser trocados
+depois sem mexer em código.
+
+teste-fumaca.js: 497 verificações.
+
+---
+
 # v104 — namespace do web service confirmado
 
 O envelope SOAP usava `http://tempuri.org/`, o padrão de serviços .asmx.

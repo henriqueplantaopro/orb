@@ -1,3 +1,94 @@
+# ERP teste2 - v105 — a pasta inteira de uma vez
+
+1611 verificações.
+
+Subir uma certidão por vez é aceitável para quem tem uma empresa.
+Com quatro empresas e treze certidões cada são cinquenta e dois
+formulários — e nenhum cofre se mantém em dia a esse preço.
+
+Agora você joga a pasta inteira (ou arrasta os arquivos, ou escolhe
+a pasta pelo botão), o sistema lê tudo e devolve **uma tabela já
+preenchida**. Você corrige o que estiver errado e guarda de uma vez.
+
+## O que ele preenche sozinho
+
+De cada arquivo: o tipo, a empresa, o número, a emissão, a validade
+e se a certidão cobre as filiais. Pelo conteúdo do PDF e, quando o
+conteúdo não diz, **pelo nome do arquivo**.
+
+O nome pesa metade do conteúdo, de propósito: um arquivo salvo por
+engano como "fgts.pdf" que por dentro é uma CNDT é classificado
+pelo que o órgão emitiu, não pelo que alguém digitou. O nome decide
+quando o conteúdo cala e perde quando o conteúdo fala.
+
+O mesmo vale para a empresa: o CNPJ impresso no documento manda; o
+apelido no nome do arquivo ("CND Dom Pedro.pdf") resolve quando o
+CNPJ não foi lido. Guardar a certidão da filial como sendo da
+matriz deixaria **duas** empresas erradas de uma vez.
+
+## O que ele não esconde
+
+Cada linha diz de onde veio o palpite: *"empresa por o CNPJ no
+documento"*, *"tipo veio do nome do arquivo"*, *"validade = emissão
++ 180 dias"*, *"sem texto dentro (digitalização)"*. O que falta
+aparece em vermelho ao lado do arquivo, e o botão conta só as
+linhas prontas — **Guardar 6 documento(s)**, não "guardar tudo e
+torcer".
+
+A digitalização sem camada de texto não vira linha vazia: o nome do
+arquivo ainda classifica o tipo e a empresa, e a tela pede só as
+datas.
+
+## Atalhos
+
+**Empresa para as que estão em branco** preenche de uma vez — uma
+pasta quase sempre é de uma empresa só. **Tirar** remove a linha.
+Pastas com subpastas são percorridas inteiras.
+
+## Arquivo repetido não sobe duas vezes
+
+Pela impressão digital do conteúdo, não pelo nome: a mesma certidão
+salva como "CND.pdf" e "CND federal (1).pdf" é reconhecida como uma
+só. Quem já está no cofre também — a linha nasce marcada e fica de
+fora, em vez de o banco recusar no fim, depois de o arquivo já ter
+subido.
+
+## Nada vai para o cofre antes do clique
+
+A lista vive na página. Fechar a aba antes de guardar não deixa meia
+coisa no cofre. E na gravação, a falha de uma linha não derruba as
+outras: o motivo fica escrito na linha de cada uma.
+
+## A versão saiu do config.js
+
+Mudança de bastidor, com motivo prático. O `config.js` guardava as
+chaves do banco (diferentes em cada ramo) **e** a linha da versão
+(que muda em toda entrega). Juntas, as duas garantiam conflito no
+git a cada publicação — e resolver conflito à mão foi o que estragou
+a codificação do arquivo na v104, deixando "v104 Â·" no rodapé do
+ambiente de teste.
+
+Agora a versão mora em `js/versao.js`, igual nos dois ramos, e o
+`config.js` deixa de mudar entre versões. Nenhum dos dois conflita.
+Esta subida tem o conflito uma última vez.
+
+## A bateria de testes passou a dar veredito
+
+Ela não tinha resumo nem código de saída: um erro no meio do arquivo
+a matava sem imprimir falha nenhuma, e quem conferisse procurando a
+palavra "FALHOU" leria o silêncio como aprovação. Aconteceu comigo
+nesta sessão — rodei três verificações de regressão sobre uma bateria
+que estava estourando na última linha.
+
+Agora ela termina com `1611 verificações · 1611 ok · 0 falharam` e
+devolve código de erro. Se o resumo não aparecer, ela morreu no
+caminho — e isso conta como falha.
+
+## Não precisa rodar nada no banco
+
+A v105 não mexe no banco. O `44-ATUALIZAR-v104.sql` continua sendo o
+último.
+
 # ERP teste2 - v104 — Habilitação: o cofre das certidões
 
 1591 verificações.
@@ -81,9 +172,28 @@ exige o documento daquela data.
 
 ## Precisa rodar no banco
 
-`supabase/43-habilitacao.sql` (novo) e `supabase/41-contrato-para-contas-a-pagar.sql`
-de novo (ganhou uma coluna na v103). Enquanto o 43 não rodar, o
-módulo abre dizendo isso e o resto do sistema funciona normalmente.
+Um arquivo só: **`supabase/44-ATUALIZAR-v104.sql`**. Ele junta as
+duas etapas pendentes — a 41 (o contrato virando contas a pagar,
+que ganhou uma coluna na v103) e a 43 (Habilitação, nova) — e
+termina numa conferência única, porque o editor do Supabase só
+mostra o resultado do último comando.
+
+Enquanto ele não rodar, o módulo abre dizendo isso e o resto do
+sistema funciona normalmente.
+
+### Um defeito achado rodando duas vezes
+
+A etapa 41 abortava na SEGUNDA passada quando havia contrato
+apontando para fornecedor que saiu do cadastro: ela promovia o
+valor do campo `extra` para a coluna, limpava o órfão em seguida e
+só então criava a trava. Na primeira vez funcionava; na segunda a
+trava já existia e a promoção tentava regravar o que acabara de ser
+apagado — *violates foreign key constraint*, e o arquivo parava ali,
+sem chegar na parte de Habilitação.
+
+Agora a promoção só sobe o que existe no cadastro. Como você já
+rodou a 41 uma vez, era exatamente esse o caminho que você ia
+percorrer.
 
 ## Ainda não entra
 
