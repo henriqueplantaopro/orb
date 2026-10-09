@@ -387,6 +387,25 @@ ERP.dadosRemoto = (function () {
       });
     }
 
+    /* HABILITAÇÃO: o resumo das certidões, só o que o alerta da
+       home precisa.
+
+       Vem aqui e não no módulo porque o alerta tem de existir para
+       quem NUNCA abre o módulo — foi esse o pedido. Se ele
+       dependesse da tela ser aberta, avisaria só a quem já tinha
+       ido olhar.
+
+       E falha em silêncio de propósito: enquanto o
+       43-habilitacao.sql não tiver rodado, as tabelas não existem.
+       Derrubar a carga por causa disso deixaria o sistema inteiro
+       sem subir por um módulo que é acessório. */
+    D.habilitacaoResumo = [];
+    try {
+      const hb = await c.from('hab_documento_vigente')
+        .select('id, empresa, tipo, tipo_nome, tipo_sem_validade, validade_efetiva, dias_para_vencer');
+      if (!hb.error) D.habilitacaoResumo = hb.data || [];
+    } catch (e) { /* módulo ainda não instalado no banco */ }
+
     lidoEm = Date.now();
     return { ok: true, tabelas: MAPA.length, matriz: (mz || []).length };
   }

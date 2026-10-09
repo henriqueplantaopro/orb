@@ -45,22 +45,23 @@ S.init();
 const MATRIZ_TESTE = {
   assistente: {
     financeiro: 'VMF', produtividade: 'VMF', estoque: 'V', faturamento: 'VMF',
-    compras: 'VMF', contratos: 'VMF', cadastros: 'VM', procedimentos: 'VF'
+    compras: 'VMF', contratos: 'VMF', cadastros: 'VM', procedimentos: 'VF',
+    habilitacao: 'VM'
   },
   diretoria: {
     financeiro: 'VMFA', produtividade: 'VMFA', estoque: 'VMFA', faturamento: 'VMFA',
     compras: 'VMFA', contratos: 'VMFA', dp: 'VMFA', ativos: 'VMFA', cadastros: 'VMA',
-    procedimentos: 'VMFA'
+    procedimentos: 'VMFA', habilitacao: 'VMA'
   },
   socio: {
     financeiro: 'VMFA', produtividade: 'VMFA', estoque: 'VMFA', faturamento: 'VMFA',
     compras: 'VMFA', contratos: 'VMFA', dp: 'VMFA', ativos: 'VMFA', cadastros: 'VMA',
-    procedimentos: 'VMFA', administracao: 'VM'
+    procedimentos: 'VMFA', habilitacao: 'VMA', administracao: 'VM'
   },
   admin: {
     financeiro: 'VMFA', produtividade: 'VMFA', estoque: 'VMFA', faturamento: 'VMFA',
     compras: 'VMFA', contratos: 'VMFA', dp: 'VMFA', ativos: 'VMFA', cadastros: 'VMA',
-    procedimentos: 'VMFA', administracao: 'VMA'
+    procedimentos: 'VMFA', habilitacao: 'VMA', administracao: 'VMA'
   },
   consulta: { financeiro: 'VF', faturamento: 'VF', contratos: 'VF' },
   estoquista: {
@@ -6561,8 +6562,19 @@ function liberarParaFaturar(centro, competencia) {
     ['ver', 'mover', 'aprovar'].every(n =>
       D.niveisDoModulo('cadastros').indexOf(n) >= 0 &&
       D.niveisDoModulo('administracao').indexOf(n) >= 0), '');
+  /* HABILITAÇÃO é o terceiro módulo sem dinheiro (v104): o cofre
+     guarda certidão, não valor. Vale notar que o nível A dele
+     significa outra coisa — administrar o catálogo e arquivar
+     documento, não aprovar —, e é por isso que
+     APROVACAO_POR_MODULO descreve cada módulo em vez de deixar a
+     letra solta. */
+  verificar('v104 — Habilitação também não tem o nível financeiro',
+    D.niveisDoModulo('habilitacao').indexOf('financeiro') < 0, '');
+  verificar('v104 — e o que o A dele quer dizer está escrito',
+    /catálogo/i.test(D.APROVACAO_POR_MODULO.habilitacao || ''),
+    D.APROVACAO_POR_MODULO.habilitacao);
   verificar('v29 — os demais módulos seguem com os quatro',
-    D.MODULOS.filter(m => ['cadastros', 'administracao'].indexOf(m.id) < 0)
+    D.MODULOS.filter(m => ['cadastros', 'administracao', 'habilitacao'].indexOf(m.id) < 0)
       .every(m => D.niveisDoModulo(m.id).length === 4), '');
 
   /* O descarte acontece na GRAVAÇÃO, não só na tela: estado antigo
@@ -6584,13 +6596,12 @@ function liberarParaFaturar(centro, competencia) {
   S.salvarMatrizAcesso(antes);
 
   /* A sugestão padrão não traz o nível inválido. */
-  verificar('v29 — a matriz padrão não tem $ em Cadastros nem em Administração',
+  verificar('v29 — a matriz padrão não tem $ nos módulos sem dinheiro',
     Object.keys(D.MATRIZ_PADRAO).every(function (p) {
       const l = D.MATRIZ_PADRAO[p];
-      return String(l.cadastros || '').indexOf('F') < 0 &&
-        String(l.cadastros || '').indexOf('$') < 0 &&
-        String(l.administracao || '').indexOf('F') < 0 &&
-        String(l.administracao || '').indexOf('$') < 0;
+      return ['cadastros', 'administracao', 'habilitacao'].every(function (m) {
+        return String(l[m] || '').indexOf('F') < 0 && String(l[m] || '').indexOf('$') < 0;
+      });
     }), '');
   S.setUsuario('u8');
 })();
@@ -8392,4 +8403,329 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v103 — o total a lançar acompanha cada clique',
     /function redesenhar\(\)/.test(ui) && /Vai lançar/.test(ui), '');
   S.setUsuario('u8');
+})();
+
+// ── ERP teste2 v104: Habilitação — o cofre e o alerta ──────────
+(function () {
+  const fs = require('fs');
+  const L = require(__dirname + '/js/hab-leitura.js');
+
+  /* O catálogo do teste é o do SQL, nos tipos que importam para a
+     leitura: prazo em palavras (CNDT), prazo curto (FGTS), prazo
+     ausente (municipal) e tipo que não vence (contrato social). */
+  const TIPOS = [
+    { id: 'cnd-federal', nome: 'CND Federal (RFB/PGFN)', categoria: 'certidoes',
+      prazo_padrao_dias: 180, sem_validade: false,
+      palavras_chave: '[["creditos tributarios federais",6],["divida ativa da uniao",6]]' },
+    { id: 'fgts', nome: 'CRF — FGTS', categoria: 'certidoes',
+      prazo_padrao_dias: 30, sem_validade: false,
+      palavras_chave: '[["certificado de regularidade do fgts",8],["fgts",3]]' },
+    { id: 'cndt', nome: 'CNDT — Trabalhista', categoria: 'certidoes',
+      prazo_padrao_dias: 180, sem_validade: false,
+      palavras_chave: '[["debitos trabalhistas",8],["tribunal superior do trabalho",4]]' },
+    { id: 'municipal', nome: 'CND Municipal', categoria: 'certidoes',
+      prazo_padrao_dias: null, sem_validade: false,
+      palavras_chave: '[["tributos mobiliarios",5],["divida ativa do municipio",5]]' },
+    { id: 'contrato-social', nome: 'Contrato social', categoria: 'cadastrais',
+      prazo_padrao_dias: null, sem_validade: true,
+      palavras_chave: '[["contrato social",7],["junta comercial",4]]' }
+  ];
+
+  /* ── a leitura do PDF ─────────────────────────────────────
+     O que está em jogo não é achar data: é saber QUAL data. A CND
+     Federal tem três na mesma frase, e a mais vistosa é a errada. */
+  const CND = 'CERTIDÃO NEGATIVA DE DÉBITOS RELATIVOS AOS CRÉDITOS TRIBUTÁRIOS FEDERAIS E À ' +
+    'DÍVIDA ATIVA DA UNIÃO. CNPJ: 18.432.556/0001-12. ' +
+    'Esta certidão é válida para o estabelecimento matriz e suas filiais. ' +
+    'Emitida às 09:12:31 do dia 02/04/2026 <hora e data de Brasília>. Válida até 29/09/2026.';
+  const lidoCnd = L.ler(CND, TIPOS);
+  verificar('v104 — a CND Federal é reconhecida pelo texto',
+    lidoCnd.tipo === 'cnd-federal', lidoCnd.tipo);
+  verificar('v104 — a emissão não é confundida com a validade',
+    lidoCnd.data_emissao === '2026-04-02', lidoCnd.data_emissao);
+  verificar('v104 — e a validade é a que está escrita',
+    lidoCnd.data_validade === '2026-09-29', lidoCnd.data_validade);
+  verificar('v104 — o CNPJ sai com dígito verificador conferido',
+    lidoCnd.cnpj === '18432556000112', lidoCnd.cnpj);
+  verificar('v104 — e a certidão que cobre as filiais é marcada como tal',
+    lidoCnd.abrangencia === 'matriz', lidoCnd.abrangencia);
+
+  /* O CRF do FGTS imprime o intervalo inteiro. Quem vale é o fim —
+     pegar o começo marcaria como vencido um documento novo. */
+  const crf = L.ler('CAIXA ECONÔMICA FEDERAL. Certificado de Regularidade do FGTS - CRF. ' +
+    'Inscrição: 18.432.556/0001-12. Validade: 25/09/2026 a 24/10/2026. ' +
+    'Certificação Número: 2026092501234567', TIPOS);
+  verificar('v104 — no intervalo do FGTS, a validade é o fim',
+    crf.data_validade === '2026-10-24', crf.data_validade);
+  verificar('v104 — e o começo do intervalo vira a emissão',
+    crf.data_emissao === '2026-09-25', crf.data_emissao);
+  verificar('v104 — o número só sai quando há frase que o apresente',
+    crf.numero === '2026092501234567', crf.numero);
+
+  /* A CNDT escreve o prazo em palavras. A data sai do catálogo do
+     tipo, e o sistema DIZ que calculou — campo preenchido em
+     silêncio é o que ninguém confere. */
+  const cndt = L.ler('CERTIDÃO NEGATIVA DE DÉBITOS TRABALHISTAS. Certidão nº: 45678901/2026. ' +
+    'Expedição: 15/08/2026, às 11:20:14. Validade: 180 (cento e oitenta) dias, contados da ' +
+    'data de sua expedição. Tribunal Superior do Trabalho.', TIPOS);
+  verificar('v104 — prazo escrito em palavras vira data pelo catálogo',
+    cndt.data_validade === '2027-02-11', cndt.data_validade);
+  verificar('v104 — e o sistema avisa que a data foi calculada',
+    cndt.validade_calculada === true && /180 dias/.test(cndt.avisos.join(' ')),
+    cndt.avisos.join(' '));
+
+  /* Documento que não vence não ganha validade nenhuma, mesmo com
+     datas espalhadas pelo texto. */
+  const cs = L.ler('JUNTA COMERCIAL DO ESTADO DO RIO DE JANEIRO. CONTRATO SOCIAL DE ' +
+    'CONSTITUIÇÃO. Rio de Janeiro, 14 de março de 2019. Registrado em 22/03/2019.', TIPOS);
+  verificar('v104 — documento que não vence não recebe validade',
+    cs.tipo === 'contrato-social' && cs.data_validade === null, cs.data_validade);
+
+  /* Errar para menos é barato; errar para mais inabilita. Data
+     impossível e data fora de ordem são descartadas em vez de
+     entrarem no semáforo. */
+  const ruim = L.ler('CERTIDÃO NEGATIVA DE DÉBITOS RELATIVOS AOS CRÉDITOS TRIBUTÁRIOS FEDERAIS ' +
+    'E À DÍVIDA ATIVA DA UNIÃO. Emitida em 31/02/2026. Válida até 30/02/2027.', TIPOS);
+  verificar('v104 — data que não existe no calendário é descartada',
+    ruim.data_emissao === null && ruim.data_validade === null, '');
+  verificar('v104 — e o sistema pede a data à mão em vez de inventar',
+    /Digite a validade/.test(ruim.avisos.join(' ')), ruim.avisos.join(' '));
+
+  const invertida = L.ler('CERTIFICADO DE REGULARIDADE DO FGTS. Data de emissão: 10/10/2026. ' +
+    'Válida até 01/01/2020.', TIPOS);
+  verificar('v104 — validade anterior à emissão é recusada',
+    /fora de ordem/.test(invertida.avisos.join(' ')), invertida.avisos.join(' '));
+  verificar('v104 — e cai no prazo do tipo, não no que estava escrito',
+    invertida.data_validade === '2026-11-09', invertida.data_validade);
+
+  /* Página sem camada de texto: o módulo diz o que é, em vez de
+     devolver campos vazios que a pessoa leria como falha. */
+  const vazio = L.ler('   \n  ', TIPOS);
+  verificar('v104 — PDF escaneado é reconhecido como digitalização',
+    vazio.vazio === true && /digitaliza/i.test(vazio.avisos[0]), vazio.avisos[0]);
+
+  /* Inscrição estadual e protocolo também têm catorze dígitos. O
+     dígito verificador é o que separa. */
+  verificar('v104 — CNPJ com dígito errado não é aceito',
+    L.cnpjValido('11111111111111') === false && L.cnpjValido('18432556000112') === true, '');
+
+  /* ── o semáforo ───────────────────────────────────────────
+     Os degraus são os do alerta: 30 / 15 / 7 / 1. */
+  const H = sandbox.window.ERP ? null : null;   // a tela precisa de DOM; aqui só as regras
+  const hab = fs.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  verificar('v104 — o semáforo tem os quatro degraus do alerta',
+    /n <= 7/.test(hab) && /n <= 15/.test(hab) && /n <= 30/.test(hab) && /n < 0/.test(hab), '');
+  verificar('v104 — vencido aparece em vermelho, não em âmbar',
+    /vencido[\s\S]{0,60}b-reprovado/.test(hab), '');
+
+  /* O documento que vale é o de validade mais longa, não o emitido
+     por último: a estadual de 30 dias emitida hoje vence antes da
+     de 180 emitida no mês passado. */
+  verificar('v104 — o que vale é a validade mais longa, não a emissão mais nova',
+    /validade_efetiva \|\| d\.data_emissao/.test(hab) &&
+    /A comparação é pela validade, não pela emissão/.test(hab), '');
+
+  /* ── a tela não corre para o lado ─────────────────────────
+     A matriz empresa × certidão cabe em treze colunas e obriga a
+     rolar — e o que está fora da vista não é conferido. */
+  verificar('v104 — o painel não tem matriz empresa × certidão',
+    !/thead[\s\S]{0,200}cols\.map/.test(hab) && /FILA DO QUE/.test(hab), '');
+  verificar('v104 — o formulário usa a grade que quebra em vez de empurrar',
+    /class="row2"/.test(hab) && !/class="grade-2"/.test(hab), '');
+
+  /* ── formato ──────────────────────────────────────────────
+     Data dd/mm/aaaa e número 00.000,00 valem aqui como em todo o
+     resto: a varredura-formato.js cobre, isto fixa a intenção. */
+  verificar('v104 — as datas da tela passam por U.fData',
+    /U\.fData\(d\.validade_efetiva\)/.test(hab) && !/toLocaleDateString/.test(hab), '');
+  verificar('v104 — e o leitor não depende do idioma do aparelho',
+    !/toLocaleString|toLocaleDateString/.test(fs.readFileSync(__dirname + '/js/hab-leitura.js', 'utf8')), '');
+
+  /* ── a ligação com o sistema ──────────────────────────────
+     Módulo que existe no arquivo e não está ligado é módulo que
+     ninguém encontra. */
+  const indice = fs.readFileSync(__dirname + '/index.html', 'utf8');
+  const app = fs.readFileSync(__dirname + '/js/app.js', 'utf8');
+  verificar('v104 — o módulo está na lista da home',
+    /id: 'habilitacao'/.test(app) && D.MODULOS.some(m => m.id === 'habilitacao'), '');
+  verificar('v104 — a página tem o painel do módulo',
+    /data-modulo="habilitacao"/.test(indice) && /id="hb-saida"/.test(indice), '');
+  verificar('v104 — e carrega os dois arquivos do módulo',
+    /js\/hab-leitura\.js/.test(indice) && /js\/ui-habilitacao\.js/.test(indice), '');
+  verificar('v104 — abrir o módulo desenha a tela',
+    /if \(id === 'habilitacao'\) ERP\.habilitacao\.render\(\);/.test(app), '');
+  verificar('v104 — e recarregar os dados redesenha',
+    /habilitacao: 'habilitacao'/.test(app), '');
+  verificar('v104 — a tela é montada na carga da página',
+    /ERP\.habilitacao\.montar\(\);/.test(app), '');
+
+  /* A extração do PDF é a MESMA do DANFE — duplicar daria duas
+     versões da dança do worker, e a de cá envelheceria calada. */
+  verificar('v104 — a leitura de PDF reusa a do DANFE',
+    /textoDoPDF: textoDoPDF/.test(fs.readFileSync(__dirname + '/js/danfe.js', 'utf8')) &&
+    /ERP\.danfe\.textoDoPDF/.test(hab), '');
+
+  /* ── acesso ───────────────────────────────────────────────
+     Documento de sócio (RG, CPF, residência) tem o mesmo
+     tratamento de nome de paciente: ação própria, e quem filtra é
+     o banco. */
+  verificar('v104 — existe a ação para ver documento de sócio',
+    D.ACOES ? D.ACOES.some(a => a.id === 'ver_doc_socio')
+            : /ver_doc_socio/.test(fs.readFileSync(__dirname + '/js/dados.js', 'utf8')), '');
+  verificar('v104 — e são os três perfis de confiança que a têm',
+    ['admin', 'socio', 'diretoria'].every(p =>
+      (D.perfis.find(x => x.id === p).acoes || []).indexOf('ver_doc_socio') >= 0), '');
+  verificar('v104 — a assistente vê o módulo e não vê o documento de sócio',
+    D.MATRIZ_PADRAO.assistente.habilitacao === 'VM' &&
+    (D.perfis.find(x => x.id === 'assistente').acoes || []).indexOf('ver_doc_socio') < 0, '');
+
+  /* A matriz da tela e a do banco têm de concordar: se discordarem,
+     a tela mostra botão que o RLS recusa — ou esconde o que a
+     pessoa poderia fazer. */
+  const sql = fs.readFileSync(__dirname + '/supabase/43-habilitacao.sql', 'utf8');
+  const doBanco = {};
+  (sql.match(/when p\.id (?:in \([^)]*\)|= '[^']+') then '[A-Z]+'/g) || []).forEach(function (l) {
+    const niveis = (l.match(/then '([A-Z]+)'/) || [])[1];
+    (l.replace(/then '[A-Z]+'/, '').match(/'([a-z_]+)'/g) || []).forEach(function (q) {
+      doBanco[q.replace(/'/g, '')] = niveis;
+    });
+  });
+  /* Esta conferência é inútil se o extrator não achar nada, e um
+     teste que passa vazio é pior que teste nenhum: ele parece
+     cobertura. Então primeiro se prova que ele leu o SQL. */
+  verificar('v104 — a leitura da matriz do SQL encontrou os perfis',
+    Object.keys(doBanco).length >= 4 && doBanco.assistente === 'VM',
+    JSON.stringify(doBanco));
+  verificar('v104 — a matriz da tela concorda com a do banco',
+    Object.keys(doBanco).every(function (p) {
+      return (D.MATRIZ_PADRAO[p] || {}).habilitacao === doBanco[p];
+    }), JSON.stringify(doBanco));
+
+  /* O balde é PRIVADO e abre por link assinado de cinco minutos:
+     endereço público deixaria o RG do sócio alcançável para sempre
+     por quem tivesse visto a URL uma vez. */
+  verificar('v104 — o balde dos arquivos é privado',
+    /insert into storage\.buckets[\s\S]{0,120}false\)/.test(sql), '');
+  verificar('v104 — e a tela abre por link assinado de curta duração',
+    /createSignedUrl\(d\.arquivo_path, 300\)/.test(hab), '');
+
+  /* O prazo vem do TIPO. Com 90 dias fixos, uma CNDT expedida há
+     cem dias apareceria vencida estando válida — e alarme falso é
+     como se ensina a ignorar o semáforo. */
+  verificar('v104 — a validade efetiva usa o prazo do tipo',
+    /p_prazo_dias int default null/.test(sql) &&
+    /coalesce\(p_prazo_dias, 90\)/.test(sql), '');
+  verificar('v104 — a assinatura antiga de três argumentos é removida',
+    /drop function if exists hab_validade_efetiva\(date, date, boolean\);/.test(sql), '');
+
+  /* Documento sem emissão e sem validade entraria guardado e
+     invisível para o alerta — que é o engano que o módulo existe
+     para evitar. */
+  verificar('v104 — documento sem data nenhuma não é guardado em silêncio',
+    /não entra no alerta/.test(hab), '');
+  /* Arquivar, não apagar: certidão apagada é prova de regularidade
+     perdida. */
+  verificar('v104 — a tela arquiva em vez de apagar',
+    /arquivado: true/.test(hab) && !/\.delete\(\)/.test(hab), '');
+  verificar('v104 — o histórico fica visível, marcado como substituído',
+    /substituído/.test(hab) && /hb-velho/.test(hab), '');
+
+  /* ── o alerta na home ─────────────────────────────────────
+     Semáforo que só existe dentro do módulo avisa quem já foi
+     olhar. O pedido era avisar ANTES, e isso só acontece na home.
+
+     O caso que importa é a renovação: a certidão antiga vence
+     sozinha e acenderia um alerta já resolvido. */
+  const hojeIso = sandbox.window.ERP.util.hoje();
+  const emDias = function (n) {
+    const d = new Date(hojeIso + 'T00:00:00Z');
+    d.setUTCDate(d.getUTCDate() + n);
+    return d.toISOString().slice(0, 10);
+  };
+  const empresasAntes = D.empresas;
+  D.empresas = [{ id: 'E1', nome: 'DOM PEDRO LTDA', apelido: 'Dom Pedro', ativo: true }];
+  D.habilitacaoResumo = [
+    // vencida de verdade, sem renovação
+    { id: 'a1', empresa: 'E1', tipo: 'cnd-federal', tipo_nome: 'CND Federal',
+      tipo_sem_validade: false, validade_efetiva: emDias(-10), dias_para_vencer: -10 },
+    // vencida MAS já renovada — não pode acender
+    { id: 'a2', empresa: 'E1', tipo: 'fgts', tipo_nome: 'CRF FGTS',
+      tipo_sem_validade: false, validade_efetiva: emDias(-3), dias_para_vencer: -3 },
+    { id: 'a3', empresa: 'E1', tipo: 'fgts', tipo_nome: 'CRF FGTS',
+      tipo_sem_validade: false, validade_efetiva: emDias(27), dias_para_vencer: 27 },
+    // longe: não é assunto
+    { id: 'a4', empresa: 'E1', tipo: 'cndt', tipo_nome: 'CNDT',
+      tipo_sem_validade: false, validade_efetiva: emDias(120), dias_para_vencer: 120 },
+    // não vence nunca
+    { id: 'a5', empresa: 'E1', tipo: 'contrato-social', tipo_nome: 'Contrato social',
+      tipo_sem_validade: true, validade_efetiva: null, dias_para_vencer: null }
+  ];
+  S.setUsuario('u1');                    // assistente: vê o módulo
+  /* A ORDEM EM QUE O BANCO DEVOLVE NÃO PODE MUDAR A RESPOSTA.
+
+     Primeira versão deste teste passava mesmo com o filtro da
+     renovação quebrado, porque a renovada vinha por último na
+     lista e "o último ganha" dava o mesmo resultado que "o de
+     validade mais longa ganha". O `select` não pede ordenação:
+     a ordem é a que o Postgres quiser. Então o caso roda nas duas
+     ordens, e as duas têm de dar igual. */
+  const resumoBase = D.habilitacaoResumo.slice();
+  const resposta = function (lista) {
+    D.habilitacaoResumo = lista;
+    const p2 = S.pendenciasHome();
+    return {
+      venc: p2.find(x => x.id === 'hab_vencida'),
+      vindo: p2.find(x => x.id === 'hab_vencendo')
+    };
+  };
+  const direta = resposta(resumoBase);
+  const invertida2 = resposta(resumoBase.slice().reverse());
+  verificar('v104 — a ordem do banco não muda o alerta',
+    (direta.venc || {}).n === (invertida2.venc || {}).n &&
+    (direta.vindo || {}).n === (invertida2.vindo || {}).n,
+    JSON.stringify([(direta.venc || {}).n, (invertida2.venc || {}).n,
+                    (direta.vindo || {}).n, (invertida2.vindo || {}).n]));
+  const venc = direta.venc;
+  const vindo = direta.vindo;
+  verificar('v104 — a certidão vencida acende cartão na home',
+    venc && venc.n === 1, venc ? venc.n : 'sem cartão');
+  verificar('v104 — e a já renovada NÃO acende',
+    venc && !/FGTS/.test(venc.texto), venc ? venc.texto : '');
+  verificar('v104 — a renovação de 27 dias entra no cartão dos 30 dias',
+    vindo && vindo.n === 1 && /FGTS/.test(vindo.texto), vindo ? vindo.n + ' ' + vindo.texto : 'sem cartão');
+  verificar('v104 — o que vence em 120 dias não entra em cartão nenhum',
+    !/CNDT/.test((venc || {}).texto || '') && !/CNDT/.test((vindo || {}).texto || ''), '');
+  verificar('v104 — documento que não vence não acende nada',
+    !/Contrato social/.test(((venc || {}).texto || '') + ((vindo || {}).texto || '')), '');
+  verificar('v104 — o cartão nomeia a empresa, não o código dela',
+    venc && /Dom Pedro/.test(venc.texto), venc ? venc.texto : '');
+
+  /* Banco sem o módulo instalado: nenhum cartão, e nada quebra. */
+  D.habilitacaoResumo = [];
+  verificar('v104 — sem o SQL rodado, nenhum cartão de habilitação aparece',
+    !S.pendenciasHome().some(x => /^hab_/.test(x.id)), '');
+  delete D.habilitacaoResumo;
+  verificar('v104 — e nem quando a carga sequer definiu o resumo',
+    !S.pendenciasHome().some(x => /^hab_/.test(x.id)), '');
+
+  /* E quem não tem o módulo não recebe o cartão, mesmo com o cofre
+     cheio de certidão vencida: o alerta segue a matriz de acesso
+     como o resto do sistema. */
+  D.habilitacaoResumo = [{ id: 'a1', empresa: 'E1', tipo: 'cnd-federal',
+    tipo_nome: 'CND Federal', tipo_sem_validade: false,
+    validade_efetiva: emDias(-10), dias_para_vencer: -10 }];
+  S.setUsuario('u8');                    // Carol do DP: não vê Habilitação
+  verificar('v104 — quem não tem o módulo não recebe o alerta',
+    !S.pendenciasHome().some(x => /^hab_/.test(x.id)), '');
+  delete D.habilitacaoResumo;
+  S.setUsuario(usuarioAntes);
+  D.empresas = empresasAntes;
+
+  /* O resumo é lido na carga da sessão, e a falta das tabelas não
+     pode derrubar o sistema inteiro por um módulo acessório. */
+  const remoto = fs.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  verificar('v104 — o resumo vem na carga da sessão, não da tela',
+    /habilitacaoResumo/.test(remoto) && /hab_documento_vigente/.test(remoto), '');
+  verificar('v104 — e a falta das tabelas não derruba a carga',
+    /try \{[\s\S]{0,400}hab_documento_vigente[\s\S]{0,400}catch/.test(remoto), '');
 })();

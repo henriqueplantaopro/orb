@@ -20,6 +20,7 @@ ERP.app = (function () {
     { id: 'ativos',        nome: 'Ativos',            txt: 'Equipamentos: onde está cada um, com quem, manutenção e resultado por item.', estado: 'ativo' },
     { id: 'cadastros',     nome: 'Cadastros',         txt: 'Projetos e clientes: prazo de recebimento, retenções e produtividade.', estado: 'ativo' },
     { id: 'procedimentos', nome: 'Procedimentos',     txt: 'Cirurgias do mutirão do HGB: material consumido, repasse ao médico e resultado por cirurgia.', estado: 'ativo' },
+    { id: 'habilitacao',   nome: 'Habilitação',       txt: 'Cofre das certidões e documentos da empresa, com alerta de vencimento escalonado.', estado: 'ativo' },
     { id: 'administracao', nome: 'Administração',     txt: 'Usuários e perfis, alçadas de aprovação, políticas e trilha de auditoria.', estado: 'ativo' }
   ];
   const rotEstado = { ativo: 'disponível', construcao: 'em construção', planejado: 'planejado' };
@@ -316,7 +317,7 @@ ERP.app = (function () {
       estoque: 'estoque', compras: 'compras', ativos: 'ativos',
       procedimentos: 'procedimentos', dp: 'dp', cadastros: 'cadastros',
       administracao: 'administracao', produtividade: 'produtividade',
-      contratos: 'contratos'
+      contratos: 'contratos', habilitacao: 'habilitacao'
     };
     const mod = ERP[telas[id]];
     if (mod && typeof mod.render === 'function') { mod.render(); return; }
@@ -378,6 +379,7 @@ ERP.app = (function () {
     if (id === 'procedimentos') ERP.procedimentos.render();
     if (id === 'compras') ERP.compras.render();
     if (id === 'administracao') ERP.administracao.render();
+    if (id === 'habilitacao') ERP.habilitacao.render();
     if (id === 'financeiro') { abrirArea('pagar'); abrirAba('contas'); }
   }
 
@@ -570,6 +572,7 @@ ERP.app = (function () {
     ERP.retencoes.montar();
     ERP.administracao.montar();
     ERP.dp.montar();
+    ERP.habilitacao.montar();
     renderHome();
     U.el('btn-home').addEventListener('click', function () { abrirModulo('home'); });
     document.querySelectorAll('#area-fin button').forEach(function (b) {

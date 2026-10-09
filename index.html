@@ -196,6 +196,21 @@
   </div>
 
   <!-- ══════════ CONTRATOS ══════════ -->
+  <div data-modulo="habilitacao" style="display:none">
+    <div class="card">
+      <h2>Habilitação<span class="sub">cofre de documentos e alerta de vencimento</span></h2>
+      <div class="filtros">
+        <div class="rel-nav" id="hb-nav" style="margin:0">
+          <button data-hb="painel" aria-pressed="true">Painel</button>
+          <button data-hb="cofre" aria-pressed="false">Cofre</button>
+          <button data-hb="tipos" aria-pressed="false">Tipos de documento</button>
+        </div>
+        <button class="btn-linha" id="hb-novo">+ Subir documento</button>
+      </div>
+      <div id="hb-saida"></div>
+    </div>
+  </div>
+
   <div data-modulo="contratos" style="display:none">
     <div class="card">
       <h2>Contratos<span class="sub">vigência, valor mensal e aditivos</span></h2>
@@ -714,6 +729,8 @@
 <script src="js/ui-retencoes.js"></script>
 <script src="js/ui-administracao.js"></script>
 <script src="js/ui-dp.js"></script>
+<script src="js/hab-leitura.js"></script>
+<script src="js/ui-habilitacao.js"></script>
 <!-- Biblioteca do Supabase. Falhando o carregamento (sem internet,
      por exemplo), `ERP.auth.configurado()` devolve falso e o sistema
      segue no modo local, sem login. -->
