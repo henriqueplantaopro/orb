@@ -160,8 +160,75 @@ ERP.util = (function () {
 
   // só os dígitos, e a máscara de CNPJ/CPF para exibição
   const so = s => String(s == null ? '' : s).replace(/\D/g, '');
-  function cnpj(v) {
+  /* ── CNPJ e CPF ──────────────────────────────────────────
+     O ZERO DA FRENTE SOME, e some em silêncio.
+
+     CNPJ tem catorze dígitos e muitos começam com zero. Passando
+     por planilha, por importação ou por qualquer lugar que trate o
+     campo como NÚMERO, o 08.656.723/0001-70 vira 8656723000170 —
+     treze dígitos. A tela mostra "8.656.723/0001-70", que parece
+     um CNPJ, e o arquivo de remessa sai com treze dígitos num
+     campo de catorze. O banco recusa o arquivo inteiro, e o motivo
+     que ele devolve não fala em zero nenhum.
+
+     A correção não pode ser "preencher com zero à esquerda e
+     torcer": completar um número truncado é chute. Mas CNPJ tem
+     dígito verificador, e isso permite COMPROVAR o chute — se o
+     valor com o zero na frente tem DV válido e o valor sem não
+     tem, o zero estava lá. É o único caso em que completar é
+     dedução e não palpite.
+
+     Quando nem assim fecha, o valor volta como está: errado e
+     visível, em vez de errado e disfarçado de certo. */
+  function dvCnpj(c) {
+    const calc = function (fim) {
+      let peso = fim - 7, soma = 0;
+      for (let i = 0; i < fim; i++) {
+        soma += (+c[i]) * peso;
+        peso = peso - 1 < 2 ? 9 : peso - 1;
+      }
+      const r = soma % 11;
+      return r < 2 ? 0 : 11 - r;
+    };
+    return calc(12) === +c[12] && calc(13) === +c[13];
+  }
+  function cnpjValido(v) {
     const d = so(v);
+    return /^\d{14}$/.test(d) && !/^(\d)\1{13}$/.test(d) && dvCnpj(d);
+  }
+  function dvCpf(c) {
+    const calc = function (fim) {
+      let soma = 0;
+      for (let i = 0; i < fim; i++) soma += (+c[i]) * (fim + 1 - i);
+      const r = (soma * 10) % 11;
+      return r === 10 ? 0 : r;
+    };
+    return calc(9) === +c[9] && calc(10) === +c[10];
+  }
+  function cpfValido(v) {
+    const d = so(v);
+    return /^\d{11}$/.test(d) && !/^(\d)\1{10}$/.test(d) && dvCpf(d);
+  }
+
+  /* Devolve o documento com os dígitos que ele deveria ter, quando
+     dá para PROVAR que faltam zeros à esquerda. */
+  function documentoNormalizado(v) {
+    const d = so(v);
+    if (!d) return d;
+    if (d.length === 14 || d.length === 11) return d;
+    if (d.length > 11 && d.length < 14) {
+      const c = d.padStart(14, '0');
+      if (cnpjValido(c)) return c;
+    }
+    if (d.length > 8 && d.length < 11) {
+      const c = d.padStart(11, '0');
+      if (cpfValido(c)) return c;
+    }
+    return d;
+  }
+
+  function cnpj(v) {
+    const d = documentoNormalizado(v);
     if (d.length === 14) return d.replace(/(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})/, '$1.$2.$3/$4-$5');
     if (d.length === 11) return d.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
     return v || '';
@@ -231,5 +298,6 @@ ERP.util = (function () {
     ligarData: ligarData,
     slug,
     mesesEntre,
-    diasUteis, brl, num, parseValor, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj };
+    diasUteis, brl, num, parseValor, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
+    cnpjValido, cpfValido, documentoNormalizado };
 })();

@@ -53,7 +53,7 @@ ERP.habilitacao = (function () {
   const U = ERP.util, S = ERP.store, D = ERP.dados;
 
   let aba = 'painel';
-  let filtro = { empresa: '', tipo: '', situacao: '', busca: '' };
+  let filtro = { empresa: '', categoria: '', tipo: '', situacao: '', busca: '' };
   /* As tabelas deste módulo ficam fora do mapa de sincronização por
      sombra: o cofre é leitura e escrita diretas, não movimento com
      foto anterior. Então o que foi lido vive aqui. */
@@ -121,21 +121,104 @@ ERP.habilitacao = (function () {
 
   /* O documento que VALE de cada par empresa+tipo.
 
-     A comparação é pela validade, não pela emissão: uma certidão
-     emitida depois pode valer menos — a estadual de trinta dias
-     emitida hoje vence antes da de cento e oitenta emitida no mês
-     passado — e quem manda na habilitação é até quando vale. */
+     SUBSTITUIÇÃO SÓ EXISTE ONDE HÁ RENOVAÇÃO.
+
+     A primeira versão colapsava tudo por empresa+tipo e marcava o
+     resto como "substituído". Está certo para certidão: a CND nova
+     torna a anterior inútil. Está ERRADO para todo o resto. Uma
+     empresa tem dez atestados de capacidade técnica e os dez
+     valem — é justamente o acervo deles que ganha a licitação. Tem
+     o balanço de cada exercício, e todos continuam de pé. Tem o
+     contrato social e suas alterações, que se somam em vez de se
+     substituírem.
+
+     Marcar nove atestados como "substituídos" é pior que feio:
+     some com prova que a empresa tem.
+
+     Então o colapso vale só para o tipo que VENCE. O tipo sem
+     validade devolve cada documento por si. */
   function vigentes(lista) {
     const por = {};
     (lista || dados.documentos || []).forEach(function (d) {
-      const k = d.empresa + '|' + d.tipo;
+      const k = d.tipo_sem_validade
+        ? 'id:' + d.id                       // cada um vale por si
+        : d.empresa + '|' + d.tipo;
       const atual = por[k];
       if (!atual) { por[k] = d; return; }
+      /* A comparação é pela validade, não pela emissão: uma
+         certidão emitida depois pode valer menos — a estadual de
+         trinta dias emitida hoje vence antes da de cento e oitenta
+         emitida no mês passado — e quem manda é até quando vale. */
       const a = d.validade_efetiva || d.data_emissao || '';
       const b = atual.validade_efetiva || atual.data_emissao || '';
       if (a > b) por[k] = d;
     });
     return Object.keys(por).map(function (k) { return por[k]; });
+  }
+
+  /* ── a quem o documento pertence ─────────────────────────
+     Três respostas possíveis, e é assim que se pensa no papel:
+     é da Matriz, é da Filial, ou é ÚNICO — serve para as duas.
+
+     "Único" não é invenção administrativa: a CND Federal diz, com
+     essas palavras, que vale para o estabelecimento matriz e suas
+     filiais. O que define o alcance é a RAIZ do CNPJ (os oito
+     primeiros dígitos), que é o que identifica a empresa; os
+     quatro seguintes são o estabelecimento. Novaped tem outra
+     raiz, então nunca é coberta por um documento da HJM — e isso
+     cai de graça da regra, sem precisar de exceção escrita. */
+  const raizCnpj = c => String(c || '').replace(/\D/g, '').slice(0, 8);
+  const empresaPor = id => (D.empresas || []).find(function (e) { return e.id === id; }) || null;
+
+  function empresasCobertas(d) {
+    if (!d) return [];
+    if (d.abrangencia !== 'matriz') return [d.empresa];
+    const dona = empresaPor(d.empresa);
+    if (!dona) return [d.empresa];
+    const r = raizCnpj(dona.cnpj);
+    const irmas = empresasAtivas().filter(function (e) { return raizCnpj(e.cnpj) === r; });
+    return irmas.length ? irmas.map(function (e) { return e.id; }) : [d.empresa];
+  }
+
+  /* As opções do campo "Pertence a": cada empresa, mais um "Único"
+     por raiz que tenha mais de um estabelecimento. */
+  function opcoesPertence() {
+    const fora = empresasAtivas().map(function (e) {
+      return { v: e.id, rot: e.apelido || e.nome };
+    });
+    const porRaiz = {};
+    empresasAtivas().forEach(function (e) {
+      const r = raizCnpj(e.cnpj);
+      (porRaiz[r] = porRaiz[r] || []).push(e);
+    });
+    Object.keys(porRaiz).forEach(function (r) {
+      const g = porRaiz[r];
+      if (g.length < 2) return;
+      fora.push({ v: 'unico:' + r,
+        rot: 'Único — ' + g.map(function (e) { return e.apelido || e.nome; }).join(' e ') });
+    });
+    return fora;
+  }
+
+  function dePertence(valor) {
+    if (/^unico:/.test(valor || '')) {
+      const r = String(valor).slice(6);
+      const g = empresasAtivas().filter(function (e) { return raizCnpj(e.cnpj) === r; });
+      const m = g.find(function (e) { return e.matriz; }) || g[0];
+      return { empresa: m ? m.id : '', abrangencia: 'matriz' };
+    }
+    return { empresa: valor || '', abrangencia: 'estabelecimento' };
+  }
+
+  function paraPertence(d) {
+    if (d && d.abrangencia === 'matriz') {
+      const e = empresaPor(d.empresa);
+      const r = e ? raizCnpj(e.cnpj) : '';
+      if (r && empresasAtivas().filter(function (x) { return raizCnpj(x.cnpj) === r; }).length > 1) {
+        return 'unico:' + r;
+      }
+    }
+    return (d && d.empresa) || '';
   }
 
   /* Pares empresa+tipo que o cofre deveria ter e não tem. Só as
@@ -197,44 +280,96 @@ ERP.habilitacao = (function () {
     if (aba === 'subir') ligarSubir();
   }
 
-  /* ── painel ──────────────────────────────────────────── */
+  /* ── painel: o checklist por empresa ────────────────────
+     Um cartão por empresa, um crachá por tipo de documento. Verde
+     é o que está em dia, âmbar o que vence dentro de trinta dias,
+     vermelho o que venceu ou o que falta.
+
+     Este desenho substituiu a fila de pendências, e por um motivo
+     concreto: a fila respondia "o que vence primeiro", que é a
+     pergunta do dia a dia, mas não respondia "a Filial está apta?"
+     — que é a pergunta de quem vai entregar um envelope amanhã.
+     Com o checklist as duas aparecem: o vermelho salta, e o verde
+     ao redor é a prova de que o resto foi conferido.
+
+     Os crachás QUEBRAM a linha em vez de empurrar a tela, e os
+     cartões viram uma coluna só quando não cabem dois. Nada corre
+     para o lado. */
   function painel() {
     const v = vigentes();
-    const fila = v.filter(function (d) { return PRECISA[situacao(d).id]; })
-                  .sort(function (a, b) {
-                    const sa = situacao(a), sb = situacao(b);
-                    return sa.ordem - sb.ordem ||
-                      ((a.dias_para_vencer || 0) - (b.dias_para_vencer || 0));
-                  });
-    const falta = faltando(v);
-    const conta = id => v.filter(function (d) { return situacao(d).id === id; }).length;
+    const emp = empresasAtivas();
+    if (!emp.length) return '<div class="vazio">Nenhuma empresa cadastrada.</div>';
 
+    /* O que vale, por empresa e tipo — já contando os documentos
+       marcados como Único, que cobrem todas as empresas da mesma
+       raiz de CNPJ. */
+    const mapa = {};
+    v.forEach(function (d) {
+      empresasCobertas(d).forEach(function (eid) {
+        const k = eid + '|' + d.tipo;
+        const atual = mapa[k];
+        if (!atual) { mapa[k] = d; return; }
+        const a = d.validade_efetiva || d.data_emissao || '';
+        const b = atual.validade_efetiva || atual.data_emissao || '';
+        if (a > b) mapa[k] = d;
+      });
+    });
+
+    /* "Outro documento" fica de fora do checklist: é a gaveta do
+       que não tem categoria, e cobrar a presença dela não faz
+       sentido. */
+    const tipos = (dados.tipos || []).filter(function (t) { return t.id !== 'outro'; });
+
+    let faltam = 0, vencidos = 0, vencendo = 0;
+    const cartoes = emp.map(function (e) {
+      const chips = tipos.map(function (t) {
+        const d = mapa[e.id + '|' + t.id];
+        if (!d) { faltam++; return chip('falta ' + t.nome, 'b-reprovado', t.nome + ' — não está no cofre'); }
+        const st = situacao(d);
+        if (st.id === 'vencido') { vencidos++; return chip(t.nome + ' vencido', 'b-reprovado',
+          'venceu em ' + U.fData(d.validade_efetiva)); }
+        if (st.id === 'critico' || st.id === 'alerta' || st.id === 'atencao') {
+          vencendo++;
+          return chip(t.nome + ' vence em ' + d.dias_para_vencer + 'd', 'b-pendente',
+            'vence em ' + U.fData(d.validade_efetiva));
+        }
+        if (st.id === 'sem-data') return chip(t.nome + ' sem validade', 'b-pendente',
+          'o documento está guardado, mas sem data para o alerta');
+        return chip(t.nome, 'b-pago', d.validade_efetiva
+          ? 'vale até ' + U.fData(d.validade_efetiva) : 'não vence');
+      }).join('');
+      return '<div class="hb-cartao"><div class="hb-cartao-nome">' +
+        U.esc(e.apelido || e.nome) +
+        (e.municipio ? ' <span class="sub">(' + U.esc(e.municipio) + ')</span>' : '') +
+        '</div><div class="hb-chips">' + chips + '</div></div>';
+    }).join('');
+
+    return indicadores(vencidos, vencendo, faltam) +
+      (dados.tarefas.length ? tarefas() : '') +
+      '<h3 class="hb-titulo">Checklist por empresa — o que falta ou está vencido</h3>' +
+      '<div class="hb-cartoes">' + cartoes + '</div>' +
+      '<div class="ajuda">Verde está em dia, âmbar vence dentro de trinta dias, vermelho venceu ou ' +
+      'não está no cofre. O documento marcado como <b>Único</b> conta para as duas empresas da HJM, ' +
+      'porque é isso que a certidão de matriz diz de si: vale para o estabelecimento matriz e suas ' +
+      'filiais. A Novaped tem outra raiz de CNPJ e nunca é coberta por um documento da HJM. ' +
+      'O prazo usa a validade impressa no documento ou, quando ele não traz nenhuma, o prazo do ' +
+      'tipo contado da emissão.</div>';
+  }
+
+  const chip = (txt, cls, titulo) =>
+    '<span class="badge ' + cls + ' hb-chip"' +
+    (titulo ? ' title="' + U.esc(titulo) + '"' : '') + '>' + U.esc(txt) + '</span>';
+
+  function indicadores(vencidos, vencendo, faltam) {
     const cartao = (rot, val, det, vermelho) =>
       '<div class="ind-card"><div class="rot">' + rot + '</div>' +
       '<div class="valor"' + (vermelho && val !== '0' ? ' style="color:var(--red)"' : '') + '>' +
       val + '</div><div class="det">' + det + '</div></div>';
-
     return '<div class="ind-grade">' +
-        cartao('Vencidos', String(conta('vencido')), 'inabilitam hoje', true) +
-        cartao('Vencem em 7 dias', String(conta('critico')), 'renovar esta semana', true) +
-        cartao('Vencem em 30 dias', String(conta('alerta') + conta('atencao')), 'entram na fila') +
-        cartao('Sem validade lida', String(conta('sem-data')), 'precisam de conferência') +
-        cartao('Faltam no cofre', String(falta.length), 'nunca foram guardados') +
-      '</div>' +
-
-      (dados.tarefas.length ? tarefas() : '') +
-
-      '<h3 class="hb-titulo">O que precisa de ação</h3>' +
-      (fila.length ? filaAcao(fila)
-        : '<div class="vazio"><strong>Nada vencendo nos próximos 30 dias.</strong>' +
-          'As certidões guardadas estão todas com folga.</div>') +
-
-      (falta.length ? blocoFalta(falta) : '') +
-
-      '<div class="ajuda">A coluna <b>Vence em</b> usa a validade efetiva: a data impressa no ' +
-      'documento ou, quando ele não traz nenhuma, o prazo do tipo contado da emissão — 180 dias ' +
-      'para a CNDT, 30 para o CRF do FGTS, 90 para quem não declara prazo. Quem calcula é o ' +
-      'banco, uma vez só, para nenhuma tela inventar a sua regra.</div>';
+      cartao('Vencidos', String(vencidos), 'inabilitam hoje', true) +
+      cartao('Vencem em 30 dias', String(vencendo), 'entram na fila de renovação') +
+      cartao('Faltam no cofre', String(faltam), 'nunca foram guardados', true) +
+      '</div>';
   }
 
   function tarefas() {
@@ -246,46 +381,16 @@ ERP.habilitacao = (function () {
       }).join(' · ')) + (dados.tarefas.length > 4 ? ' …' : '') + '</div>';
   }
 
-  function filaAcao(fila) {
-    return '<div class="tabela-rolagem"><table><thead><tr>' +
-      '<th>Empresa</th><th>Documento</th><th>Vence em</th><th>Situação</th><th></th>' +
-      '</tr></thead><tbody>' +
-      fila.map(function (d) {
-        const s = situacao(d), t = tipoDe(d.tipo);
-        return '<tr><td>' + U.esc(nomeEmpresa(d.empresa)) + '</td>' +
-          '<td class="desc">' + U.esc(d.tipo_nome || d.tipo) +
-            (d.abrangencia === 'matriz'
-              ? ' <span class="badge b-cancelado">matriz+filiais</span>' : '') + '</td>' +
-          '<td class="mono">' + (d.validade_efetiva ? U.fData(d.validade_efetiva) : '—') + '</td>' +
-          '<td><span class="badge ' + s.cls + '">' + s.txt + '</span></td>' +
-          '<td class="acoes">' +
-            (t.url_emissao
-              ? '<a class="btn-sm" href="' + U.esc(t.url_emissao) +
-                '" target="_blank" rel="noopener">Emitir</a>' : '') +
-            (podeMexer()
-              ? '<button class="btn-sm" data-hb-renovar="' + U.esc(d.empresa) + '|' +
-                U.esc(d.tipo) + '">Subir nova</button>' : '') +
-          '</td></tr>';
-      }).join('') + '</tbody></table></div>';
-  }
-
-  function blocoFalta(falta) {
-    const por = {};
-    falta.forEach(function (f) { (por[f.empresa] = por[f.empresa] || []).push(f); });
-    return '<h3 class="hb-titulo">Certidões que o cofre não tem</h3>' +
-      '<div class="tabela-rolagem"><table><thead><tr><th>Empresa</th><th>Documentos</th>' +
-      '</tr></thead><tbody>' +
-      Object.keys(por).map(function (e) {
-        return '<tr><td>' + U.esc(nomeEmpresa(e)) + '</td><td class="desc">' +
-          U.esc(por[e].map(function (f) { return f.nome; }).join(', ')) + '</td></tr>';
-      }).join('') + '</tbody></table></div>';
-  }
-
   /* ── cofre ───────────────────────────────────────────── */
   function cofre() {
     const busca = filtro.busca.toLowerCase();
     const lista = (dados.documentos || []).filter(function (d) {
-      return (!filtro.empresa || d.empresa === filtro.empresa) &&
+      /* Filtrar por empresa inclui o que é ÚNICO: um documento do
+         grupo é documento da Matriz e da Filial, e escondê-lo ao
+         filtrar por uma delas faria o cofre parecer vazio
+         justamente onde ele está completo. */
+      return (!filtro.empresa || empresasCobertas(d).indexOf(filtro.empresa) >= 0) &&
+             (!filtro.categoria || (tipoDe(d.tipo).categoria || 'outros') === filtro.categoria) &&
              (!filtro.tipo || d.tipo === filtro.tipo) &&
              (!filtro.situacao || situacao(d).id === filtro.situacao) &&
              (!busca || ((d.tipo_nome || '') + ' ' + (d.numero || '') + ' ' +
@@ -348,9 +453,18 @@ ERP.habilitacao = (function () {
         opc('', filtro.empresa, 'todas') +
         empresasAtivas().map(function (e) {
           return opc(e.id, filtro.empresa, e.apelido || e.nome); }).join('') + '</select></div>' +
+      '<div class="f"><label for="hb-f-cat">Categoria</label><select id="hb-f-cat">' +
+        opc('', filtro.categoria, 'todas') +
+        categoriasUsadas().map(function (c) {
+          return opc(c[0], filtro.categoria, c[1]); }).join('') + '</select></div>' +
       '<div class="f"><label for="hb-f-tipo">Tipo</label><select id="hb-f-tipo">' +
         opc('', filtro.tipo, 'todos') +
-        (dados.tipos || []).map(function (t) {
+        (dados.tipos || []).filter(function (t) {
+          /* O seletor de tipo acompanha a categoria escolhida —
+             senão ele oferece 31 tipos dos quais 28 não casam com
+             o filtro ao lado e devolvem lista vazia. */
+          return !filtro.categoria || (t.categoria || 'outros') === filtro.categoria;
+        }).map(function (t) {
           return opc(t.id, filtro.tipo, t.nome); }).join('') + '</select></div>' +
       '<div class="f"><label for="hb-f-sit">Situação</label><select id="hb-f-sit">' +
         [['', 'todas'], ['vencido', 'vencidos'], ['critico', 'vencem em 7 dias'],
@@ -361,12 +475,33 @@ ERP.habilitacao = (function () {
         '<input id="hb-f-busca" value="' + U.esc(filtro.busca) + '" placeholder="número, arquivo"></div>' +
       '<button class="btn-sm" id="hb-limpar">Limpar</button>' +
       '<button class="btn-sm" id="hb-atualizar">Atualizar</button>' +
+      '<button class="btn-linha" id="hb-baixar-lote">Baixar em lote</button>' +
       '</div>';
   }
 
   /* ── catálogo ────────────────────────────────────────── */
-  const ROT_CAT = { cadastrais: 'Cadastrais', certidoes: 'Certidões', tecnico: 'Técnicos',
-                    balancos: 'Contábeis', outros: 'Outros' };
+  /* As categorias são as do edital, não as do programador: é por
+     elas que se monta um envelope de habilitação. A ordem é a que
+     aparece na tela e dentro do zip. */
+  const CATEGORIAS = [
+    ['cadastrais',   'Cadastrais'],
+    ['certidoes',    'Certidões'],
+    ['tecnico_crm',  'Técnicos — CRM / conselhos de saúde'],
+    ['tecnico_crea', 'Técnicos — CREA / engenharia'],
+    ['atestados',    'Atestados de capacidade técnica'],
+    ['contabeis',    'Contábeis'],
+    ['outros',       'Outros'],
+    /* Nomes antigos, para o cofre não esconder documento enquanto
+       o 45-documentacao-categorias.sql não tiver rodado. */
+    ['tecnico',      'Técnicos (categoria antiga)'],
+    ['balancos',     'Contábeis (categoria antiga)']
+  ];
+  const ROT_CAT = {};
+  CATEGORIAS.forEach(function (c) { ROT_CAT[c[0]] = c[1]; });
+  /* Só as que de fato têm tipo no catálogo aparecem nos filtros. */
+  const categoriasUsadas = () => CATEGORIAS.filter(function (c) {
+    return (dados.tipos || []).some(function (t) { return t.categoria === c[0]; });
+  });
 
   function catalogo() {
     const por = {};
@@ -402,7 +537,15 @@ ERP.habilitacao = (function () {
   function ligar() {
     const liga = function (id, ev, fn) { const e = U.el(id); if (e) e.addEventListener(ev, fn); };
     liga('hb-f-emp', 'change', function () { filtro.empresa = this.value; render(); });
+    liga('hb-f-cat', 'change', function () {
+      filtro.categoria = this.value;
+      /* Trocar de categoria limpa o tipo: manter um tipo de outra
+         categoria deixa a lista vazia sem dizer por quê. */
+      filtro.tipo = '';
+      render();
+    });
     liga('hb-f-tipo', 'change', function () { filtro.tipo = this.value; render(); });
+    liga('hb-baixar-lote', 'click', abrirBaixaEmLote);
     liga('hb-f-sit', 'change', function () { filtro.situacao = this.value; render(); });
     liga('hb-f-busca', 'input', function () {
       filtro.busca = this.value; render();
@@ -413,7 +556,7 @@ ERP.habilitacao = (function () {
       if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
     });
     liga('hb-limpar', 'click', function () {
-      filtro = { empresa: '', tipo: '', situacao: '', busca: '' }; render();
+      filtro = { empresa: '', categoria: '', tipo: '', situacao: '', busca: '' }; render();
     });
     liga('hb-atualizar', 'click', carregar);
 
@@ -538,10 +681,11 @@ ERP.habilitacao = (function () {
       /* Uma pasta quase sempre é de uma empresa só. Preencher as
          que ficaram em branco de uma vez economiza o trabalho
          repetitivo que a tela veio evitar. */
-      '<div class="f"><label for="hb-todos-emp">Empresa para as que estão em branco</label>' +
+      '<div class="f" style="min-width:220px">' +
+        '<label for="hb-todos-emp">Pertence a — para as que estão em branco</label>' +
         '<select id="hb-todos-emp"><option value="">escolha</option>' +
-        empresasAtivas().map(function (e) {
-          return '<option value="' + U.esc(e.id) + '">' + U.esc(e.apelido || e.nome) + '</option>';
+        opcoesPertence().map(function (o) {
+          return '<option value="' + U.esc(o.v) + '">' + U.esc(o.rot) + '</option>';
         }).join('') + '</select></div>' +
       '<button class="btn-sm" id="hb-aplicar-emp">Aplicar</button>' +
       '<div style="flex:1"></div>' +
@@ -569,7 +713,7 @@ ERP.habilitacao = (function () {
 
   function tabelaLote() {
     return '<div class="tabela-rolagem"><table><thead><tr>' +
-      '<th>Arquivo</th><th>Empresa</th><th>Tipo</th><th>Emissão</th><th>Validade</th><th></th>' +
+      '<th>Arquivo</th><th>Pertence a</th><th>Tipo</th><th>Emissão</th><th>Validade</th><th></th>' +
       '</tr></thead><tbody>' + lote.map(linhaLote).join('') + '</tbody></table></div>' +
       '<div class="ajuda">O que está escrito nos campos é o palpite do sistema, e é para ser ' +
       'corrigido onde estiver errado. Nada vai para o cofre antes de você clicar em Guardar.</div>';
@@ -590,10 +734,10 @@ ERP.habilitacao = (function () {
           'placeholder="número do documento">') +
       '</td>' +
       '<td><select data-hb-emp="' + i + '"' + trava + '><option value="">—</option>' +
-        empresasAtivas().map(function (e) {
-          return '<option value="' + U.esc(e.id) + '"' +
-            (l.campos.empresa === e.id ? ' selected' : '') + '>' +
-            U.esc(e.apelido || e.nome) + '</option>';
+        opcoesPertence().map(function (o) {
+          return '<option value="' + U.esc(o.v) + '"' +
+            (paraPertence(l.campos) === o.v ? ' selected' : '') + '>' +
+            U.esc(o.rot) + '</option>';
         }).join('') + '</select></td>' +
       '<td><select data-hb-tipo="' + i + '"' + trava + '><option value="">—</option>' +
         (dados.tipos || []).map(function (x) {
@@ -627,13 +771,6 @@ ERP.habilitacao = (function () {
     if (p) partes.push('<span style="color:var(--red);font-weight:600">' + U.esc(p) + '</span>');
 
     const t = tipoDe(l.campos.tipo);
-    if (l.campos.abrangencia === 'matriz') {
-      partes.push('<button class="btn-ghost" data-hb-abr="' + i + '" ' +
-        'title="clique para mudar">cobre as filiais</button>');
-    } else if (!parado(l)) {
-      partes.push('<button class="btn-ghost" data-hb-abr="' + i + '" ' +
-        'title="clique para mudar">só este CNPJ</button>');
-    }
     if (l.lido && l.lido.validade_calculada) {
       partes.push('validade = emissão + ' + (t.prazo_padrao_dias || 90) + ' dias');
     }
@@ -681,9 +818,14 @@ ERP.habilitacao = (function () {
     liga('hb-aplicar-emp', 'click', function () {
       const v = U.val('hb-todos-emp');
       if (!v) return ERP.app.aviso('Escolha a empresa antes de aplicar.', 'erro');
+      const p2 = dePertence(v);
       let n = 0;
       lote.forEach(function (l) {
-        if (!parado(l) && !l.campos.empresa) { l.campos.empresa = v; n++; }
+        if (!parado(l) && !l.campos.empresa) {
+          l.campos.empresa = p2.empresa;
+          l.campos.abrangencia = p2.abrangencia;
+          n++;
+        }
       });
       render();
       ERP.app.aviso(n ? n + ' linha(s) receberam a empresa.' : 'Nenhuma linha estava sem empresa.');
@@ -837,11 +979,17 @@ ERP.habilitacao = (function () {
       }
       const r = U.el('hb-resumo');
       if (r) r.textContent = resumoLote();
-      ligarAbrangencia();
     };
     document.querySelectorAll('[data-hb-emp]').forEach(function (s) {
       s.addEventListener('change', function () {
-        lote[+this.dataset.hbEmp].campos.empresa = this.value; repinta(+this.dataset.hbEmp);
+        const i = +this.dataset.hbEmp;
+        /* Um controle, dois campos: "Pertence a" decide a empresa
+           dona e se o documento vale para o grupo. Eram dois
+           selects, e ninguém via relação entre eles. */
+        const p2 = dePertence(this.value);
+        lote[i].campos.empresa = p2.empresa;
+        lote[i].campos.abrangencia = p2.abrangencia;
+        repinta(i);
       });
     });
     document.querySelectorAll('[data-hb-tipo]').forEach(function (s) {
@@ -895,20 +1043,6 @@ ERP.habilitacao = (function () {
     document.querySelectorAll('[data-hb-tirar]').forEach(function (b) {
       b.addEventListener('click', function () {
         lote.splice(+this.dataset.hbTirar, 1); render();
-      });
-    });
-    ligarAbrangencia();
-  }
-
-  function ligarAbrangencia() {
-    document.querySelectorAll('[data-hb-abr]').forEach(function (b) {
-      if (b.dataset.ligado) return;
-      b.dataset.ligado = '1';
-      b.addEventListener('click', function () {
-        const i = +this.dataset.hbAbr, l = lote[i];
-        l.campos.abrangencia = l.campos.abrangencia === 'matriz' ? 'estabelecimento' : 'matriz';
-        const cx = U.el('hb-sit' + i);
-        if (cx) { cx.innerHTML = situacaoLinha(l, i); ligarAbrangencia(); }
       });
     });
   }
@@ -982,6 +1116,152 @@ ERP.habilitacao = (function () {
     await carregar();
   }
 
+  /* ── baixar em lote, zipado ──────────────────────────────
+     Montar envelope de habilitação é juntar de dez a vinte
+     arquivos da mesma empresa, por categoria. Baixar um a um, com
+     link assinado de cinco minutos cada, é meia hora de trabalho
+     por certame — e é onde se esquece um documento.
+
+     Aqui se escolhe a empresa e as categorias, e sai um zip com
+     tudo organizado em pastas. O que é marcado como ÚNICO entra
+     junto, porque documento do grupo é documento daquela empresa
+     também.
+
+     Por padrão vai só o que VALE hoje. Documento vencido num
+     envelope de habilitação é o que inabilita — se alguém quiser
+     mesmo levar, tem de marcar de propósito. */
+  function abrirBaixaEmLote() {
+    const emp = empresasAtivas();
+    if (!emp.length) return ERP.app.aviso('Nenhuma empresa cadastrada.', 'erro');
+    const cats = categoriasUsadas();
+
+    ERP.app.modal({
+      titulo: 'Baixar documentos em lote',
+      corpo:
+        '<div class="row2">' +
+          '<div><label for="bl-emp">Empresa</label><select id="bl-emp">' +
+            emp.map(function (e) {
+              return '<option value="' + U.esc(e.id) + '"' +
+                (filtro.empresa === e.id ? ' selected' : '') + '>' +
+                U.esc(e.apelido || e.nome) + '</option>'; }).join('') + '</select>' +
+            '<div class="ajuda">Entram também os documentos marcados como <b>Único</b>, que valem ' +
+            'para as duas empresas da HJM.</div></div>' +
+        '</div>' +
+        '<label style="margin-top:10px">Categorias</label>' +
+        '<div class="hb-chips" style="margin-bottom:4px">' +
+          cats.map(function (c) {
+            return '<label class="hb-marca"><input type="checkbox" data-bl-cat="' + U.esc(c[0]) +
+              '" checked> ' + U.esc(c[1]) + '</label>';
+          }).join('') +
+        '</div>' +
+        '<div style="display:flex;gap:6px;margin-bottom:10px">' +
+          '<button class="btn-sm" id="bl-todas">Todas</button>' +
+          '<button class="btn-sm" id="bl-nenhuma">Nenhuma</button>' +
+        '</div>' +
+        '<label style="font-weight:400"><input type="checkbox" id="bl-vencidos" style="width:auto"> ' +
+          'Incluir também os vencidos e os substituídos</label>' +
+        '<div class="ajuda" id="bl-conta"></div>',
+      acoes: [{ txt: 'Baixar zip', cls: 'btn-aprovar', fn: baixarLote }],
+      aposAbrir: function () {
+        const recontar = function () {
+          const cx = U.el('bl-conta');
+          if (cx) {
+            const n = selecionadosParaZip().length;
+            cx.textContent = n ? n + ' arquivo(s) entram no zip.'
+                               : 'Nenhum arquivo com essas marcações.';
+          }
+        };
+        U.el('bl-emp').addEventListener('change', recontar);
+        U.el('bl-vencidos').addEventListener('change', recontar);
+        document.querySelectorAll('[data-bl-cat]').forEach(function (c) {
+          c.addEventListener('change', recontar);
+        });
+        U.el('bl-todas').addEventListener('click', function () {
+          document.querySelectorAll('[data-bl-cat]').forEach(function (c) { c.checked = true; });
+          recontar();
+        });
+        U.el('bl-nenhuma').addEventListener('click', function () {
+          document.querySelectorAll('[data-bl-cat]').forEach(function (c) { c.checked = false; });
+          recontar();
+        });
+        recontar();
+      }
+    });
+  }
+
+  function selecionadosParaZip() {
+    const empresa = U.val('bl-emp');
+    const marcadas = Array.from(document.querySelectorAll('[data-bl-cat]'))
+      .filter(function (c) { return c.checked; })
+      .map(function (c) { return c.dataset.blCat; });
+    const tudo = U.el('bl-vencidos') && U.el('bl-vencidos').checked;
+    const base = tudo ? (dados.documentos || []) : vigentes();
+    return base.filter(function (d) {
+      if (!d.arquivo_path) return false;
+      if (empresasCobertas(d).indexOf(empresa) < 0) return false;
+      if (marcadas.indexOf(tipoDe(d.tipo).categoria || 'outros') < 0) return false;
+      if (!tudo && situacao(d).id === 'vencido') return false;
+      return true;
+    });
+  }
+
+  async function baixarLote() {
+    const lista = selecionadosParaZip();
+    if (!lista.length) return ERP.app.aviso('Nenhum arquivo com essas marcações.', 'erro');
+    if (!window.JSZip) return ERP.app.aviso('A biblioteca de zip não carregou nesta página.', 'erro');
+    const empresa = U.val('bl-emp');
+    const nomeEmp = nomeEmpresa(empresa);
+    const c = cli();
+    const zip = new window.JSZip();
+    const cx = U.el('bl-conta');
+    let feitos = 0, falhas = [];
+
+    for (const d of lista) {
+      if (cx) cx.textContent = 'baixando ' + (feitos + 1) + ' de ' + lista.length + '…';
+      try {
+        const assinado = await c.storage.from('habilitacao').createSignedUrl(d.arquivo_path, 300);
+        if (assinado.error) throw new Error(assinado.error.message);
+        const resp = await fetch(assinado.data.signedUrl);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const bytes = await resp.arrayBuffer();
+        const cat = ROT_CAT[tipoDe(d.tipo).categoria] || 'Outros';
+        const ext = (d.arquivo_nome || '').match(/\.[a-z0-9]+$/i);
+        /* O nome dentro do zip é o do DOCUMENTO, não o do arquivo
+           original: quem abre o envelope procura "CND Federal", não
+           "scan0017.pdf". A validade entra no nome porque é o que a
+           comissão confere primeiro. */
+        let nome = (d.tipo_nome || d.tipo) +
+          (d.validade_efetiva ? ' (val ' + U.fData(d.validade_efetiva).replace(/\//g, '-') + ')' : '') +
+          (ext ? ext[0] : '.pdf');
+        nome = nome.replace(/[\/:*?"<>|]+/g, '-');
+        let caminho = cat + '/' + nome, n = 2;
+        while (zip.file(caminho)) { caminho = cat + '/' + nome.replace(/(\.[^.]+)$/, ' (' + (n++) + ')$1'); }
+        zip.file(caminho, bytes);
+        feitos++;
+      } catch (e) {
+        falhas.push((d.tipo_nome || d.tipo) + ': ' + (e.message || e));
+      }
+    }
+    if (!feitos) {
+      if (cx) cx.textContent = '';
+      return ERP.app.aviso('Nenhum arquivo baixou. ' + (falhas[0] || ''), 'erro');
+    }
+    if (cx) cx.textContent = 'montando o zip…';
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'documentacao-' + String(nomeEmp).toLowerCase().normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') +
+      '-' + U.hoje() + '.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 30000);
+    ERP.app.fecharModal();
+    ERP.app.aviso(falhas.length
+      ? feitos + ' arquivo(s) no zip, ' + falhas.length + ' falharam: ' + falhas[0]
+      : feitos + ' arquivo(s) no zip.', falhas.length ? 'erro' : '');
+  }
+
   /* SHA-256 do conteúdo, para reconhecer o arquivo repetido. */
   async function digerir(f) {
     try {
@@ -1008,12 +1288,12 @@ ERP.habilitacao = (function () {
       titulo: 'Editar documento',
       corpo:
         '<div class="row2">' +
-          '<div><label for="hb-empresa">Empresa</label><select id="hb-empresa">' +
+          '<div><label for="hb-empresa">Pertence a</label><select id="hb-empresa">' +
             '<option value="">selecione</option>' +
-            empresasAtivas().map(function (e) {
-              return '<option value="' + U.esc(e.id) + '"' +
-                (d.empresa === e.id ? ' selected' : '') + '>' +
-                U.esc(e.apelido || e.nome) + '</option>'; }).join('') + '</select></div>' +
+            opcoesPertence().map(function (o) {
+              return '<option value="' + U.esc(o.v) + '"' +
+                (paraPertence(d) === o.v ? ' selected' : '') + '>' +
+                U.esc(o.rot) + '</option>'; }).join('') + '</select></div>' +
           '<div><label for="hb-tipo">Tipo de documento</label><select id="hb-tipo">' +
             '<option value="">selecione</option>' +
             (dados.tipos || []).map(function (t) {
@@ -1022,12 +1302,6 @@ ERP.habilitacao = (function () {
                 U.esc(t.nome) + '</option>'; }).join('') + '</select></div>' +
           '<div><label for="hb-numero">Número</label>' +
             '<input id="hb-numero" value="' + U.esc(d.numero || '') + '"></div>' +
-          '<div><label for="hb-abrang">Abrangência</label><select id="hb-abrang">' +
-            '<option value="estabelecimento"' +
-              (d.abrangencia !== 'matriz' ? ' selected' : '') + '>Só este CNPJ</option>' +
-            '<option value="matriz"' +
-              (d.abrangencia === 'matriz' ? ' selected' : '') + '>Matriz e filiais</option>' +
-            '</select></div>' +
           '<div><label for="hb-emissao">Emissão</label>' +
             '<input type="date" id="hb-emissao" value="' + U.esc(d.data_emissao || '') + '"></div>' +
           '<div><label for="hb-validade">Validade</label>' +
@@ -1070,8 +1344,10 @@ ERP.habilitacao = (function () {
   }
 
   async function salvar(id) {
-    const empresa = U.val('hb-empresa'), tipo = U.val('hb-tipo');
-    if (!empresa) return ERP.app.erroCampo('hb-empresa', 'Escolha a empresa.');
+    const pertence = U.val('hb-empresa'), tipo = U.val('hb-tipo');
+    if (!pertence) return ERP.app.erroCampo('hb-empresa', 'Escolha a quem o documento pertence.');
+    const quem = dePertence(pertence);
+    const empresa = quem.empresa;
     if (!tipo) return ERP.app.erroCampo('hb-tipo', 'Escolha o tipo de documento.');
     const t = tipoDe(tipo);
     const emissao = U.val('hb-emissao') || null;
@@ -1091,7 +1367,7 @@ ERP.habilitacao = (function () {
       empresa: empresa, tipo: tipo,
       numero: U.val('hb-numero') || null,
       data_emissao: emissao, data_validade: validade,
-      abrangencia: U.val('hb-abrang') || 'estabelecimento',
+      abrangencia: quem.abrangencia,
       observacao: U.val('hb-obs') || null
     }).eq('id', id);
     if (r.error) return ERP.app.aviso('Não salvou: ' + r.error.message, 'erro');

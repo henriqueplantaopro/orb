@@ -566,6 +566,48 @@ ERP.store = (function () {
     else if ((f.codigo === 'boleto' || f.codigo === 'guia') && !par.codigo_barras) {
       e.push('boleto sem código de barras no lançamento');
     }
+
+    /* DOCUMENTO QUE NÃO FECHA O DÍGITO VERIFICADOR.
+
+       CNPJ e CPF carregam dígito verificador justamente para o erro
+       de digitação ser pego antes de virar problema de terceiro.
+       Aqui ele nunca era conferido: o cadastro aceitava qualquer
+       sequência, a tela mostrava bonitinho com pontos e barra, e o
+       banco recusava a remessa INTEIRA — não só a linha errada —
+       com um código que não diz qual credor nem qual campo.
+
+       O caso que trouxe isto à tona foi um CNPJ com treze dígitos:
+       o zero da frente tinha sumido numa importação de planilha,
+       que trata o campo como número. Completar o zero é dedução
+       legítima quando o dígito verificador passa a fechar, e
+       `U.documentoNormalizado` faz isso; quando nem assim fecha, o
+       cadastro está errado de verdade e é melhor saber agora. */
+    /* SÓ ONDE O DOCUMENTO DE FATO VAI NO ARQUIVO.
+
+       Primeira versão desta trava barrava qualquer forma de
+       pagamento com documento inválido. Seria derrubar o que o
+       banco aceita: no boleto quem carrega o documento é o código
+       de barras, e no PIX por chave aleatória, e-mail ou telefone
+       o CNPJ não entra na mensagem. Travar ali seria impedir
+       pagamento por causa de um campo que ninguém lê.
+
+       Onde o documento VAI no arquivo — TED, DOC, transferência, e
+       o PIX cuja chave é o próprio CNPJ — um dígito verificador
+       que não fecha significa remessa recusada. Aí trava. */
+    const usaDocumento = f && (
+      ['ted', 'doc', 'transferencia'].indexOf(f.codigo) > -1 ||
+      (f.codigo === 'pix' && c && c.pix && U.so(c.pix).length >= 11 &&
+       U.so(c.pix) === U.so(c.documento))
+    );
+    if (c && c.documento && usaDocumento) {
+      const doc = U.documentoNormalizado(c.documento);
+      const ok = doc.length === 14 ? U.cnpjValido(doc)
+               : doc.length === 11 ? U.cpfValido(doc) : false;
+      if (!ok) {
+        e.push('CPF/CNPJ do credor não confere (' + U.cnpj(c.documento) +
+          ') — o banco recusa a remessa com ele');
+      }
+    }
     return e;
   }
 
@@ -634,21 +676,26 @@ ERP.store = (function () {
        entra por aqui direto: conta fora do plano viraria despesa sem
        lugar no DRE. */
     if (!D.plano.some(function (c) { return c.cod === dados.conta; })) {
-      return { erro: 'A natureza ' + dados.conta + ' não existe no plano de contas.' };
+      return { erro: 'A natureza ' + dados.conta + ' não existe no plano de contas.', campo: 'l-conta' };
     }
     const rat = normalizaRateio(dados.rateio, dados.centro);
-    if (!rat.length) return { erro: 'Escolha o centro de custo.' };
+    if (!rat.length) return { erro: 'Escolha o centro de custo.', campo: 'l-rateio' };
     const nomes = rat.map(function (r) { return r.centro; });
-    if (nomes.length !== new Set(nomes).size) return { erro: 'O mesmo centro de custo aparece duas vezes no rateio.' };
+    if (nomes.length !== new Set(nomes).size) {
+      return { erro: 'O mesmo centro de custo aparece duas vezes no rateio.', campo: 'l-rateio' };
+    }
     /* Centro é chave estrangeira, como o credor e a conta já eram:
        um centro inexistente aceitava o lançamento e o valor não caía
        em centro nenhum dos relatórios. */
     const centroRuim = rat.find(function (r) { return !D.centro(r.centro); });
     if (centroRuim) {
-      return { erro: 'Centro de custo não encontrado: ' + centroRuim.centro };
+      return { erro: 'Centro de custo não encontrado: ' + centroRuim.centro, campo: 'l-rateio' };
     }
     const somaPct = rat.reduce(function (a, r) { return a + r.pct; }, 0);
-    if (Math.abs(somaPct - 100) > 0.01) return { erro: 'O rateio soma ' + U.num(somaPct) + '% — precisa fechar em 100%.' };
+    if (Math.abs(somaPct - 100) > 0.01) {
+      return { erro: 'O rateio soma ' + U.num(somaPct) + '% — precisa fechar em 100%.',
+               campo: 'l-rateio' };
+    }
     if (!linhas.length) return { erro: 'Nenhuma parcela gerada.' };
     /* Título cancelado não conta como "já lançado" — sem isso, cancelar
        uma folha (ou 13º, férias, rescisão, guia de retenção) e tentar
@@ -8786,6 +8833,27 @@ ERP.store = (function () {
     if (!pode('aprovar') && !pode('pagar')) {
       return { erro: 'Seu perfil não gera remessa bancária.' };
     }
+    /* QUEM PAGA PRECISA ESTAR COMPLETO ANTES DE O ARQUIVO SAIR.
+
+       O cabeçalho do arquivo leva o CNPJ da empresa pagadora. Sem
+       empresa na conta, ou com um CNPJ que não fecha o dígito
+       verificador, o banco recusa o arquivo INTEIRO — e a recusa
+       chega horas depois, quando o pagamento já era para ter
+       saído. Conferir aqui custa nada e evita descobrir tarde. */
+    const contaPag = D.bancos.find(function (b) { return b.id === dados.banco; });
+    if (!contaPag) return { erro: 'Conta bancária da remessa não encontrada no cadastro.' };
+    const emp = contaPag.empresa ? D.empresaPor(contaPag.empresa) : null;
+    const docPagador = U.documentoNormalizado((contaPag.cnpj || (emp || {}).cnpj || ''));
+    if (!emp && !contaPag.cnpj) {
+      return { erro: 'A conta "' + (contaPag.apelido || contaPag.id) + '" não tem empresa pagadora ' +
+        'no cadastro. O arquivo leva o CNPJ de quem paga no cabeçalho — sem isso o banco recusa a ' +
+        'remessa inteira. Informe em Administração › Contas e remessa.', campo: 'rm-banco' };
+    }
+    if (!U.cnpjValido(docPagador)) {
+      return { erro: 'O CNPJ do pagador (' + (U.cnpj(docPagador) || 'em branco') + ') não confere. ' +
+        'Corrija em Administração › Contas e remessa antes de gerar o arquivo — com ele o banco ' +
+        'recusa a remessa inteira.', campo: 'rm-banco' };
+    }
     const r = {
       id: novoId('rm'), sequencial: dados.sequencial, banco: dados.banco,
       data_pagamento: dados.data_pagamento, layout: 'pagfor500',
@@ -8808,6 +8876,98 @@ ERP.store = (function () {
     });
     logar('remessa', r.id, 'gerou', r.qtd + ' pagamento(s), ' + U.brl(r.valor_total));
     return r;
+  }
+
+  /* ── cancelar a remessa ─────────────────────────────────
+     O arquivo é gerado e só então alguém percebe que falta o CNPJ
+     do pagador, ou que o título está errado. Até aqui não havia
+     volta: os pagamentos ficavam "enviado" para sempre, fora do
+     contas a pagar e fora do banco — num limbo que nenhuma tela
+     resolvia.
+
+     DOIS NÍVEIS, porque são dois problemas diferentes:
+
+     Desfazer só o ENVIO devolve o pagamento para "autorizado". É o
+     caso do arquivo que saiu errado: conserta o cadastro e gera
+     outro arquivo, sem refazer aprovação nenhuma.
+
+     Desfazer TAMBÉM A SOLICITAÇÃO devolve a parcela ao contas a
+     pagar, como estava antes de alguém mandar pagar. É o caso do
+     título errado, que precisa ser corrigido ou cancelado.
+
+     O QUE NUNCA VOLTA é o que o banco já pagou. Se o retorno
+     trouxe liquidação, o dinheiro saiu: desfazer no sistema
+     deixaria um pagamento real sem registro do lado de cá, que é
+     pior do que o limbo que isto veio resolver. Aí a saída é
+     estorno, que é outra coisa e tem outra permissão. */
+  function cancelarRemessa(id, motivo, opcoes) {
+    opcoes = opcoes || {};
+    if (!pode('aprovar') && !pode('pagar')) {
+      return { erro: 'Seu perfil não cancela remessa bancária.' };
+    }
+    if (!motivo) return { erro: 'Informe o motivo do cancelamento da remessa.' };
+    const r = st.remessas.find(function (x) { return x.id === id; });
+    if (!r) return { erro: 'Remessa não encontrada.' };
+    if (r.status === 'cancelada') return { erro: 'Esta remessa já foi cancelada.' };
+
+    const liquidados = r.itens.filter(function (i) {
+      const pg = pagamento(i.pagamento_id);
+      return pg && pg.situacao === 'liquidado';
+    });
+    if (liquidados.length === r.itens.length) {
+      return { erro: 'Todos os pagamentos desta remessa já foram liquidados pelo banco. ' +
+        'O dinheiro saiu — o caminho é estornar cada pagamento, não cancelar a remessa.' };
+    }
+
+    let devolvidos = 0, aoContasAPagar = 0;
+    r.itens.forEach(function (i) {
+      const pg = pagamento(i.pagamento_id);
+      if (!pg || pg.situacao === 'liquidado') return;
+      if (opcoes.desfazerSolicitacao) {
+        /* `cancelarSolicitacao` só aceita o que está AGUARDANDO —
+           a guarda existe para ninguém desfazer uma solicitação já
+           aprovada pelas costas de quem aprovou. Aqui a aprovação
+           está sendo desfeita de propósito, então o pagamento
+           volta primeiro ao estado de onde ela aceita, e o
+           registro e a trilha continuam saindo de um lugar só.
+
+           Sem isto, a opção falhava em silêncio: a remessa
+           constava cancelada e o pagamento ficava "enviado" — o
+           mesmo limbo que esta função veio resolver. */
+        pg.situacao = 'aguardando';
+        pg.remessa_id = null;
+        pg.enviado_em = null;
+        const d = cancelarSolicitacao(i.pagamento_id);
+        if (d.ok) { aoContasAPagar++; devolvidos++; }
+        else {
+          /* Não deu: devolve ao menos o envio, para não deixar
+             pior do que estava. */
+          pg.situacao = 'autorizado';
+          recalcular(pg.parcela_id);
+        }
+        return;
+      }
+      pg.situacao = 'autorizado';
+      pg.remessa_id = null;
+      pg.enviado_em = null;
+      recalcular(pg.parcela_id);
+      devolvidos++;
+      logar('conta_pagar', i.parcela_id, 'voltou da remessa',
+        'remessa ' + r.sequencial + ' cancelada · ' + motivo);
+    });
+
+    r.status = 'cancelada';
+    r.cancelada_em = new Date();
+    r.cancelada_por = usuario().nome;
+    r.cancelada_por_id = (usuario() || {}).id || null;
+    r.motivo_cancelamento = motivo;
+    r.cancelada_parcial = liquidados.length > 0;
+    logar('remessa', r.id, 'cancelou',
+      devolvidos + ' pagamento(s) devolvido(s)' +
+      (liquidados.length ? ', ' + liquidados.length + ' já liquidado(s) mantido(s)' : '') +
+      ' · ' + motivo);
+    return { ok: true, devolvidos: devolvidos, ao_contas_a_pagar: aoContasAPagar,
+             mantidos: liquidados.length, cancelada_parcial: r.cancelada_parcial };
   }
 
   const remessas = () => st.remessas.slice().reverse();
@@ -17342,7 +17502,7 @@ ERP.store = (function () {
     aptasParaRemessa, remessaProntas, remessaBloqueadas, informarCodigoBarras,
     chaveDoGrupo, agruparRepasses, agruparPagamentos, nomeDoGrupo, aptasParaSolicitar, prontasParaRemessa, pendentesDeDados, solicitarLote, cancelarSolicitacao,
     marcarEnviados, liquidar, devolverParaRemessa,
-    proximoSeuNumero, registrarRemessa, remessas,
+    proximoSeuNumero, registrarRemessa, cancelarRemessa, remessas,
     remessaPorSequencial, proximoSequencialRemessa, aplicarRetorno, todosPagamentos,
     grupoDe, projetosDoGrupo, baseDoGrupo, salvarPrevisaoGrupo, ratearNoGrupo, faturarGrupo,
     itensParaRPS, registrarLoteRPS, registrarProtocoloRPS, converterLoteRPS,

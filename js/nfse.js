@@ -58,6 +58,32 @@ ERP.nfse = (function () {
 
   const soDigitos = s => String(s || '').replace(/\D/g, '');
 
+  /* ── contribuições sociais somadas num campo só ──────────
+     Função PURA, fora do `ler`, porque a leitura do XML precisa
+     de DOMParser e só roda no navegador — e esta regra decide
+     quanto de imposto de terceiro vai para cada guia. Regra que
+     mexe em imposto tem de ser exercitável sem abrir navegador.
+
+     A CSRF da Lei 10.833 é 4,65% do serviço: 0,65 de PIS, 3,00 de
+     COFINS e 1,00 de CSLL. Muito emissor põe o total num campo
+     só, com frequência no do CSLL por ser o último dos três.
+
+     Devolve as três partes quando o total BATE com 4,65% do
+     serviço, e null quando não bate — porque aí não é CSRF, é
+     outra coisa, e separar seria inventar. Cada parte sai do
+     serviço, como a lei define; a sobra de centavo fica na
+     COFINS, que é a maior das três. */
+  function separarCsrf(servicos, total) {
+    if (!(total > 0) || !(servicos > 0)) return null;
+    const esperado = Math.round(servicos * 0.0465 * 100) / 100;
+    const folga = Math.max(0.05, servicos * 0.0002);
+    if (Math.abs(total - esperado) > folga) return null;
+    const pis = Math.round(servicos * 0.0065 * 100) / 100;
+    const csll = Math.round(servicos * 0.01 * 100) / 100;
+    const cofins = Math.round((total - pis - csll) * 100) / 100;
+    return { PIS: pis, COFINS: cofins, CSLL: csll };
+  }
+
   function ler(xmlTexto) {
     const doc = new DOMParser().parseFromString(xmlTexto, 'text/xml');
     if (doc.getElementsByTagName('parsererror').length) {
@@ -105,18 +131,59 @@ ERP.nfse = (function () {
         (issRetidoFlag ? valor(texto(valores, 'ValorIss')) : 0);
       if (issRetidoFlag && issRet > 0) retencoes.push({ tributo: 'ISS', valor: issRet });
       ret('ValorIr', 'IRRF');
-      ret('ValorPis', 'PIS');
-      ret('ValorCofins', 'COFINS');
-      ret('ValorCsll', 'CSLL');
+      const vPis = ret('ValorPis', 'PIS');
+      const vCofins = ret('ValorCofins', 'COFINS');
+      const vCsll = ret('ValorCsll', 'CSLL');
       ret('ValorInss', 'INSS');
       const outras = valor(texto(valores, 'OutrasRetencoes'));
       if (outras > 0) retencoes.push({ tributo: 'Outras', valor: outras });
+
+      /* ── CONTRIBUIÇÕES SOCIAIS EM UM CAMPO SÓ ────────────────
+         Boa parte das notas de serviço traz PIS, COFINS e CSLL
+         somados num único campo — a CSRF da Lei 10.833, 4,65% do
+         serviço (0,65 + 3,00 + 1,00). O emissor põe esse total
+         onde der: às vezes num campo próprio, muitas vezes dentro
+         do ValorCsll, porque é o último dos três.
+
+         O sistema gravava tudo como CSLL. A consequência não é de
+         tela: a guia de CSLL ficava inflada em quase cinco vezes e
+         as de PIS e COFINS ficavam vazias, e é com esses números
+         que se recolhe imposto de terceiro.
+
+         Reconhecer o caso não é chute: a proporção é fixa em lei.
+         Quando os três vêm somados num só e o total bate com
+         4,65% do serviço, ele é separado nas três partes. Quando
+         não bate, fica como veio — errar para menos aqui é
+         deixar a pessoa conferir; errar para mais é recolher
+         errado. */
+      const somados = valor(texto(valores, 'ValorCsrf')) ||
+                      valor(texto(valores, 'ContribuicoesSociais')) ||
+                      valor(texto(valores, 'ValorPcc'));
+      /* Os três separados já estão certos; mexer neles seria
+         estragar o que o emissor acertou. Só entra aqui o campo
+         próprio da CSRF, ou um CSLL sozinho com os outros dois
+         zerados. */
+      const soNoCsll = vCsll > 0 && vPis === 0 && vCofins === 0;
+      const partes = separarCsrf(servicos, somados > 0 ? somados : (soNoCsll ? vCsll : 0));
+      let csrfSeparada = false;
+      if (partes) {
+        for (let i = retencoes.length - 1; i >= 0; i--) {
+          if (['PIS', 'COFINS', 'CSLL'].indexOf(retencoes[i].tributo) >= 0) retencoes.splice(i, 1);
+        }
+        retencoes.push({ tributo: 'PIS', valor: partes.PIS });
+        retencoes.push({ tributo: 'COFINS', valor: partes.COFINS });
+        retencoes.push({ tributo: 'CSLL', valor: partes.CSLL });
+        csrfSeparada = true;
+      }
       const totalRetido = Math.round(retencoes.reduce(function (s, r) {
         return s + r.valor; }, 0) * 100) / 100;
 
       const emissao = (texto(inf, 'DataEmissao') || '').slice(0, 10);
       const compBruta = texto(inf, 'Competencia');
       return {
+        /* Para a tela poder dizer que separou — campo preenchido
+           em silêncio é campo que ninguém confere. */
+        csrf_separada: csrfSeparada,
         numero: texto(inf, 'Numero'),
         codigo_verificacao: texto(inf, 'CodigoVerificacao'),
         chave: texto(inf, 'ChaveAcesso') || null,
@@ -209,5 +276,5 @@ ERP.nfse = (function () {
     };
   }
 
-  return { ler: ler, valor: valor, comoLote: comoLote };
+  return { ler: ler, valor: valor, comoLote: comoLote, separarCsrf: separarCsrf };
 })();

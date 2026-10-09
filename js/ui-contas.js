@@ -1420,7 +1420,8 @@ ERP.contas = (function () {
         '<h2 style="margin-top:16px;font-size:12px">Histórico</h2>' +
         '<ul class="historico">' + evs.map(e =>
           '<li>' + U.fDataHora(e.em) + ' · ' + U.esc(e.usuario) + ' ' + U.esc(e.acao) +
-          (e.detalhe ? ' — ' + U.esc(e.detalhe) : '') + '</li>').join('') + '</ul>',
+          (e.detalhe ? ' — ' + U.esc(e.detalhe) : '') + '</li>').join('') +
+        '</ul>' + porQueNaoCancela(p),
       acoes: acoesDetalhe(p),
       aoAbrir: () => {
         document.querySelectorAll('[data-aut]').forEach(function (b) {
@@ -1526,6 +1527,41 @@ ERP.contas = (function () {
         }).join('') + '</tbody></table>';
     }
     return html;
+  }
+
+  /* POR QUE O BOTÃO DE CANCELAR NÃO ESTÁ AQUI.
+
+     Ele vivia escondido: quando não aparecia, não havia como
+     saber se o lançamento não podia ser cancelado, se faltava
+     permissão, ou se o botão estava em outro lugar. Botão ausente
+     e ação impossível ficavam idênticos na tela — e a diferença
+     entre as duas coisas é justamente o que a pessoa precisa
+     saber para resolver.
+
+     Agora, quando o botão não aparece, a tela diz o motivo e o
+     que fazer. */
+  function porQueNaoCancela(p) {
+    if (p.status === 'cancelado') {
+      return '<div class="ajuda">Este lançamento já foi cancelado' +
+        (p.cancelado_por ? ' por ' + U.esc(p.cancelado_por) : '') +
+        (p.motivo_cancelamento ? ' — ' + U.esc(p.motivo_cancelamento) : '') + '.</div>';
+    }
+    if (S.pagamentosDe(p.id).length) {
+      return '<div class="ajuda">Para cancelar este lançamento é preciso <b>estornar o pagamento</b> ' +
+        'primeiro, no quadro de pagamentos acima. Cancelar um título que já teve saída do banco ' +
+        'deixaria o extrato com um pagamento sem título do outro lado.</div>';
+    }
+    if (S.emCursoDe(p.id).length) {
+      return '<div class="ajuda">Há um pagamento em andamento. Desfaça ou recuse a solicitação ' +
+        'antes de cancelar.</div>';
+    }
+    if (!S.pode('cancelar')) {
+      const perfil = (S.perfilAtual() || {}).nome || '';
+      return '<div class="ajuda">Seu perfil' + (perfil ? ' (' + U.esc(perfil) + ')' : '') +
+        ' não cancela lançamento — quem cancela é a Diretoria, o Sócio ou a Administração. ' +
+        'A permissão chama-se "Cancelar parcela" e é concedida em Administração › Perfis.</div>';
+    }
+    return '';
   }
 
   function acoesDetalhe(p) {

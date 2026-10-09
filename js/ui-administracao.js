@@ -739,7 +739,78 @@ ERP.administracao = (function () {
       'o Santander precisa do layout dele para gerar remessa.</div>';
   }
 
-  /* ── trilha de auditoria ────────────────────────────────*/
+  /* ── trilha de auditoria ────────────────────────────────
+     A TRILHA ERA GRAVADA NO BANCO E NUNCA LIDA DE VOLTA.
+
+     Cada ação do sistema vira uma linha na tabela `eventos` do
+     Postgres, e isso sempre funcionou. Mas esta tela lia
+     `S.eventos()`, que é a lista em memória do navegador — ou
+     seja, só o que a própria pessoa fez desde que abriu a página.
+
+     O administrador abria a Trilha de auditoria e via a si mesmo.
+     A trilha existia e era íntegra; o que faltava era alguém
+     pedir os dados. Uma trilha que ninguém consegue ler não
+     cumpre a função de trilha: ela impede a edição e não prova
+     nada.
+
+     Agora a tela busca do banco. A política `ver_eventos` (etapa
+     02) já liberava a leitura para quem tem Administração em V ou
+     a ação `admin`, então não é preciso mexer no banco — só
+     perguntar.
+
+     Os eventos locais ainda não enviados entram junto, para quem
+     acabou de fazer alguma coisa ver na hora em vez de esperar o
+     próximo ciclo de gravação. */
+  let trilha = { linhas: [], lido: null, carregando: false, erro: null, limite: 1000 };
+
+  async function carregarTrilha(maior) {
+    const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
+    if (!c) { trilha.lido = 'local'; return; }
+    if (maior) trilha.limite = Math.min(trilha.limite * 4, 20000);
+    trilha.carregando = true; render();
+    const r = await c.from('eventos')
+      .select('app_id, entidade, entidade_id, acao, detalhe, usuario, usuario_id, em')
+      .order('em', { ascending: false })
+      .limit(trilha.limite);
+    trilha.carregando = false;
+    if (r.error) {
+      /* Sem leitura liberada, o banco recusa — e dizer isso é
+         melhor que mostrar a lista do navegador como se fosse a
+         trilha inteira. */
+      trilha.erro = r.error.message;
+      trilha.lido = 'erro';
+    } else {
+      trilha.linhas = (r.data || []).map(function (e) {
+        return { id: e.app_id, entidade: e.entidade, entidade_id: e.entidade_id,
+                 acao: e.acao, detalhe: e.detalhe, usuario: e.usuario,
+                 usuario_id: e.usuario_id, em: new Date(e.em) };
+      });
+      trilha.lido = 'banco';
+      trilha.erro = null;
+    }
+    render();
+  }
+
+  /* O que a tela mostra: o que veio do banco mais o que ainda está
+     só aqui. A chave é o id do evento, que é o mesmo nos dois
+     lados (`app_id` no banco) — por isso nada aparece duplicado. */
+  function eventosParaTela() {
+    const doBanco = trilha.lido === 'banco' ? trilha.linhas : [];
+    const vistos = {};
+    doBanco.forEach(function (e) { if (e.id) vistos[e.id] = true; });
+    const locais = S.eventos().filter(function (e) { return !e.id || !vistos[e.id]; });
+    return doBanco.concat(locais).sort(function (a, b) { return new Date(b.em) - new Date(a.em); });
+  }
+
+  function passaNoFiltro(e, f) {
+    const dia = e.em ? new Date(e.em).toISOString().slice(0, 10) : '';
+    return (!f.usuario || e.usuario === f.usuario) &&
+           (!f.entidade || e.entidade === f.entidade) &&
+           (!f.de || dia >= f.de) && (!f.ate || dia <= f.ate) &&
+           (!f.busca || ((e.acao || '') + ' ' + (e.detalhe || '') + ' ' + (e.usuario || ''))
+              .toLowerCase().indexOf(f.busca.toLowerCase()) > -1);
+  }
+
   function filtrosAuditoria() {
     return {
       usuario: U.val('ad-f-user'), entidade: U.val('ad-f-ent'),
@@ -748,9 +819,11 @@ ERP.administracao = (function () {
   }
 
   function auditoria() {
+    if (trilha.lido === null && !trilha.carregando) { carregarTrilha(); }
     const f = filtrosAuditoria();
-    const todos = S.eventos();
-    const lista = S.eventos(f).slice(0, 300);
+    const todos = eventosParaTela();
+    const filtrados = todos.filter(function (e) { return passaNoFiltro(e, f); });
+    const lista = filtrados.slice(0, 300);
     const entidades = Array.from(new Set(todos.map(function (e) { return e.entidade; }))).sort();
     const porUsuario = {};
     todos.forEach(function (e) { porUsuario[e.usuario] = (porUsuario[e.usuario] || 0) + 1; });
@@ -776,8 +849,15 @@ ERP.administracao = (function () {
         '<button class="btn-sm" id="ad-exportar">Exportar</button>' +
       '</div>' +
       '<div class="pr-confere"><span>Eventos <b>' + todos.length + '</b></span>' +
-        '<span>Neste filtro <b>' + S.eventos(f).length + '</b></span>' +
-        '<span>Usuários <b>' + Object.keys(porUsuario).length + '</b></span></div>' +
+        '<span>Neste filtro <b>' + filtrados.length + '</b></span>' +
+        '<span>Usuários <b>' + Object.keys(porUsuario).length + '</b></span>' +
+        '<span>' + (trilha.carregando ? 'lendo o banco…'
+          : trilha.lido === 'banco' ? 'de todos os usuários'
+          : trilha.lido === 'erro' ? 'só deste navegador' : 'modo local') + '</span></div>' +
+      (trilha.lido === 'erro'
+        ? '<div class="aviso">Não consegui ler a trilha do banco (' + U.esc(trilha.erro) + '). ' +
+          'A lista abaixo é só o que aconteceu neste navegador — não é a trilha da empresa.</div>'
+        : '') +
       '<div class="tabela-rolagem" style="margin:10px -14px 0"><table><thead><tr>' +
       '<th>Quando</th><th>Quem</th><th>Tipo</th><th>Ação</th><th>Detalhe</th>' +
       '</tr></thead><tbody>' +
@@ -790,9 +870,14 @@ ERP.administracao = (function () {
       }).join('')
         : '<tr><td colspan="5" class="vazio"><strong>Nada com esses filtros.</strong></td></tr>') +
       '</tbody></table></div>' +
+      (trilha.lido === 'banco' && trilha.linhas.length >= trilha.limite
+        ? '<div class="ajuda"><button class="btn-sm" id="ad-mais-trilha">Carregar mais antigos</button> ' +
+          'A tela trouxe os ' + trilha.limite + ' eventos mais recentes.</div>'
+        : '') +
       '<div class="ajuda">Cada lançamento, aprovação, pagamento, baixa de estoque e alteração de ' +
-      'parâmetro deixa registro de quem fez, quando e o quê. No banco de dados esta tabela recebe ' +
-      'inserção e nada mais — sem edição e sem exclusão, nem pelo administrador.</div>';
+      'parâmetro deixa registro de quem fez, quando e o quê — <b>de todos os usuários</b>, lido do ' +
+      'banco. No banco esta tabela recebe inserção e nada mais: sem edição e sem exclusão, nem pelo ' +
+      'administrador. Trilha que o próprio administrador pode reescrever não serve de trilha.</div>';
   }
 
   function ligarImpostos() {
@@ -925,8 +1010,19 @@ ERP.administracao = (function () {
       });
     }
     ['ad-f-busca', 'ad-f-user', 'ad-f-ent', 'ad-f-de', 'ad-f-ate'].forEach(function (id) {
-      if (U.el(id)) U.el(id).addEventListener('input', render);
+      if (U.el(id)) U.el(id).addEventListener('input', function () {
+        render();
+        /* Redesenhar recria o campo e tira o foco; sem devolver,
+           digitar o segundo caractere da busca é impossível. */
+        const e = U.el(id);
+        if (e && e.setSelectionRange && e.type !== 'date') {
+          e.focus(); e.setSelectionRange(e.value.length, e.value.length);
+        } else if (e) { e.focus(); }
+      });
     });
+    if (U.el('ad-mais-trilha')) {
+      U.el('ad-mais-trilha').addEventListener('click', function () { carregarTrilha(true); });
+    }
     if (U.el('ad-limpar')) {
       U.el('ad-limpar').addEventListener('click', function () {
         ['ad-f-busca', 'ad-f-user', 'ad-f-ent', 'ad-f-de', 'ad-f-ate'].forEach(function (id) { U.setVal(id, ''); });
@@ -936,7 +1032,13 @@ ERP.administracao = (function () {
         /* Exporta a partir dos DADOS e nos três formatos: a tela mostra
            só os 300 primeiros e a cópia da tabela trazia a coluna de
            ações junto. */
-        const lista = S.eventos(filtrosAuditoria());
+        /* O mesmo conjunto que a tela mostra — de todos os
+           usuários. Exportar `S.eventos()` mandava para a planilha
+           só o que tinha acontecido neste navegador, com a mesma
+           cara de uma trilha completa, que é o pior jeito de
+           errar. */
+        const f2 = filtrosAuditoria();
+        const lista = eventosParaTela().filter(function (e) { return passaNoFiltro(e, f2); });
         if (!lista.length) return ERP.app.aviso('Nada para exportar com esses filtros.', 'erro');
         ERP.exportar.abrir({
           nome: 'trilha-auditoria', titulo: 'Trilha de auditoria',

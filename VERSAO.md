@@ -1,3 +1,50 @@
+# v107 — financeiro reorganizado e mais limpo
+
+## Menu novo
+Sete áreas: **A pagar, Pago, A receber, Recebido, Conciliação, Saldo
+bancário, Relatórios**. Só "A pagar" tem sub-abas (Contas a pagar,
+Pagamentos a aprovar, Remessa bancária, Despesas previstas, Retenções de
+impostos, Pago sem NF); nas outras a fila de botões some, porque uma aba
+sozinha não é navegação. "Pago" e "Recebido" são as mesmas listas já
+filtradas pelo que foi baixado.
+
+## Menos poluição
+- Saíram o aviso de "nada é salvo" e a dica ao lado do botão de
+  lançamento.
+- Os cartões de Em aberto / Vencido / Pago viraram **uma linha**, que
+  destaca o que interessa todo dia: quanto vence hoje, o saldo em conta
+  e a sobra do dia.
+- Filtros passaram a mostrar só as **datas**; o resto abre no botão
+  **Pesquisa avançada** (e já abre sozinho se algum filtro estiver em
+  uso).
+- **Fornecedor virou campo de digitar**: escreve "marina" e a lista
+  filtra. Com centenas de cadastros, rolar um select era inviável.
+
+## Saldo bancário (prova real)
+Aba nova. Você informa o saldo que aparece no banco e a tela compara com
+o que o sistema sustenta (último extrato + baixas posteriores). Havendo
+diferença, ela é decomposta: quanto há no extrato ainda não conciliado e
+quanto foi baixado no sistema depois do extrato. O saldo informado passa
+a alimentar o resumo do contas a pagar e o fluxo de caixa.
+
+## Fluxo de caixa diário (relatório novo)
+Os próximos 7/10/15/30 dias, um por linha, com o saldo andando a cada
+dia a partir do saldo bancário de hoje. Mostra o menor saldo do período
+e a data em que o caixa fica negativo, com caixa para **desconsiderar
+vencidos** e campo para simular outro saldo de partida. Vencido entra no
+dia de hoje, porque é quando sai se houver dinheiro.
+
+## Previsão única do GHC - HGB
+O hospital negocia um valor só, não um por especialidade. A grade passou
+a ter **uma linha de entrada para o grupo**, e o valor é rateado entre as
+8 especialidades (pela previsão existente, senão pela média do que cada
+uma faturou, senão em partes iguais). A produtividade continua lançada
+por projeto, e a esteira e a cobertura seguem funcionando por projeto.
+
+teste-fumaca.js: 516 verificações.
+
+---
+
 # v106 — previsão de faturamento no módulo de Faturamento
 
 ## Mudou de lugar

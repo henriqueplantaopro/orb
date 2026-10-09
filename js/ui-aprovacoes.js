@@ -138,13 +138,20 @@ ERP.aprovacoes = (function () {
               const todosG = marcadosG === g.pagamentos.length;
               out += '<label class="ap-lin ap-lin-grupo' + (marcadosG ? ' sel' : '') + '">' +
                 '<input type="checkbox" data-selgrupo="' + g.chave + '"' + (todosG ? ' checked' : '') + '>' +
-                '<span class="quem"><button class="btn-abrir" type="button" data-apgrupo="' + g.chave + '">' +
-                  (apAbertos.has(g.chave) ? '▾' : '▸') + '</button> <b>' +
-                  U.esc(S.nomeDoGrupo(g)) + '</b></span>' +
-                '<span class="oque">' + g.medicos + ' médicos · produtividade' +
-                  (marcadosG ? ' <span class="sub">' + marcadosG + ' marcado(s)</span>' : '') + '</span>' +
+                /* A linha do grupo precisa das MESMAS sete células da
+                   linha comum: com seis, a grade desalinhava e o
+                   valor do grupo caía embaixo da coluna errada. */
+                '<span class="titulo">' +
+                  '<span class="quem"><button class="btn-abrir" type="button" data-apgrupo="' +
+                    g.chave + '">' + (apAbertos.has(g.chave) ? '▾' : '▸') + '</button> <b>' +
+                    U.esc(S.nomeDoGrupo(g)) + '</b></span>' +
+                  '<span class="oque">' + g.medicos + ' médicos · produtividade' +
+                    (marcadosG ? ' · ' + marcadosG + ' marcado(s)' : '') + '</span>' +
+                '</span>' +
                 '<span class="mono venc"></span>' +
                 '<span class="num quanto"><b>' + U.brl(g.valor) + '</b></span>' +
+                '<span class="meio"></span>' +
+                '<span></span>' +
                 '<span style="white-space:nowrap;display:flex;gap:3px">' +
                   (aprovador
                     ? '<button class="btn-sm btn-pagar" type="button" data-autgrupo="' + g.chave + '">Aprovar todos</button>'
@@ -159,6 +166,32 @@ ERP.aprovacoes = (function () {
       '</div>';
   }
 
+  /* Meio de pagamento e situação na própria linha: são, junto com
+     vencimento e valor, o que decide a aprovação. Estavam só no
+     detalhe, a um clique de distância de cada parcela — e com
+     trinta na fila ninguém abre trinta detalhes. */
+  function meioDe(par) {
+    const f = S.formaDoCredor(par.credor);
+    if (!f) return 'sem forma';
+    const c = D.credor(par.credor) || {};
+    if (f.codigo === 'pix') return 'PIX' + (c.pix ? '' : ' (sem chave)');
+    if (f.codigo === 'boleto') return 'Boleto' + (par.codigo_barras ? '' : ' (sem código)');
+    return f.nome || f.codigo;
+  }
+
+  const ROT_SIT = { aberto: 'em aberto', aguardando: 'aguardando', autorizado: 'autorizado',
+                    enviado: 'no banco', pago: 'pago', previsto: 'previsto',
+                    cancelado: 'cancelado', liquidado: 'pago', recusado: 'recusado' };
+  const CLS_SIT = { pago: 'b-pago', liquidado: 'b-pago', autorizado: 'b-pago',
+                    aguardando: 'b-pendente', previsto: 'b-pendente', enviado: 'b-pendente',
+                    recusado: 'b-reprovado', cancelado: 'b-cancelado' };
+
+  function crachaSituacao(sit) {
+    if (!sit) return '';
+    return '<span class="badge ' + (CLS_SIT[sit] || 'b-aberto') + '">' +
+      U.esc(ROT_SIT[sit] || sit) + '</span>';
+  }
+
   function linhaPagamento(pg, dentroDeGrupo) {
     const aprovador = S.pode('aprovar');
     return (function (pg) {
@@ -168,12 +201,16 @@ ERP.aprovacoes = (function () {
           return '<label class="ap-lin' + (selPg.has(pg.id) ? ' sel' : '') +
             (dentroDeGrupo ? ' ap-lin-filha' : '') + '">' +
             '<input type="checkbox" data-selpg="' + pg.id + '"' + (selPg.has(pg.id) ? ' checked' : '') + '>' +
-            '<span class="quem">' + U.esc(ERP.lancamento.nomeCredor(par.credor) || '—') + '</span>' +
-            '<span class="oque">' + U.esc(par.descricao || '') +
-              (centro.curto ? ' <span class="sub">' + U.esc(centro.curto) + '</span>' : '') +
-              (extra > 0 ? ' <span class="sub">inclui ' + U.brl(extra) + ' de juros/multa</span>' : '') + '</span>' +
+            '<span class="titulo">' +
+              '<span class="quem">' + U.esc(ERP.lancamento.nomeCredor(par.credor) || '—') + '</span>' +
+              '<span class="oque">' + U.esc(par.descricao || '') +
+                (centro.curto ? ' · ' + U.esc(centro.curto) : '') +
+                (extra > 0 ? ' · inclui ' + U.brl(extra) + ' de juros/multa' : '') + '</span>' +
+            '</span>' +
             '<span class="mono venc">' + U.fData(pg.data) + '</span>' +
             '<span class="num quanto">' + U.brl(pg.valor + extra) + '</span>' +
+            '<span class="meio">' + U.esc(meioDe(par)) + '</span>' +
+            '<span>' + crachaSituacao(pg.situacao || par.status) + '</span>' +
             '<span style="white-space:nowrap;display:flex;gap:3px">' +
               (aprovador
                 ? '<button class="btn-sm btn-pagar" data-aut="' + pg.id + '" type="button">Aprovar</button>' +
@@ -217,10 +254,14 @@ ERP.aprovacoes = (function () {
           itens.map(function (p) {
             return '<label class="ap-lin' + (sel.has(p.id) ? ' sel' : '') + '">' +
               '<input type="checkbox" data-sel="' + p.id + '"' + (sel.has(p.id) ? ' checked' : '') + '>' +
-              '<span class="quem">' + U.esc(ERP.lancamento.nomeCredor(p.credor) || '—') + '</span>' +
-              '<span class="oque">' + U.esc(p.descricao) + '</span>' +
+              '<span class="titulo">' +
+                '<span class="quem">' + U.esc(ERP.lancamento.nomeCredor(p.credor) || '—') + '</span>' +
+                '<span class="oque">' + U.esc(p.descricao) + '</span>' +
+              '</span>' +
               '<span class="mono venc">' + U.fData(p.venc) + '</span>' +
               '<span class="num quanto">' + U.brl(p.valor) + '</span>' +
+              '<span class="meio">' + U.esc(meioDe(p)) + '</span>' +
+              '<span>' + crachaSituacao(p.status) + '</span>' +
               '<button class="btn-sm" data-ver="' + p.id + '" type="button">Ver</button>' +
             '</label>';
           }).join('') +

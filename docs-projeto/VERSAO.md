@@ -1,3 +1,128 @@
+# ERP teste2 - v107 — o que você apontou hoje
+
+1682 verificações.
+
+Entrega grande porque junta tudo o que apareceu na conversa de
+hoje. Em ordem de impacto.
+
+## Cancelar título — era permissão, não defeito
+
+O botão existia, dentro de **Ver**, e sumia sem explicação para
+quem não tinha a permissão. Duas coisas mudaram: a **assistente
+financeira passou a cancelar** no padrão do sistema, e o detalhe do
+título agora **diz por que** o botão não está lá quando não está —
+falta permissão, há pagamento registrado, há pagamento em
+andamento. Botão ausente e ação impossível eram indistinguíveis.
+
+O cerco continua: cancelar exige motivo, grava quem cancelou, a
+parcela fica no histórico, e título **já pago** segue fora do
+alcance dela — para esse o caminho é estorno, que continua só com
+Diretoria e Sócio.
+
+## Cancelar a remessa e trazer os títulos de volta
+
+Gerou o arquivo, viu que faltava o CNPJ do pagador, e não havia
+volta: os pagamentos ficavam "enviado" para sempre, fora do contas
+a pagar e fora do banco.
+
+Agora a lista de remessas tem **Cancelar**, com dois níveis:
+
+- sem marcar nada, os pagamentos voltam para **autorizado** — você
+  conserta o cadastro e gera outro arquivo, sem refazer aprovação;
+- marcando a opção, a parcela volta ao **contas a pagar**, como
+  antes de alguém mandar pagar.
+
+O que o banco **já pagou** não volta: desfazer isso deixaria um
+pagamento real sem registro deste lado. Para esse, estorno.
+
+E o pagador passou a ser conferido **antes** de o arquivo sair:
+sem empresa na conta, ou com CNPJ que não fecha o dígito
+verificador, a remessa não é gerada — porque o banco recusaria o
+arquivo inteiro, horas depois.
+
+## Contribuições sociais: PIS, COFINS e CSLL separados
+
+A NFS-e traz com frequência os três somados num campo só — a CSRF
+de 4,65% (0,65 + 3,00 + 1,00). O sistema gravava **tudo como
+CSLL**. A consequência não era de tela: a guia de CSLL ficava
+inflada em quase cinco vezes e as de PIS e COFINS ficavam vazias.
+
+Agora, quando o total bate com 4,65% do serviço, ele é separado nas
+três partes, cada uma calculada sobre o serviço como a lei define.
+Quando **não** bate, fica como veio: um CSLL de 1% continua sendo
+CSLL, e inventar PIS e COFINS em cima dele seria recolher imposto
+que não foi retido.
+
+## CPF/CNPJ que não fecha
+
+Seu cadastro tinha `8.656.723/0001-70` — faltava o **4** do
+começo. O sistema agora confere o dígito verificador e **barra a
+remessa** onde o documento de fato vai no arquivo (TED, DOC,
+transferência, e PIX cuja chave é o CNPJ). No boleto e no PIX por
+outra chave não trava, porque ali o documento não é lido e travar
+seria impedir pagamento à toa.
+
+Onde o problema for só um zero perdido em planilha, o sistema
+completa sozinho — mas só quando o dígito verificador passa a
+fechar. Completar sem isso é chute.
+
+## A trilha de auditoria mostrava só você
+
+Cada ação vira uma linha na tabela `eventos` do banco, e isso
+sempre funcionou. Mas a tela lia a lista **do navegador** — ou
+seja, só o que você mesmo fez desde que abriu a página. O
+administrador abria a Trilha de auditoria e via a si mesmo.
+
+Agora ela lê do banco: todos os usuários, com filtro por pessoa,
+tipo e período, e a exportação leva o mesmo conjunto. A permissão
+de leitura já existia no banco; faltava alguém pedir os dados.
+
+## Fila de aprovação: o título não empurra mais o resto
+
+Credor e descrição dividiam duas colunas largas e jogavam
+vencimento e valor para fora da vista. Agora os dois ocupam **uma**
+coluna, um sobre o outro, truncados — e entraram **meio de
+pagamento** e **situação**, que é o que decide a aprovação junto
+com vencimento e valor.
+
+## Erro de campo leva até o campo
+
+Faltando o centro de custo, o aviso aparecia e o campo não era
+apontado — porque o rateio é um bloco de selects criados na hora,
+sem identificador próprio. Agora o bloco inteiro é destacado e a
+tela rola até ele.
+
+## Documentação (era Habilitação)
+
+**Atestado e balanço não se substituem mais.** Era defeito meu de
+desenho: eu colapsava "um por empresa e tipo" para tudo, e nove
+atestados viravam oito "substituídos". Substituição só existe onde
+há renovação — certidão. Atestado é acervo, e é o acervo que ganha
+licitação.
+
+**Painel no formato que você mandou:** um cartão por empresa, um
+crachá por documento. Verde em dia, âmbar vencendo em trinta dias
+com os dias, vermelho vencido ou faltando.
+
+**Pertence a — Matriz, Filial ou Único.** Um campo só, no lugar de
+dois. "Único" vale para as duas empresas da HJM, e o alcance sai da
+raiz do CNPJ: a Novaped tem outra raiz e nunca é coberta.
+
+**Categorias do edital:** Cadastrais, Certidões, Técnicos CRM,
+Técnicos CREA, Atestados, Contábeis, Outros — com filtro próprio no
+cofre. Entraram os tipos de CREA, CAU e ART.
+
+**Baixar em lote:** escolhe a empresa, marca as categorias, e sai um
+zip organizado em pastas com tudo daquela empresa mais os marcados
+como Único. Vencido fica de fora por padrão.
+
+## Precisa rodar no banco
+
+**`supabase/45-documentacao-categorias.sql`** — recategoriza o
+catálogo. Enquanto não rodar, o cofre continua funcionando: as
+categorias antigas aparecem no filtro com a etiqueta "(categoria
+antiga)" para nada sumir da vista.
+
 # ERP teste2 - v106 — o líquido da NF que não existia
 
 1633 verificações.
