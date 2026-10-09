@@ -244,8 +244,16 @@ ERP.dados = (function () {
          aceita e registrada — isso inclui ver o salário de todos,
          inclusive de quem está acima dele. Ele continua com dp em
          V$: sem M não lança nada, sem A não fecha a folha. */
-      acoes: ['lancar', 'pagar', 'faturar', 'ver_custo', 'estoque', 'requisitar', 'comprar', 'receber',
-              'autorizar_faturamento', 'ver_dados_pessoais'],
+      /* CANCELAR entra (v107), a pedido: a assistente é quem lança,
+         e todo lançamento errado dependia da Diretoria para ser
+         desfeito. O que se abre mão disso é pequeno e está cercado:
+         o cancelamento exige motivo, grava o nome de quem cancelou
+         e a parcela continua no histórico — não some de lugar
+         nenhum. E parcela que já teve saída do banco segue fora do
+         alcance dela: cancelar essa exige estornar antes, e
+         `estornar` continua só com Diretoria e Sócio. */
+      acoes: ['lancar', 'pagar', 'cancelar', 'faturar', 'ver_custo', 'estoque', 'requisitar',
+              'comprar', 'receber', 'autorizar_faturamento', 'ver_dados_pessoais'],
       modulos: ['financeiro', 'produtividade', 'estoque', 'faturamento', 'compras', 'contratos', 'cadastros', 'procedimentos', 'dp', 'habilitacao'] },
     { id: 'diretoria', nome: 'Diretoria', sistema: true,
       acoes: ['lancar', 'pagar', 'aprovar', 'cancelar', 'estornar', 'faturar', 'ver_custo',

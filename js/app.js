@@ -36,7 +36,14 @@ ERP.app = (function () {
   function erroCampo(id, msg) {
     const e = U.el(id);
     if (!e) return aviso(msg, 'erro');
-    e.classList.add('campo-erro');
+    /* O alvo nem sempre é uma caixa de digitação. O rateio de
+       centro de custo, por exemplo, é um bloco com vários selects
+       criados na hora e sem id próprio — apontar para o BLOCO é o
+       que dá para fazer, e é o suficiente: a pessoa precisa saber
+       onde olhar, não qual dos selects. */
+    const ehCampo = /^(INPUT|SELECT|TEXTAREA)$/.test(e.tagName);
+    const dentro = ehCampo ? null : e.querySelector('input, select, textarea');
+    e.classList.add(ehCampo ? 'campo-erro' : 'bloco-erro');
     /* O RÓTULO também fica vermelho: o olho vai primeiro ao texto
        que nomeia o campo, não à caixa de digitação. */
     const rot = (e.parentNode && e.parentNode.querySelector('label')) ||
@@ -52,6 +59,7 @@ ERP.app = (function () {
     m.textContent = msg;
     const limpa = function () {
       e.classList.remove('campo-erro');
+      e.classList.remove('bloco-erro');
       if (rot) rot.classList.remove('campo-erro-rotulo');
       if (m && m.parentNode) m.parentNode.removeChild(m);
       e.removeEventListener('input', limpa);
@@ -68,8 +76,11 @@ ERP.app = (function () {
     } catch (x) {
       try { e.scrollIntoView(); } catch (x2) {}
     }
-    try { e.focus({ preventScroll: true }); } catch (x) {
-      try { e.focus(); } catch (x2) {}
+    const foco = dentro || (ehCampo ? e : null);
+    if (foco) {
+      try { foco.focus({ preventScroll: true }); } catch (x) {
+        try { foco.focus(); } catch (x2) {}
+      }
     }
     aviso(msg, 'erro');
   }

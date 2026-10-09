@@ -229,10 +229,19 @@ ERP.remessa = (function () {
       b.addEventListener('click', function () { verRemessa(this.dataset.verRem); });
     });
     U.el('rm-saida').querySelectorAll('[data-baixar]').forEach(function (b) {
-      b.addEventListener('click', function () {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
         const id = this.dataset.baixar;
         const r = S.remessas().find(function (x) { return x.id === id; });
         if (r) U.baixar(r.arquivo_nome, r.conteudo, 'text/plain');
+      });
+    });
+    U.el('rm-saida').querySelectorAll('[data-cancelar-rem]').forEach(function (b) {
+      /* A linha inteira abre "ver itens"; sem parar a propagação, o
+         clique em Cancelar abria os dois ao mesmo tempo. */
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        abrirCancelarRemessa(this.dataset.cancelarRem);
       });
     });
   }
@@ -281,8 +290,65 @@ ERP.remessa = (function () {
               (ana ? '<span class="badge b-pendente">' + ana + ' p/ análise</span>' : '')
             : '<span class="sub">aguardando</span>') + '</td>' +
           '<td class="acoes"><button class="btn-sm" data-ver-rem="' + r.id + '">Ver itens</button>' +
-          '<button class="btn-sm" data-baixar="' + r.id + '">Baixar</button></td></tr>';
+          '<button class="btn-sm" data-baixar="' + r.id + '">Baixar</button>' +
+          (r.status === 'cancelada'
+            ? ' <span class="badge b-cancelado">cancelada</span>'
+            : (pagos === r.itens.length
+                ? ''
+                : ' <button class="btn-sm btn-cancelar" data-cancelar-rem="' + r.id +
+                  '">Cancelar</button>')) +
+          '</td></tr>';
       }).join('') + '</tbody></table>';
+  }
+
+  /* ── cancelar a remessa ─────────────────────────────────
+     O arquivo saiu e só então alguém viu que falta o CNPJ do
+     pagador, ou que o título está errado. Sem esta tela os
+     pagamentos ficavam "enviado" para sempre: fora do contas a
+     pagar e fora do banco. */
+  function abrirCancelarRemessa(id) {
+    const r = S.remessas().find(function (x) { return x.id === id; });
+    if (!r) return;
+    const pagos = r.itens.filter(function (i) {
+      const pg = S.pagamento ? S.pagamento(i.pagamento_id) : null;
+      return i.situacao === '02' || (pg && pg.situacao === 'liquidado');
+    }).length;
+    const voltam = r.itens.length - pagos;
+
+    ERP.app.modal({
+      titulo: 'Cancelar remessa ' + r.sequencial,
+      corpo:
+        '<div class="resumo-linha"><span>Arquivo</span><span class="v">' +
+          U.esc(r.arquivo_nome) + '</span></div>' +
+        '<div class="resumo-linha"><span>Itens / total</span><span class="v">' +
+          r.qtd + ' · ' + U.brl(r.valor_total) + '</span></div>' +
+        (pagos
+          ? '<div class="aviso">' + pagos + ' pagamento(s) desta remessa já foram liquidados pelo ' +
+            'banco e <b>não voltam</b> — o dinheiro saiu. Para desfazer esses, o caminho é o ' +
+            'estorno, que é outra coisa e exige Diretoria ou Sócio.</div>'
+          : '') +
+        '<div class="ajuda" style="margin:8px 0">' + voltam + ' pagamento(s) voltam.</div>' +
+        '<label style="font-weight:400;display:flex;gap:6px;align-items:flex-start;margin-bottom:8px">' +
+          '<input type="checkbox" id="rm-desfazer" style="width:auto;margin-top:3px">' +
+          '<span>Devolver também ao <b>contas a pagar</b> (desfaz a solicitação de pagamento).' +
+          '<br><span class="sub">Sem marcar, os pagamentos voltam para <b>autorizado</b> e você ' +
+          'gera outro arquivo sem refazer a aprovação — é o caso do arquivo que saiu errado. ' +
+          'Marque quando o problema for o título, que precisa ser corrigido ou cancelado.</span>' +
+          '</span></label>' +
+        '<label>Motivo</label>' +
+        '<textarea id="rm-motivo" placeholder="Ex.: faltou o CNPJ do pagador no cadastro da conta"></textarea>',
+      acoes: [{ txt: 'Cancelar a remessa', cls: 'btn-cancelar', fn: function () {
+        const res = S.cancelarRemessa(id, U.val('rm-motivo'),
+          { desfazerSolicitacao: U.el('rm-desfazer').checked });
+        if (ERP.app.erroDoRetorno(res)) return;
+        ERP.app.fecharModal();
+        ERP.app.aviso('Remessa cancelada — ' + res.devolvidos + ' pagamento(s) ' +
+          (res.ao_contas_a_pagar ? 'de volta ao contas a pagar' : 'de volta para autorizado') +
+          (res.mantidos ? ', ' + res.mantidos + ' já liquidado(s) mantido(s)' : '') + '.',
+          res.mantidos ? 'erro' : 'ok');
+        render();
+      } }]
+    });
   }
 
   /* ── o que foi dentro de cada arquivo ───────────────────*/

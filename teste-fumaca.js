@@ -19,6 +19,10 @@ carregar('store.js');
 carregar('rps-barueri.js');
 carregar('qrcode.js');
 carregar('ofx.js');
+/* nfse.js só precisa de DOMParser DENTRO do \`ler\`; carregar o
+   arquivo aqui dá acesso às regras puras dele, como a separação
+   das contribuições sociais, sem precisar de navegador. */
+carregar('nfse.js');
 
 const S = sandbox.window.ERP.store;
 const D = sandbox.window.ERP.dados;
@@ -8913,8 +8917,12 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /js\/versao\.js/.test(marc) && !/js\/config\.js/.test(marc), '');
   verificar('v105 — e ele para com erro se não achar a linha',
     /process\.exit\(1\)/.test(marc) && /nada foi gravado/.test(marc), '');
-  verificar('v105 — a versão publicada é a v105',
-    /ERP\.config\.versao = 'v105 /.test(ver), (ver.match(/versao = '[^']*'/) || [])[0]);
+  /* O teste confere o FORMATO, não o número: preso ao número, ele
+     falharia em toda entrega e ensinaria a ignorar a bateria — que
+     é o pior defeito que um teste pode ter. */
+  verificar('v105 — a versão está gravada no formato vNNN · dd/mm/aaaa',
+    /ERP\.config\.versao = 'v\d+ · \d{2}\/\d{2}\/\d{4}';/.test(ver),
+    (ver.match(/versao = '[^']*'/) || [])[0]);
 })();
 
 // ── v106: o detalhe da NF mostrava um líquido que não existe ──
@@ -9047,6 +9055,284 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   const sql2 = fs2.readFileSync(__dirname + '/supabase/43-habilitacao.sql', 'utf8');
   verificar('v106 — as políticas do banco seguem com o id antigo',
     /tem_nivel\('habilitacao'/.test(sql2), '');
+})();
+
+// ── v107: a assistente passa a cancelar lançamento ───────────
+(function () {
+  /* Era a Diretoria que precisava desfazer todo lançamento errado
+     de quem lança. O que se abre mão é pequeno e está cercado —
+     e o teste cobre o cerco, não só a permissão. */
+  const assist = D.perfis.find(function (p) { return p.id === 'assistente'; });
+  verificar('v107 — a assistente cancela lançamento',
+    (assist.acoes || []).indexOf('cancelar') >= 0, '');
+  verificar('v107 — e continua sem estornar pagamento',
+    (assist.acoes || []).indexOf('estornar') < 0, '');
+  verificar('v107 — e continua sem aprovar',
+    (assist.acoes || []).indexOf('aprovar') < 0, '');
+
+  const antes = (S.usuario() || {}).id;
+  S.setUsuario('u1');                      // Dayana, assistente
+  const lanc = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-09-01', origem: 'manual', documento: 'NF-CANCEL-1',
+    descricao: 'Lançado por engano'
+  }, [{ num: 1, venc: '2027-10-01', comp: '2027-09', valor: 300 }]);
+  const pid = S.todasParcelas().filter(function (p) {
+    return p.titulo_id === lanc.titulo.id; })[0].id;
+
+  verificar('v107 — cancelar sem motivo continua recusado',
+    !!S.cancelar(pid, '').erro, '');
+  const r = S.cancelar(pid, 'lançado em duplicidade');
+  verificar('v107 — com motivo, a assistente cancela', r.ok === true, r.erro);
+  const p2 = S.parcela(pid);
+  verificar('v107 — fica gravado quem cancelou e por quê',
+    p2.status === 'cancelado' && !!p2.cancelado_por && /duplicidade/.test(p2.motivo_cancelamento),
+    JSON.stringify({ q: p2.cancelado_por, m: p2.motivo_cancelamento }));
+  verificar('v107 — e a parcela continua no histórico, não some',
+    S.todasParcelas().some(function (x) { return x.id === pid; }), '');
+
+  /* O cerco que importa: título JÁ PAGO continua fora do alcance
+     dela — para cancelar esse é preciso estornar antes, e estornar
+     segue só com Diretoria e Sócio. */
+  const pago = S.criarTitulo({
+    credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+    emissao: '2027-09-02', origem: 'manual', documento: 'NF-CANCEL-2',
+    descricao: 'Este vai ser pago'
+  }, [{ num: 1, venc: '2027-10-02', comp: '2027-09', valor: 200 }]);
+  const pid2 = S.todasParcelas().filter(function (p) {
+    return p.titulo_id === pago.titulo.id; })[0].id;
+  /* O caminho do pagamento tem três passos — solicitar, autorizar,
+     liquidar — e cada um já é uma trava por si. A primeira versão
+     deste teste chamou só `liquidar`, que confirma uma solicitação
+     que ainda não existia: o título ficava sem pagamento nenhum e
+     o caso "não cancela o que já foi pago" testava o nada. Agora
+     percorre os três e confere a trava de cada etapa. */
+  const pg = S.registrarPagamento(pid2, { data: '2027-10-02', valor: 200,
+    banco: (D.bancos[0] || {}).id });
+  verificar('v107 — a solicitação de pagamento entrou', !pg.erro, pg.erro);
+  const emCurso = S.cancelar(pid2, 'tentando com pagamento em andamento');
+  verificar('v107 — com pagamento em andamento, não cancela',
+    !!emCurso.erro && /em andamento/.test(emCurso.erro), emCurso.erro);
+
+  /* Autorizar e liquidar recebem o id do PAGAMENTO, não o da
+     parcela — passar o da parcela devolvia `ok` com `n: 0`, que é
+     um "deu certo" que não fez nada. */
+  const idPag = (S.pagamentosTodos(pid2)[0] || {}).id;
+  S.setUsuario('u2');                      // diretoria autoriza
+  const aut = S.autorizarPagamento([idPag]);
+  verificar('v107 — a diretoria autoriza', aut.n === 1, JSON.stringify(aut));
+  const liq = S.liquidar(idPag, { data: '2027-10-02' });
+  verificar('v107 — e a baixa é registrada',
+    !liq.erro && S.pagamentosDe(pid2).length === 1, liq.erro || S.pagamentosDe(pid2).length);
+
+  S.setUsuario('u1');                      // de volta à assistente
+  const r2 = S.cancelar(pid2, 'tentando cancelar o que já foi pago');
+  verificar('v107 — título já pago não é cancelado, nem por ela',
+    !!r2.erro && /[Ee]storne o pagamento/.test(r2.erro), r2.erro);
+  verificar('v107 — e ela não pode estornar para contornar',
+    !!S.estornar(pid2, 'tentando').erro, '');
+
+  /* A tela diz POR QUE o botão não está lá. Botão ausente e ação
+     impossível eram indistinguíveis — e a diferença é justamente o
+     que a pessoa precisa para resolver. */
+  const fs3 = require('fs');
+  const tela3 = fs3.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  verificar('v107 — o detalhe explica quando não dá para cancelar',
+    /function porQueNaoCancela/.test(tela3) &&
+    /estornar o pagamento/.test(tela3) &&
+    /não cancela lançamento/.test(tela3), '');
+  S.setUsuario(antes || 'u8');
+})();
+
+// ── v107: Documentação — substituição, Único e categorias ─────
+(function () {
+  const fs4 = require('fs');
+  const hab4 = fs4.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  const sql4 = fs4.readFileSync(__dirname + '/supabase/45-documentacao-categorias.sql', 'utf8');
+
+  /* ── substituição só onde há renovação ───────────────────
+     Marcar nove atestados como "substituídos" some com prova que
+     a empresa tem — e é o acervo de atestados que ganha licitação.
+     O colapso por empresa+tipo vale só para o tipo que VENCE. */
+  verificar('v107 — o tipo que não vence não é colapsado por empresa+tipo',
+    /d\.tipo_sem_validade[\s\S]{0,80}'id:' \+ d\.id/.test(hab4), '');
+  verificar('v107 — e o porquê está escrito, para ninguém "otimizar" de volta',
+    /SUBSTITUIÇÃO SÓ EXISTE ONDE HÁ RENOVAÇÃO/.test(hab4), '');
+
+  /* ── Único: o alcance sai da raiz do CNPJ ────────────────
+     A Novaped tem outra raiz e nunca é coberta por documento da
+     HJM — e isso cai da regra, sem exceção escrita. */
+  verificar('v107 — o alcance do documento sai da raiz do CNPJ',
+    /raizCnpj/.test(hab4) && /function empresasCobertas/.test(hab4), '');
+  verificar('v107 — e "Pertence a" é um campo só, não dois',
+    /function opcoesPertence/.test(hab4) && /function dePertence/.test(hab4) &&
+    !/hb-abrang/.test(hab4), '');
+
+  /* ── categorias do edital ────────────────────────────────*/
+  verificar('v107 — as categorias separam CRM de CREA e tiram atestado de técnico',
+    /'tecnico_crm'/.test(hab4) && /'tecnico_crea'/.test(hab4) &&
+    /'atestados'/.test(hab4) && /'contabeis'/.test(hab4), '');
+  verificar('v107 — e as antigas continuam na lista, para nada sumir antes do SQL',
+    /'tecnico',\s*'Técnicos \(categoria antiga\)'/.test(hab4) &&
+    /'balancos',\s*'Contábeis \(categoria antiga\)'/.test(hab4), '');
+  verificar('v107 — o SQL recategoriza e é repetível',
+    /update hab_tipo_documento set categoria = 'tecnico_crm'/.test(sql4) &&
+    /update hab_tipo_documento set categoria = 'atestados'/.test(sql4) &&
+    /on conflict \(id\) do update/.test(sql4), '');
+  verificar('v107 — o filtro por categoria existe no cofre',
+    /id="hb-f-cat"/.test(hab4) && /filtro\.categoria/.test(hab4), '');
+  verificar('v107 — e trocar de categoria limpa o tipo, para a lista não sumir',
+    /filtro\.categoria = this\.value;[\s\S]{0,300}filtro\.tipo = '';/.test(hab4), '');
+
+  /* ── baixar em lote ──────────────────────────────────────*/
+  verificar('v107 — dá para baixar por empresa e categoria, zipado',
+    /function abrirBaixaEmLote/.test(hab4) && /new window\.JSZip/.test(hab4), '');
+  verificar('v107 — o Único entra no zip da empresa',
+    /empresasCobertas\(d\)\.indexOf\(empresa\) < 0/.test(hab4), '');
+  verificar('v107 — e o vencido fica de fora por padrão',
+    /if \(!tudo && situacao\(d\)\.id === 'vencido'\) return false;/.test(hab4), '');
+  verificar('v107 — dentro do zip o nome é o do documento, não o do arquivo',
+    /d\.tipo_nome \|\| d\.tipo\)[\s\S]{0,200}val /.test(hab4), '');
+
+  /* ── filtrar por empresa inclui o Único ──────────────────
+     Escondê-lo ao filtrar faria o cofre parecer vazio justamente
+     onde está completo. */
+  verificar('v107 — filtrar por empresa no cofre inclui o que é Único',
+    /empresasCobertas\(d\)\.indexOf\(filtro\.empresa\) >= 0/.test(hab4), '');
+})();
+
+// ── v107: contribuições sociais somadas num campo só ──────────
+(function () {
+  /* A regra vive fora do leitor de XML justamente para poder ser
+     exercitada aqui: ela decide quanto de imposto de terceiro vai
+     para cada guia. */
+  const sep = sandbox.window.ERP.nfse.separarCsrf;
+
+  const r = sep(10000, 465);
+  verificar('v107 — 4,65% somados viram PIS, COFINS e CSLL',
+    r && r.PIS === 65 && r.COFINS === 300 && r.CSLL === 100, JSON.stringify(r));
+  verificar('v107 — e as três somam exatamente o que veio na nota',
+    r && Math.round((r.PIS + r.COFINS + r.CSLL) * 100) / 100 === 465, '');
+
+  const q = sep(7333.33, 340);
+  verificar('v107 — com valor quebrado, a sobra de centavo fica na COFINS',
+    q && Math.round((q.PIS + q.COFINS + q.CSLL) * 100) / 100 === 340 &&
+    q.PIS === 47.67 && q.CSLL === 73.33, JSON.stringify(q));
+
+  /* O que NÃO é CSRF não é separado: 1% é CSLL de verdade, e
+     inventar PIS e COFINS em cima disso seria recolher imposto que
+     não foi retido. */
+  verificar('v107 — CSLL sozinha de 1% não é separada', sep(10000, 100) === null, '');
+  verificar('v107 — nem um valor qualquer', sep(10000, 777) === null, '');
+  verificar('v107 — nem sem base de serviço', sep(0, 465) === null, '');
+
+  const fs5 = require('fs');
+  const nf = fs5.readFileSync(__dirname + '/js/nfse.js', 'utf8');
+  verificar('v107 — os três já separados pelo emissor não são mexidos',
+    /const soNoCsll = vCsll > 0 && vPis === 0 && vCofins === 0;/.test(nf), '');
+  verificar('v107 — e a nota diz que separou, para alguém conferir',
+    /csrf_separada/.test(nf), '');
+})();
+
+// ── v107: cancelar a remessa e devolver os títulos ───────────
+(function () {
+  const antes = (S.usuario() || {}).id;
+  S.setUsuario('u2');                       // diretoria: aprova e gera remessa
+
+  /* Monta o caso inteiro: título, solicitação, autorização e
+     remessa — e então cancela. */
+  /* Quem SOLICITA não aprova — é a segregação da casa, e ela vale
+     aqui também: a primeira versão deste caso pedia e aprovava com
+     o mesmo usuário, a autorização era recusada, e o teste seguia
+     montando uma remessa de pagamentos que nunca foram
+     autorizados. Agora a assistente solicita e a diretoria
+     aprova, como na vida real. */
+  const mk = function (doc, valor) {
+    S.setUsuario('u1');
+    const t = S.criarTitulo({
+      credor: 'cr5', tipo_titulo: 'nf', conta: '6.03', centro: 'cc100',
+      emissao: '2027-11-01', origem: 'manual', documento: doc, descricao: 'para a remessa ' + doc
+    }, [{ num: 1, venc: '2027-12-01', comp: '2027-11', valor: valor }]);
+    const pid = S.todasParcelas().filter(function (p) { return p.titulo_id === t.titulo.id; })[0].id;
+    S.registrarPagamento(pid, { data: '2027-12-01', valor: valor, banco: (D.bancos[0] || {}).id });
+    const pg = S.pagamentosTodos(pid)[0];
+    S.setUsuario('u2');
+    const aut = S.autorizarPagamento([pg.id]);
+    if (aut.erro || aut.n !== 1) {
+      verificar('v107 — o pagamento ' + doc + ' foi autorizado', false, aut.erro || JSON.stringify(aut));
+    }
+    return { pid: pid, pgid: pg.id, valor: valor };
+  };
+  const a = mk('NF-REM-1', 500), b = mk('NF-REM-2', 700);
+
+  const rem = S.registrarRemessa(
+    { sequencial: 90001, banco: (D.bancos[0] || {}).id, data_pagamento: '2027-12-01',
+      arquivo_nome: 'teste.rem', conteudo: 'x' },
+    [{ seuNumero: 1, parcela_id: a.pid, pagamento_id: a.pgid, valor: a.valor, chavePix: null },
+     { seuNumero: 2, parcela_id: b.pid, pagamento_id: b.pgid, valor: b.valor, chavePix: null }]);
+  verificar('v107 — a remessa é gerada', !rem.erro && rem.id, rem.erro);
+  verificar('v107 — e os pagamentos ficam "enviado"',
+    S.pagamento(a.pgid).situacao === 'enviado' && S.pagamento(b.pgid).situacao === 'enviado', '');
+
+  verificar('v107 — cancelar remessa sem motivo é recusado',
+    !!S.cancelarRemessa(rem.id, '').erro, '');
+
+  /* Sem marcar nada, os pagamentos voltam para AUTORIZADO: é o
+     caso do arquivo que saiu errado — conserta o cadastro e gera
+     outro, sem refazer aprovação. */
+  const c1 = S.cancelarRemessa(rem.id, 'faltou o CNPJ do pagador');
+  verificar('v107 — cancelar devolve os pagamentos', c1.ok && c1.devolvidos === 2,
+    JSON.stringify(c1));
+  verificar('v107 — e eles voltam para autorizado, prontos para outro arquivo',
+    S.pagamento(a.pgid).situacao === 'autorizado' &&
+    S.pagamento(b.pgid).situacao === 'autorizado', '');
+  verificar('v107 — a remessa fica marcada como cancelada, com motivo e autor',
+    (function () {
+      const r = S.remessas().find(function (x) { return x.id === rem.id; });
+      return r.status === 'cancelada' && /CNPJ do pagador/.test(r.motivo_cancelamento) &&
+        !!r.cancelada_por;
+    })(), '');
+  verificar('v107 — cancelar duas vezes é recusado',
+    !!S.cancelarRemessa(rem.id, 'de novo').erro, '');
+
+  /* Com a opção marcada, a parcela volta ao CONTAS A PAGAR. */
+  const c = mk('NF-REM-3', 900);
+  const rem2 = S.registrarRemessa(
+    { sequencial: 90002, banco: (D.bancos[0] || {}).id, data_pagamento: '2027-12-02',
+      arquivo_nome: 'teste2.rem', conteudo: 'x' },
+    [{ seuNumero: 3, parcela_id: c.pid, pagamento_id: c.pgid, valor: c.valor, chavePix: null }]);
+  const c2 = S.cancelarRemessa(rem2.id, 'o título está errado', { desfazerSolicitacao: true });
+  verificar('v107 — com a opção marcada, volta ao contas a pagar',
+    c2.ok && c2.ao_contas_a_pagar === 1, JSON.stringify(c2));
+  verificar('v107 — e a parcela fica em aberto de novo',
+    ['aberto', 'vencido'].indexOf(S.parcela(c.pid).status) >= 0, S.parcela(c.pid).status);
+
+  /* O que o banco JÁ PAGOU não volta: desfazer no sistema deixaria
+     um pagamento real sem registro deste lado. */
+  const d1 = mk('NF-REM-4', 400);
+  const rem3 = S.registrarRemessa(
+    { sequencial: 90003, banco: (D.bancos[0] || {}).id, data_pagamento: '2027-12-03',
+      arquivo_nome: 'teste3.rem', conteudo: 'x' },
+    [{ seuNumero: 4, parcela_id: d1.pid, pagamento_id: d1.pgid, valor: d1.valor, chavePix: null }]);
+  const liq3 = S.liquidar(d1.pgid, { data: '2027-12-03' });
+  verificar('v107 — o pagamento da remessa 3 foi liquidado',
+    !liq3.erro && S.pagamento(d1.pgid).situacao === 'liquidado',
+    liq3.erro || S.pagamento(d1.pgid).situacao);
+  const c3 = S.cancelarRemessa(rem3.id, 'tentando cancelar o que o banco pagou');
+  verificar('v107 — remessa toda liquidada não é cancelada',
+    !!c3.erro && /estornar/.test(c3.erro), c3.erro);
+
+  /* O pagador precisa estar completo ANTES de o arquivo sair. */
+  const semEmpresa = { id: 'bz9', apelido: 'Conta sem empresa', banco: '999', ativo: true };
+  D.bancos.push(semEmpresa);
+  const r4 = S.registrarRemessa(
+    { sequencial: 90004, banco: 'bz9', data_pagamento: '2027-12-04',
+      arquivo_nome: 't4.rem', conteudo: 'x' }, []);
+  verificar('v107 — sem empresa pagadora, a remessa não é gerada',
+    !!r4.erro && /empresa pagadora/.test(r4.erro), r4.erro);
+  D.bancos.pop();
+
+  S.setUsuario(antes || 'u8');
 })();
 
 concluir();

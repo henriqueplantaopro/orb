@@ -243,17 +243,36 @@ td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
 .ap-grupo{border:1px solid var(--line);border-radius:3px;margin-bottom:10px;overflow:hidden;}
 .ap-grupo-cab{display:flex;justify-content:space-between;padding:6px 10px;background:#f2f4f5;
   border-bottom:1px solid var(--line);font-size:12px;font-weight:650;}
-.ap-lin{display:grid;grid-template-columns:22px 1.1fr 2fr 82px 110px 44px;gap:8px;align-items:center;
-  padding:6px 10px;font-size:12.5px;cursor:pointer;}
+/* A fila de aprovação tinha o TÍTULO em duas colunas largas
+   (credor 1.1fr + descrição 2fr) e empurrava vencimento e valor
+   para fora da vista. Quem aprova decide por vencimento, valor,
+   meio de pagamento e situação — e era justamente isso que não
+   cabia.
+
+   Agora credor e descrição dividem UMA coluna flexível, um em
+   cima do outro, truncados; o resto tem largura fixa e sempre
+   aparece. */
+.ap-lin{display:grid;
+  grid-template-columns:22px minmax(0,1fr) 82px 104px 116px 92px auto;
+  gap:8px;align-items:center;padding:6px 10px;font-size:12.5px;cursor:pointer;}
 .ap-lin + .ap-lin{border-top:1px solid var(--line2);}
 .ap-lin:hover{background:var(--zebra);}
 .ap-lin.sel{background:var(--brand-soft);}
 .ap-lin input{width:auto;}
-.ap-lin .quem{font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
-.ap-lin .oque{color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.ap-lin > *{min-width:0;}
+.ap-lin .titulo{overflow:hidden;}
+.ap-lin .quem{font-weight:550;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
+.ap-lin .oque{color:var(--ink3);font-size:11px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;display:block;}
 .ap-lin .venc,.ap-lin .quanto{color:var(--ink);}
-@media(max-width:760px){.ap-lin{grid-template-columns:22px 1fr 90px 44px;}
-  .ap-lin .oque,.ap-lin .venc{display:none;}}
+.ap-lin .meio{color:var(--ink2);font-size:11.5px;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap;}
+/* Em tela estreita some o que dá para deduzir: a descrição e o
+   meio de pagamento. Vencimento, valor e situação ficam. */
+@media(max-width:900px){.ap-lin{grid-template-columns:22px minmax(0,1fr) 78px 100px 88px auto;}
+  .ap-lin .meio{display:none;}}
+@media(max-width:700px){.ap-lin{grid-template-columns:22px minmax(0,1fr) 100px auto;}
+  .ap-lin .venc,.ap-lin .oque{display:none;}}
 
 /* ── importação de produtividade ────────────────────────── */
 .pr-cab{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px;margin-top:6px;}
@@ -808,3 +827,25 @@ body.ambiente-teste .barra-modulo {
    de Habilitação vem texto depois, e sem isto a linha de ajuda
    subia por cima da última linha da tabela. */
 #hb-saida .tabela-rolagem { margin-bottom: 0; }
+
+/* Bloco inteiro em falta — o rateio de centro de custo é vários
+   selects criados na hora, sem id próprio: dá para apontar o
+   bloco, e é o que a pessoa precisa para saber onde olhar. */
+.bloco-erro {
+  border: 2px solid var(--red); background: var(--red-bg);
+  box-shadow: 0 0 0 3px rgba(150, 45, 34, .14);
+  border-radius: 4px; padding: 4px;
+}
+
+/* Chips do checklist de Documentação: quebram a linha em vez de
+   empurrar a tela, e dois cartões viram um quando não cabem. */
+.hb-cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 10px; margin-bottom: 4px; }
+.hb-cartao { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  background: var(--surface); min-width: 0; }
+.hb-cartao-nome { font-weight: 650; font-size: 13px; margin-bottom: 8px; }
+.hb-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.hb-chip { padding: 2px 7px; font-size: 11px; line-height: 1.5; white-space: normal; }
+.hb-marca { font-weight: 400; font-size: 12px; display: inline-flex; gap: 5px;
+  align-items: center; white-space: nowrap; }
+.hb-marca input { width: auto; }
