@@ -9883,6 +9883,34 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /dep\.porCentro\[id\]/.test(rel), '');
   verificar('v113 — o resultado por empresa também',
     /c\.depreciacao \? U\.num\(c\.depreciacao\)/.test(rel), '');
+
+  /* O fluxo completo saiu do botão em destaque e virou item do
+     seletor, com datas opcionais e o padrão sem filtro. */
+  const htm = lerArq('index.html');
+  verificar('v113 — o botão em destaque do fluxo completo saiu da barra',
+    !/rel-fluxo-xls/.test(htm) && !/rel-fluxo-xls/.test(rel), '');
+  verificar('v113 — e o fluxo completo entrou no seletor de relatórios',
+    /<option value="fluxoCompleto">/.test(htm) &&
+    /fluxoCompleto: 'Fluxo de caixa completo/.test(rel), '');
+  verificar('v113 — o período do fluxo completo nasce vazio, que é o fluxo inteiro',
+    /let fcPer = \{ de: '', ate: '' \};/.test(rel), '');
+  verificar('v113 — e a tela oferece voltar para "sem filtro"',
+    /id="fc-tudo"/.test(rel) && /fcPer = \{ de: '', ate: '' \}; render\(\);/.test(rel), '');
+  verificar('v113 — exportar e imprimir somem no relatório que não tem tabela',
+    /const semTabela = atual === 'fluxoCompleto';/.test(rel), '');
+
+  /* As duas falhas da planilha, com o contas a pagar vazio. */
+  const flx = lerArq('js/exportar-fluxo.js');
+  verificar('v113 — aba de fluxo vazia tem como saldo final o total em bancos, não o cabeçalho',
+    /celSaldoFinal: linhas\.length \? cSaldo \+ ultima : celTotalBancos/.test(flx), '');
+  verificar('v113 — total de bloco vazio é zero, e não uma soma de faixa invertida',
+    /const totalDoBloco = function \(linha, ini, fim\)/.test(flx) &&
+    /fim >= ini \? \{ formula: 'SUM\(/.test(flx), '');
+  verificar('v113 — e os dois totais do resumo passam pelo mesmo guarda',
+    (flx.match(/totalDoBloco\(L, /g) || []).length === 2, '');
+  verificar('v113 — o fluxo completo aceita recorte por data, com o horizonte acompanhando',
+    /function gerar\(op\)/.test(flx) && /const dentro = l =>/.test(flx) &&
+    /Math\.max\(1, Math\.min\(60, n\)\)/.test(flx), '');
 })();
 
 concluir();
