@@ -8541,14 +8541,26 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v104 — CNPJ com dígito errado não é aceito',
     L.cnpjValido('11111111111111') === false && L.cnpjValido('18432556000112') === true, '');
 
-  /* ── o semáforo ───────────────────────────────────────────
-     Os degraus são os do alerta: 30 / 15 / 7 / 1. */
+  /* ── o semáforo: TRÊS cores, não quatro degraus ───────────
+     Até a v109 eram quatro faixas (30/15/7/vencido), com vermelho
+     para o que vencia em uma semana e âmbar para o que vencia em
+     um mês. O painel vivia colorido, e cor que acende sempre deixa
+     de ser aviso: uma certidão boa por 26 dias chamava atenção como
+     se fosse problema.
+ 
+     A régua da v110: VERMELHO só o que inabilita hoje (vencido ou
+     faltando), AMARELO só a semana seguinte, VERDE todo o resto que
+     está válido. Documento válido não é pendência. */
   const H = sandbox.window.ERP ? null : null;   // a tela precisa de DOM; aqui só as regras
   const hab = fs.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
-  verificar('v104 — o semáforo tem os quatro degraus do alerta',
-    /n <= 7/.test(hab) && /n <= 15/.test(hab) && /n <= 30/.test(hab) && /n < 0/.test(hab), '');
-  verificar('v104 — vencido aparece em vermelho, não em âmbar',
-    /vencido[\s\S]{0,60}b-reprovado/.test(hab), '');
+  verificar('v110 — o semáforo tem três cores, com o corte do amarelo em 7 dias',
+    /const DIAS_AMARELO = 7;/.test(hab) && /n <= DIAS_AMARELO/.test(hab) &&
+    /n < 0/.test(hab) && !/n <= 15/.test(hab) && !/n <= 30/.test(hab), '');
+  verificar('v110 — vencido é o único vermelho; o que vence em 7 dias é amarelo',
+    /if \(n < 0\)   return \{ id: 'vencido'[\s\S]{0,80}b-reprovado/.test(hab) &&
+    /n <= DIAS_AMARELO\) \{[\s\S]{0,120}b-pendente/.test(hab), '');
+  verificar('v110 — e o porquê está escrito, para ninguém reapertar a régua',
+    /cor que acende sempre deixa de ser\s+aviso/.test(hab), '');
 
   /* O documento que vale é o de validade mais longa, não o emitido
      por último: a estadual de 30 dias emitida hoje vence antes da
@@ -8693,21 +8705,41 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      que este bloco nasceu falhando, mostrando que a guarda
      funciona. O usuário é devolvido no fim. */
   const usuarioAntes = (S.usuario() || {}).id;
+  /* `tipo_categoria` entrou na v110 e é o que decide a
+     substituição: a renovação só apaga a anterior em CERTIDÃO. A
+     primeira versão deste bloco não trazia a coluna, e o teste
+     passou a reprovar quando a regra ficou certa — a falha era da
+     amostra, que descrevia certidões sem dizer que eram. */
   D.habilitacaoResumo = [
     // vencida de verdade, sem renovação
     { id: 'a1', empresa: 'E1', tipo: 'cnd-federal', tipo_nome: 'CND Federal',
+      tipo_categoria: 'certidoes',
       tipo_sem_validade: false, validade_efetiva: emDias(-10), dias_para_vencer: -10 },
     // vencida MAS já renovada — não pode acender
     { id: 'a2', empresa: 'E1', tipo: 'fgts', tipo_nome: 'CRF FGTS',
+      tipo_categoria: 'certidoes',
       tipo_sem_validade: false, validade_efetiva: emDias(-3), dias_para_vencer: -3 },
     { id: 'a3', empresa: 'E1', tipo: 'fgts', tipo_nome: 'CRF FGTS',
+      tipo_categoria: 'certidoes',
       tipo_sem_validade: false, validade_efetiva: emDias(27), dias_para_vencer: 27 },
     // longe: não é assunto
     { id: 'a4', empresa: 'E1', tipo: 'cndt', tipo_nome: 'CNDT',
+      tipo_categoria: 'certidoes',
       tipo_sem_validade: false, validade_efetiva: emDias(120), dias_para_vencer: 120 },
     // não vence nunca
     { id: 'a5', empresa: 'E1', tipo: 'contrato-social', tipo_nome: 'Contrato social',
-      tipo_sem_validade: true, validade_efetiva: null, dias_para_vencer: null }
+      tipo_categoria: 'cadastrais',
+      tipo_sem_validade: true, validade_efetiva: null, dias_para_vencer: null },
+    /* v110 — o caso COREN: duas peças do MESMO tipo técnico, uma
+       vencida e outra válida, e nenhuma substitui a outra. A
+       vencida TEM de acender: era ela que a regra antiga escondia
+       atrás da mais nova. */
+    { id: 'a6', empresa: 'E1', tipo: 'coren', tipo_nome: 'COREN',
+      tipo_categoria: 'tecnico_crm',
+      tipo_sem_validade: false, validade_efetiva: emDias(-5), dias_para_vencer: -5 },
+    { id: 'a7', empresa: 'E1', tipo: 'coren', tipo_nome: 'COREN',
+      tipo_categoria: 'tecnico_crm',
+      tipo_sem_validade: false, validade_efetiva: emDias(200), dias_para_vencer: 200 }
   ];
   S.setUsuario('u1');                    // assistente: vê o módulo
   /* A ORDEM EM QUE O BANCO DEVOLVE NÃO PODE MUDAR A RESPOSTA.
@@ -8736,10 +8768,15 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
                     (direta.vindo || {}).n, (invertida2.vindo || {}).n]));
   const venc = direta.venc;
   const vindo = direta.vindo;
-  verificar('v104 — a certidão vencida acende cartão na home',
-    venc && venc.n === 1, venc ? venc.n : 'sem cartão');
-  verificar('v104 — e a já renovada NÃO acende',
+  /* DUAS: a CND Federal, que venceu e não foi renovada, e o COREN
+     vencido — que não é certidão e por isso não é apagado pela
+     peça mais nova do mesmo tipo. */
+  verificar('v110 — acendem as duas vencidas, a certidão e o COREN',
+    venc && venc.n === 2, venc ? venc.n : 'sem cartão');
+  verificar('v104 — e a certidão já renovada NÃO acende',
     venc && !/FGTS/.test(venc.texto), venc ? venc.texto : '');
+  verificar('v110 — mas o COREN vencido acende, mesmo havendo um mais novo',
+    venc && /COREN/.test(venc.texto), venc ? venc.texto : '');
   verificar('v104 — a renovação de 27 dias entra no cartão dos 30 dias',
     vindo && vindo.n === 1 && /FGTS/.test(vindo.texto), vindo ? vindo.n + ' ' + vindo.texto : 'sem cartão');
   verificar('v104 — o que vence em 120 dias não entra em cartão nenhum',
@@ -9155,10 +9192,20 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      Marcar nove atestados como "substituídos" some com prova que
      a empresa tem — e é o acervo de atestados que ganha licitação.
      O colapso por empresa+tipo vale só para o tipo que VENCE. */
-  verificar('v107 — o tipo que não vence não é colapsado por empresa+tipo',
-    /d\.tipo_sem_validade[\s\S]{0,80}'id:' \+ d\.id/.test(hab4), '');
+  /* A v107 restringiu o colapso ao tipo que VENCE, e ainda errava
+     a classe: o registro no COREN exige cinco peças diferentes do
+     mesmo tipo, todas com validade, e as cinco valem juntas —
+     quatro apareciam como substituídas. A v110 restringe à
+     CATEGORIA `certidoes`, que é onde renovar de fato torna a
+     anterior inútil, e deixa a decisão ser corrigida à mão. */
+  verificar('v110 — só certidão é colapsada por empresa+tipo',
+    /const colapsa = d =>[\s\S]{0,160}=== 'certidoes'/.test(hab4) &&
+    /!colapsa\(d\)[\s\S]{0,60}'id:' \+ d\.id/.test(hab4), '');
+  verificar('v110 — e o documento marcado para coexistir nunca é colapsado',
+    /!d\.coexiste/.test(hab4) && /function alternarCoexiste/.test(hab4) &&
+    /coexiste: novo/.test(hab4), '');
   verificar('v107 — e o porquê está escrito, para ninguém "otimizar" de volta',
-    /SUBSTITUIÇÃO SÓ EXISTE ONDE HÁ RENOVAÇÃO/.test(hab4), '');
+    /Só CERTIDÃO se substitui/.test(hab4), '');
 
   /* ── Único: o alcance sai da raiz do CNPJ ────────────────
      A Novaped tem outra raiz e nunca é coberta por documento da
@@ -9407,7 +9454,10 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
 (function () {
   const fs8 = require('fs');
   const hab8 = fs8.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
-  const sql46 = fs8.readFileSync(__dirname + '/supabase/46-documentacao-catalogo.sql', 'utf8');
+  /* O arquivo que ELE roda e o unificado: 45 e 46 juntos, com uma
+     conferencia no fim. Testar o 46 isolado provaria um arquivo que
+     ninguem executa. */
+  const sql46 = fs8.readFileSync(__dirname + '/supabase/49-ATUALIZAR-v109.sql', 'utf8');
 
   /* Três decisões que eram minhas e passam a ser dele. Enquanto
      dependiam de uma linha de SQL, eram decisões que não se
@@ -9433,10 +9483,10 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /const ehExigido = t => !t \|\| t\.exigido !== false;/.test(hab8) &&
     /const ehComum   = t => !t \|\| t\.comum   !== false;/.test(hab8), '');
   verificar('v109 — o painel só cobra o que está marcado como pendência',
-    /const exigidos = tipos\.filter\(ehExigido\);/.test(hab8) &&
-    /extrasTipo\.filter\(function \(t\) \{/.test(hab8), '');
-  verificar('v109 — e o extra ausente não vira chip nenhum',
-    /return !!mapa\[e\.id \+ '\|' \+ t\.id\];/.test(hab8), '');
+    /return ehExigido\(t\) \|\| !!mapa\[e\.id \+ '\|' \+ t\.id\];/.test(hab8), '');
+  verificar('v110 — e não cobra o tipo de que a empresa é isenta',
+    /if \(isentoDe\(t, e\.id\)\) return false;/.test(hab8) &&
+    /function marcarIsencao/.test(hab8) && /data-hb-isento=/.test(hab8), '');
   verificar('v109 — a aba Tipos tem botão de criar e de editar',
     /id="hb-tipo-novo"/.test(hab8) && /data-hb-tipo-edit="/.test(hab8) &&
     /function abrirTipo/.test(hab8), '');
@@ -9485,14 +9535,138 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      `as` da linha de cima, e a do `do $$` vem indentada. Foi o
      primeiro desenho deste teste que contou as três e reprovou
      um arquivo correto. */
+  /* Uma consulta SOLTA — a do `create view` vem presa ao `as` da
+     linha de cima, e a do `do $$` vem indentada. Foi o primeiro
+     desenho deste teste que contou as tres e reprovou um arquivo
+     correto. */
   verificar('v109 — e a conferência é uma consulta só, no fim',
     (sql46.match(/\n\nselect /g) || []).length === 1 &&
     /select categoria,[\s\S]*from hab_tipo_documento[\s\S]*order by min\(ordem\);\s*(--[^\n]*\n)*\s*$/.test(sql46),
     (sql46.match(/\n\nselect /g) || []).length + ' consulta(s) solta(s)');
+  /* E o unificado tem de trazer as DUAS partes: mandar o 46 sem o
+     45 foi exatamente a falha desta entrega. */
+  verificar('v109 — o arquivo unificado traz as categorias e o catálogo',
+    /categoria = 'tecnico_crm'/.test(sql46) && /categoria = 'atestados'/.test(sql46) &&
+    /add column if not exists exigido/.test(sql46) &&
+    /PARTE 1/.test(sql46) && /PARTE 2/.test(sql46), '');
+  verificar('v109 — e estoura se sobrar categoria antiga',
+    /Sobrou categoria antiga/.test(sql46), '');
   /* Reexecução não pode reverter o que ele ajustar na tela. */
   verificar('v109 — rodar o 46 de novo não desfaz o que foi ajustado na tela',
     /padrao_exigido_aplicado/.test(sql46) && /padrao_comum_aplicado/.test(sql46) &&
     (sql46.match(/and not \(extra \? '/g) || []).length === 2, '');
+})();
+
+// ── v110: a mensagem de login tem de dizer QUAL dos dois ────
+(function () {
+  const fs9 = require('fs');
+  const au = fs9.readFileSync(__dirname + '/js/auth.js', 'utf8');
+  const d47 = fs9.readFileSync(__dirname + '/supabase/47-DIAGNOSTICO-login.sql', 'utf8');
+  const d48 = fs9.readFileSync(__dirname + '/supabase/48-REPARAR-login.sql', 'utf8');
+
+  /* "Fale com a Administração" para um erro de consulta manda a
+     pessoa para o lugar errado: nao ha nada que a Administracao
+     possa fazer com uma politica de acesso quebrada. Os dois casos
+     davam a mesma frase. */
+  verificar('v110 — erro de consulta e falta de vínculo dão mensagens diferentes',
+    /if \(error\) \{[\s\S]{0,400}não foi possível conferir o seu usuário/.test(au) &&
+    /if \(!data\) \{[\s\S]{0,300}não está[\s\S]{0,80}vinculado/.test(au), '');
+  verificar('v110 — e a mensagem de vínculo diz qual e-mail entrou',
+    /session\.user\.email \|\| 'sem e-mail'/.test(au), '');
+  /* A consulta de diagnostico nao pode alterar nada: ela roda
+     justamente quando ninguem sabe o que esta errado. */
+  verificar('v110 — o diagnóstico 47 só consulta, não altera',
+    !/\b(update|insert|delete|alter|drop|create)\b/i.test(
+      d47.split('\n').filter(function (l) { return !/^\s*--/.test(l); }).join('\n')), '');
+  /* `is distinct from` e nao `is null`: o vinculo apontando para um
+     login antigo da a MESMA tela do vinculo vazio. */
+  verificar('v110 — o reparo 48 religa vínculo vazio e vínculo errado',
+    /u\.auth_id is distinct from a\.id/.test(d48), '');
+  verificar('v110 — e compara e-mail sem depender de maiúscula ou espaço',
+    /lower\(btrim\(a\.email\)\) = lower\(btrim\(u\.email\)\)/.test(d48), '');
+  /* O reparo nao pode criar nem apagar nada: so preenche o vinculo. */
+  verificar('v110 — o reparo não cria usuário, login nem senha',
+    !/\binsert\s+into\b/i.test(d48) && !/\bdelete\s+from\b/i.test(d48) &&
+    !/auth\.users\s*\(/.test(d48) && (d48.match(/^\s*update /gm) || []).length === 1, '');
+  /* Uma consulta solta, no fim: o editor do Supabase mostra so o
+     resultado da ultima. */
+  verificar('v110 — e a conferência do 48 é a última consulta do arquivo',
+    (d48.match(/^select\b/gm) || []).length === 1,
+    (d48.match(/^select\b/gm) || []).length + ' consulta(s) de primeiro nível');
+})();
+
+// ── v110: cadastro de empresa e exclusão guardada ───────────
+(function () {
+  const fsA = require('fs');
+  const cad = fsA.readFileSync(__dirname + '/js/ui-cadastros.js', 'utf8');
+  const per = fsA.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const sto = fsA.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const sql = fsA.readFileSync(__dirname + '/supabase/52-ATUALIZAR-v110.sql', 'utf8');
+
+  /* O CNPJ era cadastro só de leitura: entrava por SQL e mudava
+     por SQL. Inativar a empresa que parou de operar dependia de
+     mim — e cadastro que depende de programador fica errado. */
+  verificar('v110 — Cadastros tem a tela de empresas',
+    /id: 'empresas', nome: 'Empresas \(CNPJ\)'/.test(cad) && /function editarEmpresa/.test(cad), '');
+  /* Sem isto a empresa nova vive só na memória, e o primeiro
+     centro apontando para ela derruba a gravação inteira com
+     "centros_empresa_fkey". */
+  verificar('v110 — empresas entra no mapa de gravação, antes de centros',
+    per.indexOf("empresas: { tabela: 'empresas'") > 0 &&
+    per.indexOf("empresas: { tabela: 'empresas'") < per.indexOf("centros: { tabela: 'centros'"), '');
+  verificar('v110 — e o estado aponta para a MESMA lista de dados',
+    /get empresas\(\) \{ return D\.empresas; \}/.test(sto), '');
+  /* CNPJ errado aqui vira arquivo de remessa recusado pelo banco e
+     certidão emitida para outra empresa. */
+  verificar('v110 — o CNPJ é conferido pelo dígito, não pelo tamanho',
+    /U\.cnpjValido\(cnpjCru\)/.test(cad) && /Já existe empresa com este CNPJ/.test(cad), '');
+  verificar('v110 — o id da empresa nova sai da sequência, não do relógio',
+    /S\.proximoId\('emp'\)/.test(cad) && !/Date\.now\(\)/.test(
+      cad.slice(cad.indexOf('function salvarEmpresa'), cad.indexOf('async function excluirEmpresa'))), '');
+  /* Inativar é o caminho normal; excluir é a exceção estreita. */
+  verificar('v110 — inativar não apaga nada e é o caminho oferecido',
+    /Desmarcar tira a empresa do painel/.test(cad), '');
+  verificar('v110 — excluir passa pelo banco, que decide',
+    /rpc\('excluir_empresa'/.test(cad) && /tem_movimento/.test(cad), '');
+  /* A lista de tabelas é lida do catálogo do Postgres. Escrita à
+     mão, a tabela nova de amanhã não entraria na conferência e a
+     exclusão passaria a apagar coisa referenciada. */
+  verificar('v110 — a função lê as chaves estrangeiras do catálogo, não uma lista fixa',
+    /from pg_constraint c/.test(sql) && /confrelid = 'empresas'::regclass/.test(sql), '');
+  verificar('v110 — e recusa quando acha vínculo, dizendo onde',
+    /'motivo', 'tem_movimento'[\s\S]{0,80}'onde'/.test(sql), '');
+  verificar('v110 — só quem movimenta Cadastros exclui',
+    /tem_nivel\('cadastros', 'M'\)/.test(sql) &&
+    /revoke all on function excluir_empresa\(text\) from public, anon;/.test(sql), '');
+  /* A view foi criada com `select d.*`: coluna nova na tabela não
+     entra nela, e a tela lê a view. */
+  verificar('v110 — o SQL refaz a view com as colunas novas',
+    /drop view if exists hab_documento_vigente;/.test(sql) &&
+    /t\.isento\s+as tipo_isento/.test(sql) && /d\.\*/.test(sql), '');
+  verificar('v110 — e estoura se a view ficar sem elas',
+    /'coexiste', 'tipo_isento'/.test(sql) && /raise exception 'A view/.test(sql), '');
+  verificar('v110 — a conferência é uma consulta só, no fim',
+    (sql.match(/\n\nselect /g) || []).length === 1,
+    (sql.match(/\n\nselect /g) || []).length + ' consulta(s) solta(s)');
+
+  /* O zip de 28 arquivos leva tempo; tempo sem sinal parece
+     travamento. A contagem é o conteúdo da janela, não um rodapé. */
+  const hab = fsA.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  verificar('v110 — o download em lote mostra a contagem em destaque',
+    /function abrirProgressoZip/.test(hab) && /id="zip-conta"/.test(hab) &&
+    /font-size:26px/.test(hab) && /id="zip-barra"/.test(hab), '');
+  verificar('v110 — e o botão leva o que está marcado, sem reabrir o escolhedor',
+    /if \(marcados\.size\) \{[\s\S]{0,400}abrirProgressoZip\(sel/.test(hab), '');
+  verificar('v110 — o cofre vem em blocos, com marcação do bloco inteiro',
+    /data-hb-bloco=/.test(hab) && /class="hb-bloco"/.test(hab), '');
+  /* A home contava pelo mesmo colapso errado: cinco CORENs viravam
+     um, e uma vencida entre eles sumia da contagem. O defeito era
+     da CLASSE, não da tela. */
+  verificar('v110 — os cartões da home usam o mesmo corte de substituição',
+    /const colapsa = d\.tipo_categoria === 'certidoes' && !d\.coexiste;/.test(sto) &&
+    /colapsa \? d\.empresa \+ '\|' \+ d\.tipo : 'id:' \+ d\.id/.test(sto), '');
+  verificar('v110 — "em dia" inclui tudo que não venceu',
+    /filtro\.situacao === 'validos'[\s\S]{0,120}\['ok', 'critico', 'perene'\]/.test(hab), '');
 })();
 
 concluir();

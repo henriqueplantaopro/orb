@@ -33,8 +33,15 @@ fs.readdirSync(dir).filter(f => /\.js$/.test(f) && isentos.indexOf(f) < 0).forEa
     };
     if (/\.toFixed\s*\(/.test(linha)) reporta('toFixed imprime ponto decimal — use U.brl / U.num');
     if (/\.toLocaleString\s*\(/.test(linha)) reporta('toLocaleString depende do locale — use U.brl / U.num / U.fDataHora');
-    /* Percentual montado à mão: `+ '%'` sem passar por U.pct/U.num. */
-    if (/\+\s*'%'/.test(linha) && !/U\.(pct|num)\(/.test(linha)) {
+    /* Percentual montado à mão: `+ '%'` sem passar por U.pct/U.num.
+
+       `style.width` e `style.height` ficam de fora: ali o `%` é
+       unidade de CSS, não número mostrado a ninguém — formatar uma
+       largura de barra com separador de milhar produziria
+       "width:1.000%" e quebraria o desenho. A regra existe para
+       número que a pessoa LÊ. */
+    if (/\+\s*'%'/.test(linha) && !/U\.(pct|num)\(/.test(linha) &&
+        !/style\.(width|height|left|top|right|bottom|transform)\s*=/.test(linha)) {
       reporta("percentual sem formatação — use U.pct");
     }
     /* Data ISO exibida: split/reverse na mão em vez de U.fData. */
