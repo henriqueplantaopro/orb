@@ -38,7 +38,7 @@ ERP.config = {
 
      O ambiente de teste tem BANCO PRÓPRIO: a `url` acima aponta
      para outro projeto. Mesmo código, dados separados. */
-  ambiente: 'teste',
+  ambiente: 'producao',
 
   /* A versão publicada vive em js/versao.js, carregado logo depois
      deste arquivo. Ela saiu daqui porque mudava a cada entrega
@@ -46,6 +46,6 @@ ERP.config = {
      coisas faziam este arquivo conflitar no git em toda
      publicação. */
 
-  url: 'https://kwaxtnooxupqlqxcjevs.supabase.co',
-  anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXh0bm9veHVwcWxxeGNqZXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyODg2OTUsImV4cCI6MjEwNjg2NDY5NX0.jlOUnxoSfctwNtzTwKWsrwHtgQciwVIMNVqTdfSJNvA'
+  url: 'https://jsdyowuqehryfwqyklax.supabase.co',
+  anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpzZHlvd3VxZWhyeWZ3cXlrbGF4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTA5NDM4ODIsImV4cCI6MjEwNjUxOTg4Mn0.UPFhyMPwmM9DzyiRnjTg3EQGPg9KvcIQcP6wHM5WRSg'
 };
