@@ -17,6 +17,8 @@ ERP.cadastros = (function () {
      um armazém costuma cadastrar projeto e produto na mesma sentada. */
   const GRUPOS = [
     { titulo: 'Estrutura da empresa', itens: [
+      { id: 'empresas', nome: 'Empresas (CNPJ)', req: 'lancar', conta: function () {
+          return (D.empresas || []).filter(function (e) { return e.ativo !== false; }).length; } },
       { id: 'estrutura', nome: 'Matriz e filiais', req: 'lancar', conta: function () {
           return D.centros.filter(function (c) { return c.tipo !== 'projeto'; }).length; } },
       { id: 'projetos', nome: 'Projetos', req: 'lancar', conta: function () {
@@ -67,6 +69,7 @@ ERP.cadastros = (function () {
   function render() {
     menu();
     U.el('cad-saida').innerHTML =
+      aba === 'empresas'     ? empresas() :
       aba === 'estrutura'    ? estrutura() :
       aba === 'projetos'     ? projetos() :
       aba === 'clientes'     ? clientes() :
@@ -79,6 +82,169 @@ ERP.cadastros = (function () {
   }
 
   const pct = v => (v || v === 0) ? U.num(v) + '%' : '—';
+
+  /* ── empresas do grupo ──────────────────────────────────
+     Os CNPJs eram cadastro só de leitura: entravam por SQL e
+     mudavam por SQL. Na prática isso significa que inativar uma
+     empresa que parou de operar, ou acrescentar a filial que abre
+     no mês que vem, depende de mim — e cadastro que depende de
+     programador é cadastro que fica errado.
+
+     INATIVAR é o caminho normal: a empresa sai do painel de
+     Documentação, dos seletores de lançamento e dos filtros, e
+     tudo o que já foi lançado por ela continua de pé. Documento no
+     cofre continua guardado e localizável.
+
+     EXCLUIR existe para o CNPJ digitado errado e nunca usado, e o
+     banco é quem decide: a função confere TODAS as tabelas que
+     apontam para empresas — lendo as chaves estrangeiras do
+     catálogo, não uma lista escrita à mão que envelheceria — e
+     recusa quando acha qualquer vínculo. */
+  function empresas() {
+    const lista = (D.empresas || []).filter(function (e) { return verInativos || e.ativo !== false; });
+    const doc = id => (ERP.habilitacao && ERP.habilitacao._dados
+      ? (ERP.habilitacao._dados().documentos || []).filter(function (d) { return d.empresa === id; }).length
+      : null);
+    return '<div class="ap-acoes">' +
+        '<button class="btn-linha" id="cad-nova-empresa">+ Nova empresa</button>' +
+        '<button class="btn-sm" id="cad-ver-inativos">' +
+          (verInativos ? 'Esconder inativas' : 'Mostrar inativas') + '</button>' +
+      '</div>' +
+      '<table><thead><tr><th>Apelido</th><th>Razão social</th><th>CNPJ</th>' +
+      '<th>Município</th><th>Papel</th><th class="num">Centros</th><th>Situação</th>' +
+      '<th></th></tr></thead><tbody>' +
+      lista.map(function (e) {
+        const centros = D.centros.filter(function (c) { return c.empresa === e.id; }).length;
+        const nd = doc(e.id);
+        return '<tr' + (e.ativo === false ? ' class="cancelada"' : '') + '>' +
+          '<td class="desc">' + U.esc(e.apelido || '—') + '</td>' +
+          '<td class="sub">' + U.esc(e.nome || '—') + '</td>' +
+          '<td class="mono">' + U.esc(U.cnpj ? U.cnpj(e.cnpj) : (e.cnpj || '—')) + '</td>' +
+          '<td>' + U.esc((e.municipio || '—') + (e.uf ? '/' + e.uf : '')) + '</td>' +
+          '<td>' + (e.matriz ? '<span class="badge b-aprovado">matriz</span>'
+                             : '<span class="badge b-cancelado">filial</span>') + '</td>' +
+          '<td class="num">' + centros + (nd === null ? '' : '<div class="sub">' + nd + ' doc.</div>') + '</td>' +
+          '<td>' + (e.ativo === false ? '<span class="badge b-cancelado">inativa</span>'
+                                      : '<span class="badge b-aprovado">ativa</span>') + '</td>' +
+          '<td class="acoes"><button class="btn-sm" data-emp="' + U.esc(e.id) + '">Editar</button>' +
+          '</td></tr>';
+      }).join('') + '</tbody></table>' +
+      '<div class="ajuda">Empresa <b>inativa</b> sai do painel de Documentação, dos seletores de ' +
+      'lançamento e dos filtros — e tudo o que já foi lançado por ela continua de pé, inclusive os ' +
+      'documentos no cofre. É o caminho para uma empresa que parou de operar.<br>' +
+      '<b>Excluir</b> só funciona em CNPJ que nunca foi usado: o banco confere todas as tabelas ' +
+      'que apontam para a empresa e recusa se achar qualquer vínculo, dizendo onde. ' +
+      'O resto do sistema nunca apaga — cancela e estorna —, e esta é a exceção estreita para o ' +
+      'cadastro que nasceu errado.</div>';
+  }
+
+  function editarEmpresa(id) {
+    const e = id ? (D.empresas || []).find(function (x) { return x.id === id; }) : null;
+    const v = (campo, pad) => U.esc(e ? (e[campo] == null ? '' : e[campo]) : (pad || ''));
+    ERP.app.modal({
+      titulo: e ? 'Empresa · ' + (e.apelido || e.nome) : 'Nova empresa',
+      corpo:
+        '<div class="row2">' +
+          '<div><label for="em-apelido">Apelido <span class="sub">(como aparece nas telas)</span>' +
+            '</label><input id="em-apelido" value="' + v('apelido') + '" maxlength="30"></div>' +
+          '<div><label for="em-cnpj">CNPJ</label><input id="em-cnpj" value="' + v('cnpj') +
+            '" inputmode="numeric" placeholder="00.000.000/0000-00"></div>' +
+        '</div>' +
+        '<label for="em-nome">Razão social</label>' +
+        '<input id="em-nome" value="' + v('nome') + '" maxlength="120">' +
+        '<div class="row2">' +
+          '<div><label for="em-mun">Município</label><input id="em-mun" value="' + v('municipio') +
+            '" maxlength="60"></div>' +
+          '<div><label for="em-uf">UF</label><input id="em-uf" value="' + v('uf') +
+            '" maxlength="2" style="text-transform:uppercase"></div>' +
+          '<div><label for="em-ibge">Código IBGE <span class="sub">(opcional)</span></label>' +
+            '<input id="em-ibge" value="' + v('codigo_ibge') + '" inputmode="numeric"></div>' +
+          '<div><label for="em-im">Inscrição municipal <span class="sub">(opcional)</span></label>' +
+            '<input id="em-im" value="' + v('inscricao_municipal') + '"></div>' +
+        '</div>' +
+        '<label class="hb-marca" style="display:flex;margin-top:10px">' +
+          '<input type="checkbox" id="em-matriz"' + (e && e.matriz ? ' checked' : '') + '> ' +
+          '<span>É a matriz do grupo <span class="sub">— o documento marcado como "Único" em ' +
+          'Documentação vale para a matriz e suas filiais de mesma raiz de CNPJ</span></span></label>' +
+        (e ? '<label class="hb-marca" style="display:flex;margin-top:4px">' +
+             '<input type="checkbox" id="em-ativo"' + (e.ativo !== false ? ' checked' : '') + '> ' +
+             '<span>Ativa</span></label>' +
+             '<div class="ajuda">Desmarcar tira a empresa do painel de Documentação e dos ' +
+             'seletores. Nada é apagado.</div>' : ''),
+      acoes: [{ txt: e ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () { salvarEmpresa(id); } }]
+        .concat(e ? [{ txt: 'Excluir', cls: 'btn-cancelar', fn: function () { excluirEmpresa(id); } }] : [])
+    });
+  }
+
+  function salvarEmpresa(id) {
+    const apelido = (U.val('em-apelido') || '').trim();
+    const nome = (U.val('em-nome') || '').trim();
+    const cnpjCru = (U.val('em-cnpj') || '').replace(/\D/g, '');
+    if (!apelido) return ERP.app.erroCampo('em-apelido', 'Dê um apelido à empresa.');
+    if (!nome) return ERP.app.erroCampo('em-nome', 'Informe a razão social.');
+    /* O CNPJ é conferido pelo dígito, não pelo tamanho: CNPJ errado
+       aqui vira arquivo de remessa recusado pelo banco e certidão
+       emitida para outra empresa. */
+    if (!U.cnpjValido(cnpjCru)) {
+      return ERP.app.erroCampo('em-cnpj', 'CNPJ inválido — confira os dígitos.');
+    }
+    const repetido = (D.empresas || []).some(function (x) {
+      return x.id !== id && String(x.cnpj || '').replace(/\D/g, '') === cnpjCru;
+    });
+    if (repetido) return ERP.app.erroCampo('em-cnpj', 'Já existe empresa com este CNPJ.');
+
+    const campos = {
+      apelido: apelido, nome: nome, cnpj: cnpjCru,
+      municipio: U.val('em-mun') || null,
+      uf: (U.val('em-uf') || '').toUpperCase().slice(0, 2) || null,
+      codigo_ibge: (U.val('em-ibge') || '').replace(/\D/g, '') || null,
+      inscricao_municipal: U.val('em-im') || null,
+      matriz: !!(U.el('em-matriz') && U.el('em-matriz').checked)
+    };
+    if (id) {
+      const e = (D.empresas || []).find(function (x) { return x.id === id; });
+      Object.assign(e, campos);
+      e.ativo = !U.el('em-ativo') || U.el('em-ativo').checked;
+      S.logarCadastro('empresa', id, 'alterou empresa', apelido);
+    } else {
+      campos.id = S.proximoId('emp');
+      campos.ativo = true;
+      (D.empresas = D.empresas || []).push(campos);
+      S.logarCadastro('empresa', campos.id, 'cadastrou empresa', apelido);
+    }
+    ERP.app.fecharModal();
+    ERP.app.aviso('Empresa salva.', 'ok');
+    render();
+  }
+
+  async function excluirEmpresa(id) {
+    const e = (D.empresas || []).find(function (x) { return x.id === id; });
+    if (!e) return;
+    const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
+    if (!c) {
+      return ERP.app.aviso('Excluir empresa exige conexão com o banco. ' +
+        'Para tirá-la das telas, desmarque "Ativa".', 'erro');
+    }
+    const r = await c.rpc('excluir_empresa', { p_id: id });
+    if (r.error) {
+      return ERP.app.aviso('Não excluiu: ' + (/does not exist|schema cache/i.test(r.error.message)
+        ? 'a função de exclusão ainda não existe no banco. Rode supabase/52-ATUALIZAR-v110.sql.'
+        : r.error.message), 'erro');
+    }
+    const res = r.data || {};
+    if (!res.ok) {
+      if (res.motivo === 'tem_movimento') {
+        return ERP.app.aviso('Esta empresa tem movimento e não pode ser excluída: ' +
+          res.onde + '. Desmarque "Ativa" para tirá-la das telas sem perder nada.', 'erro');
+      }
+      return ERP.app.aviso('Não excluiu: ' + (res.motivo || 'motivo não informado'), 'erro');
+    }
+    D.empresas = (D.empresas || []).filter(function (x) { return x.id !== id; });
+    S.logarCadastro('empresa', id, 'excluiu empresa', e.apelido || e.nome || id);
+    ERP.app.fecharModal();
+    ERP.app.aviso('Empresa excluída — ela não tinha nenhum vínculo.', 'ok');
+    render();
+  }
 
   /* ── atestados de capacidade técnica ────────────────────
      Atestado é o que sustenta a habilitação técnica em licitação, e o
@@ -1299,6 +1465,10 @@ ERP.cadastros = (function () {
       });
     });
     if (U.el('cad-novo-armazem')) U.el('cad-novo-armazem').addEventListener('click', function () { editarArmazem(null); });
+    if (U.el('cad-nova-empresa')) U.el('cad-nova-empresa').addEventListener('click', function () { editarEmpresa(null); });
+    box.querySelectorAll('[data-emp]').forEach(function (b) {
+      b.addEventListener('click', function () { editarEmpresa(this.dataset.emp); });
+    });
     box.querySelectorAll('[data-uni]').forEach(function (b) {
       b.addEventListener('click', function () { editarUnidade(this.dataset.uni); });
     });

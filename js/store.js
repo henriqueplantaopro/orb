@@ -28,6 +28,12 @@ ERP.store = (function () {
        banco não conhecia. */
     get credores() { return D.credores; },
     get armazens() { return D.armazens; },
+    /* `empresas` entrou na v110, quando o CNPJ deixou de ser
+       cadastro só de leitura. Pelo mesmo motivo dos outros: sem o
+       atalho aqui, a empresa cadastrada na tela existiria só na
+       memória, e o primeiro centro de custo apontando para ela
+       derrubaria a gravação com "centros_empresa_fkey". */
+    get empresas() { return D.empresas; },
     get centros() { return D.centros; },
     get clientes() { return D.clientes; },
     get bancos() { return D.bancos; },
@@ -12998,7 +13004,15 @@ ERP.store = (function () {
       const valem = {};
       (D.habilitacaoResumo || []).forEach(function (d) {
         if (d.tipo_sem_validade) return;
-        const k = d.empresa + '|' + d.tipo;
+        /* O MESMO corte da tela do módulo, e pelo mesmo motivo:
+           só CERTIDÃO se substitui. O registro no COREN exige
+           cinco peças do mesmo tipo e as cinco valem — colapsar
+           por empresa+tipo aqui esconderia quatro, e com elas
+           esconderia uma que tivesse vencido. Guardar cada uma
+           por si onde não há renovação é o que faz a contagem
+           dizer a verdade. */
+        const colapsa = d.tipo_categoria === 'certidoes' && !d.coexiste;
+        const k = colapsa ? d.empresa + '|' + d.tipo : 'id:' + d.id;
         if (!valem[k] || String(d.validade_efetiva || '') > String(valem[k].validade_efetiva || '')) {
           valem[k] = d;
         }

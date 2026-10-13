@@ -844,8 +844,32 @@ body.ambiente-teste .barra-modulo {
 .hb-cartao { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
   background: var(--surface); min-width: 0; }
 .hb-cartao-nome { font-weight: 650; font-size: 13px; margin-bottom: 8px; }
-.hb-chips { display: flex; flex-wrap: wrap; gap: 5px; }
-.hb-chip { padding: 2px 7px; font-size: 11px; line-height: 1.5; white-space: normal; }
+/* OS CRACHÁS EM GRADE, não em fluxo.
+
+   Em fluxo, cada retângulo fica do tamanho do seu texto: "CNPJ" ao
+   lado de "Documentos dos sócios (RG, CPF, residência)" produz uma
+   colcha de pedaços desiguais, e ler a cor exige percorrer cada um.
+   Em colunas de largura igual as cores se alinham verticalmente, e
+   o bloco se lê de uma vez — que é a pergunta real: "este grupo
+   está todo verde?".
+ 
+   `minmax(0, 1fr)` e não `minmax(170px, 1fr)` na segunda metade:
+   com piso maior que a coluna disponível a grade estoura o cartão e
+   a tela corre para o lado, que é o que este módulo não faz. */
+.hb-chips { display: grid; gap: 5px; margin-bottom: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 172px), 1fr)); }
+.hb-chip { padding: 3px 8px; font-size: 11px; line-height: 1.45; white-space: normal;
+  display: flex; align-items: center; justify-content: center; text-align: center;
+  min-height: 30px; min-width: 0; overflow-wrap: anywhere; }
+/* O título da categoria dentro do cartão da empresa: é o que
+   transforma trinta crachás em quatro blocos conferíveis. */
+.hb-grupo-rot { font-size: 10px; font-weight: 700; color: var(--ink3);
+  text-transform: uppercase; letter-spacing: .6px;
+  margin: 2px 0 4px; padding-top: 6px; border-top: 1px solid var(--line); }
+.hb-cartao .hb-grupo-rot:first-of-type { border-top: 0; padding-top: 0; }
+/* A linha de título de bloco no cofre: marca a categoria inteira. */
+.hb-bloco td { background: var(--brand-soft); font-size: 12px; padding: 5px 8px; }
+.hb-bloco .hb-marca b { font-size: 12px; }
 .hb-marca { font-weight: 400; font-size: 12px; display: inline-flex; gap: 5px;
   align-items: center; white-space: nowrap; }
 .hb-marca input { width: auto; }

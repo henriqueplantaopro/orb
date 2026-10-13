@@ -72,6 +72,11 @@ ERP.persistencia = (function () {
        `centros` antes de `armazens` porque o armazém aponta
        para o centro de custo. Há um teste que confere a ordem
        contra as chaves estrangeiras do schema. */
+    /* `empresas` ANTES de tudo: centro, banco, título, pagamento e
+       nota apontam para ela. Ela ficou fora deste mapa até a v110
+       porque o CNPJ entrava por SQL — e cadastro que só o
+       programador altera é cadastro que fica errado. */
+    empresas: { tabela: 'empresas', colunas: ['id', 'apelido', 'nome', 'cnpj', 'municipio', 'uf', 'codigo_ibge', 'inscricao_municipal', 'matriz', 'ativo'] },
     centros: { tabela: 'centros', colunas: ['id', 'curto', 'codigo', 'nome', 'tipo', 'unidade', 'cidade', 'uf', 'cnpj', 'empresa', 'cliente', 'grupo_faturamento', 'especialidade_pate', 'impostos', 'ativo', 'tipo_servico', 'prev_faturamento', 'prev_repasse', 'produtividade', 'retencao_pct', 'prazo_dias'] },
     clientes: { tabela: 'clientes', colunas: ['id', 'nome', 'documento', 'centro_padrao', 'prazo_dias', 'endereco', 'numero', 'bairro', 'cidade', 'uf', 'cep', 'email', 'ativo'] },
     credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta', 'dados_aprovados', 'ativo'] },

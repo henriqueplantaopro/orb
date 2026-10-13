@@ -49,9 +49,29 @@ ERP.auth = (function () {
       .select('id, nome, perfil, email, ativo')
       .eq('auth_id', session.user.id)
       .maybeSingle();
-    if (error || !data) {
-      return { erro: 'Este login não está vinculado a nenhum usuário do sistema. ' +
-        'Fale com a Administração.' };
+    /* ERRO DE CONSULTA E AUSÊNCIA DE VÍNCULO NÃO SÃO A MESMA COISA,
+       e juntá-los numa frase só custou uma rodada de diagnóstico.
+
+       Sem linha: a conta de login existe e ninguém a ligou a um
+       usuário do sistema — é cadastro, e a Administração resolve.
+
+       Com erro: a consulta nem chegou a responder (política de
+       acesso, coluna que mudou, banco fora). Dizer "fale com a
+       Administração" nesse caso manda a pessoa para o lugar
+       errado, porque não há nada que a Administração possa fazer.
+
+       O e-mail vai na mensagem porque é a pergunta seguinte em
+       qualquer um dos dois casos: quase sempre o endereço digitado
+       não é o que está gravado em `usuarios`. */
+    if (error) {
+      return { erro: 'O login funcionou, mas não foi possível conferir o seu usuário no ' +
+        'sistema: ' + (error.message || 'erro sem mensagem') + '. Isso não é senha errada — ' +
+        'mande esta mensagem para quem cuida do sistema.' };
+    }
+    if (!data) {
+      return { erro: 'Este login (' + (session.user.email || 'sem e-mail') + ') não está ' +
+        'vinculado a nenhum usuário do sistema. Fale com a Administração — é o e-mail ' +
+        'gravado no cadastro do usuário que tem de ser igual a este.' };
     }
     if (!data.ativo) return { erro: 'Este usuário está inativo.' };
     sessao = { usuario: data, email: session.user.email };

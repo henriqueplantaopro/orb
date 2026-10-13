@@ -61,6 +61,10 @@ ERP.habilitacao = (function () {
   let carregando = false;
   /* O que está marcado no cofre para alteração em massa. */
   const marcados = new Set();
+  /* As categorias escolhidas no escolhedor do zip. Elas saem do DOM
+     porque a janela de progresso SUBSTITUI a do escolhedor — lidas
+     de lá na hora de montar as pastas, viriam vazias. */
+  let catsZip = [];
   /* Empresa e tipo sugeridos pelo botão "Subir nova" da fila do
      painel: o lote que vier nasce com eles onde o leitor não
      souber. */
@@ -120,6 +124,20 @@ ERP.habilitacao = (function () {
      as colunas não existem, e o que vem indefinido tem de
      continuar valendo como antes — exigido e comum. */
   const ehExigido = t => !t || t.exigido !== false;
+  /* De quem este tipo NÃO é exigido. A lista vive no próprio tipo
+     porque a pergunta é do tipo ("quem precisa disto?"), e não da
+     empresa — e assim marcar a isenção é um clique numa grade, em
+     vez de abrir o cadastro de cada empresa. */
+  function isentosDe(t) {
+    const v = t && t.isento;
+    if (Array.isArray(v)) return v.filter(Boolean);
+    if (typeof v === 'string' && v) {
+      try { const j = JSON.parse(v); return Array.isArray(j) ? j.filter(Boolean) : []; }
+      catch (e) { return []; }
+    }
+    return [];
+  }
+  const isentoDe = (t, empresaId) => isentosDe(t).indexOf(empresaId) >= 0;
   const ehComum   = t => !t || t.comum   !== false;
 
   function cobreTambem(d) {
@@ -187,17 +205,33 @@ ERP.habilitacao = (function () {
      Os degraus são os do alerta: 30 / 15 / 7 / 1. Um documento a
      quarenta dias não é assunto; a sete, é. `ordem` serve para a
      fila — o mais urgente em cima. */
+  /* ── as três cores, e só três ────────────────────────────
+     VERMELHO é o que inabilita HOJE: venceu, ou não está no cofre.
+     AMARELO é o que exige ação nesta semana: vence em até sete
+     dias. VERDE é todo o resto que está válido.
+
+     A régua anterior pintava de vermelho o que vencia em sete dias
+     e de amarelo até trinta. O efeito prático: metade do painel
+     vivia colorida, uma certidão boa por 26 dias chamava atenção
+     como se fosse problema, e cor que acende sempre deixa de ser
+     aviso. Documento válido não é pendência, é documento válido.
+
+     "Sem data" sai do semáforo e vira CINZA: não é prazo curto, é
+     informação que falta — outra conversa, e que não deve disputar
+     o olho com o que venceu. */
+  const DIAS_AMARELO = 7;
+
   function situacao(d) {
     if (d.tipo_sem_validade) return { id: 'perene', txt: 'não vence', cls: 'b-cancelado', ordem: 9 };
     const n = d.dias_para_vencer;
-    if (n === null || n === undefined) return { id: 'sem-data', txt: 'sem validade', cls: 'b-pendente', ordem: 2 };
+    if (n === null || n === undefined) return { id: 'sem-data', txt: 'sem data', cls: 'b-cancelado', ordem: 2 };
     if (n < 0)   return { id: 'vencido', txt: 'vencido há ' + Math.abs(n) + ' dias', cls: 'b-reprovado', ordem: 0 };
-    if (n <= 7)  return { id: 'critico', txt: 'vence em ' + n + ' dias', cls: 'b-reprovado', ordem: 1 };
-    if (n <= 15) return { id: 'alerta',  txt: 'vence em ' + n + ' dias', cls: 'b-pendente', ordem: 3 };
-    if (n <= 30) return { id: 'atencao', txt: 'vence em ' + n + ' dias', cls: 'b-pendente', ordem: 4 };
+    if (n <= DIAS_AMARELO) {
+      return { id: 'critico', txt: 'vence em ' + n + ' dias', cls: 'b-pendente', ordem: 1 };
+    }
     return { id: 'ok', txt: 'vence em ' + n + ' dias', cls: 'b-pago', ordem: 5 };
   }
-  const PRECISA = { vencido: 1, critico: 1, 'sem-data': 1, alerta: 1, atencao: 1 };
+  const PRECISA = { vencido: 1, critico: 1, 'sem-data': 1 };
 
   /* O documento que VALE de cada par empresa+tipo.
 
@@ -217,10 +251,24 @@ ERP.habilitacao = (function () {
 
      Então o colapso vale só para o tipo que VENCE. O tipo sem
      validade devolve cada documento por si. */
+  /* Só CERTIDÃO se substitui, e nem toda ela. Antes a regra era
+     "tipo que vence se substitui", e isso errava a classe inteira:
+     o registro no COREN exige cinco peças diferentes do mesmo
+     tipo, todas com validade, e as cinco valem ao mesmo tempo —
+     quatro apareciam como substituídas e a empresa parecia ter uma.
+
+     Agora o colapso acontece em UMA categoria, `certidoes`, que é
+     onde renovar de fato torna a anterior inútil. E mesmo dentro
+     dela, o documento marcado para COEXISTIR fica de fora: é a
+     saída para o caso que a regra não prevê, decidida por quem
+     conhece o documento e não por este código. */
+  const colapsa = d => (d.tipo_categoria || tipoDe(d.tipo).categoria) === 'certidoes' &&
+                        !d.tipo_sem_validade && !d.coexiste;
+
   function vigentes(lista) {
     const por = {};
     (lista || dados.documentos || []).forEach(function (d) {
-      const k = d.tipo_sem_validade
+      const k = !colapsa(d)
         ? 'id:' + d.id                       // cada um vale por si
         : d.empresa + '|' + d.tipo;
       const atual = por[k];
@@ -311,7 +359,7 @@ ERP.habilitacao = (function () {
     });
     const fora = [];
     empresasAtivas().forEach(function (e) {
-      exigidos.forEach(function (t) {
+      exigidos.filter(function (t) { return !isentoDe(t, e.id); }).forEach(function (t) {
         const tem = v.some(function (d) {
           return empresasCobertas(d).indexOf(e.id) >= 0 &&
                  tiposCobertos(d).indexOf(t.id) >= 0;
@@ -406,58 +454,93 @@ ERP.habilitacao = (function () {
        sentido. */
     const tipos = (dados.tipos || []).filter(function (t) { return t.id !== 'outro'; });
 
-    /* O EXIGIDO aparece sempre — presente ou faltando, porque a
-       ausência dele é a notícia. O EXTRA aparece só quando está
-       guardado: é bom saber que a certidão do TCU está ali, mas
-       cobrá-la todo dia transformaria o painel num campo
-       vermelho permanente. Quem decide qual é qual é a aba Tipos
-       de documento, não este código. */
-    const exigidos = tipos.filter(ehExigido);
-    const extrasTipo = tipos.filter(function (t) { return !ehExigido(t); });
+    let faltam = 0, vencidos = 0, vencendo = 0, extras = 0, semData = 0;
 
-    let faltam = 0, vencidos = 0, vencendo = 0, extras = 0;
+    /* ── o checklist, agora por CATEGORIA ─────────────────
+       Uma lista corrida de trinta crachás não se lê: não há como
+       saber se o bloco de certidões está completo sem conferir os
+       trinta um por um. Com o título da categoria em cima do seu
+       próprio grupo, a leitura passa a ser por bloco — "certidões
+       todas verdes" é uma olhada, não uma conferência.
+
+       Os crachás têm largura igual, numa grade: alinhados em
+       colunas, o olho percorre a coluna de cores em vez de
+       caçar retângulos de tamanhos diferentes. */
     const cartoes = emp.map(function (e) {
-      const alvos = exigidos.concat(extrasTipo.filter(function (t) {
-        return !!mapa[e.id + '|' + t.id];
-      }));
-      const chips = alvos.map(function (t) {
-        const d = mapa[e.id + '|' + t.id];
-        const extra = !ehExigido(t);
-        if (!d) { faltam++; return chip('falta ' + t.nome, 'b-reprovado', t.nome + ' — não está no cofre'); }
-        if (extra) extras++;
-        const porOutro = d.tipo !== t.id
-          ? ' — coberto por ' + (tipoDe(d.tipo).nome || d.tipo) : '';
-        if (extra) return chip(t.nome, 'b-cancelado',
-          'extra — está guardado e não entra na conta de pendências' + porOutro);
-        const st = situacao(d);
-        if (st.id === 'vencido') { vencidos++; return chip(t.nome + ' vencido', 'b-reprovado',
-          'venceu em ' + U.fData(d.validade_efetiva) + porOutro); }
-        if (st.id === 'critico' || st.id === 'alerta' || st.id === 'atencao') {
-          vencendo++;
-          return chip(t.nome + ' vence em ' + d.dias_para_vencer + 'd', 'b-pendente',
-            'vence em ' + U.fData(d.validade_efetiva) + porOutro);
-        }
-        if (st.id === 'sem-data') return chip(t.nome + ' sem validade', 'b-pendente',
-          'o documento está guardado, mas sem data para o alerta' + porOutro);
-        return chip(t.nome, 'b-pago', (d.validade_efetiva
-          ? 'vale até ' + U.fData(d.validade_efetiva) : 'não vence') + porOutro);
+      const blocos = CATEGORIAS.map(function (c) {
+        const doGrupo = tipos.filter(function (t) {
+          if ((t.categoria || 'outros') !== c[0]) return false;
+          /* ISENTO: tipo que esta empresa não precisa ter. A matriz
+             tem inscrição estadual; a filial não vende produto e
+             nunca vai ter. Cobrar dela é criar pendência que não se
+             resolve — e pendência que não se resolve ensina a
+             ignorar as que se resolvem. */
+          if (isentoDe(t, e.id)) return false;
+          /* O exigido aparece sempre, presente ou faltando, porque
+             a ausência dele é a notícia. O extra aparece só quando
+             está guardado. */
+          return ehExigido(t) || !!mapa[e.id + '|' + t.id];
+        });
+        if (!doGrupo.length) return '';
+
+        const chips = doGrupo.map(function (t) {
+          const d = mapa[e.id + '|' + t.id];
+          const extra = !ehExigido(t);
+          if (!d) {
+            faltam++;
+            return chip('falta ' + t.nome, 'b-reprovado', t.nome + ' — não está no cofre');
+          }
+          const porOutro = d.tipo !== t.id
+            ? ' — coberto por ' + (tipoDe(d.tipo).nome || d.tipo) : '';
+          if (extra) {
+            extras++;
+            return chip(t.nome, 'b-cancelado',
+              'extra — está guardado e não entra na conta de pendências' + porOutro);
+          }
+          const st = situacao(d);
+          if (st.id === 'vencido') {
+            vencidos++;
+            return chip(t.nome + ' · vencido', 'b-reprovado',
+              'venceu em ' + U.fData(d.validade_efetiva) + porOutro);
+          }
+          if (st.id === 'critico') {
+            vencendo++;
+            return chip(t.nome + ' · ' + d.dias_para_vencer + 'd', 'b-pendente',
+              'vence em ' + U.fData(d.validade_efetiva) + porOutro);
+          }
+          if (st.id === 'sem-data') {
+            semData++;
+            return chip(t.nome + ' · sem data', 'b-cancelado',
+              'está guardado, mas sem data — o alerta não alcança este' + porOutro);
+          }
+          return chip(t.nome, 'b-pago', (d.validade_efetiva
+            ? 'vale até ' + U.fData(d.validade_efetiva) : 'não vence') + porOutro);
+        }).join('');
+
+        return '<div class="hb-grupo-rot">' + U.esc(c[1]) + '</div>' +
+               '<div class="hb-chips">' + chips + '</div>';
       }).join('');
+
       return '<div class="hb-cartao"><div class="hb-cartao-nome">' +
         U.esc(e.apelido || e.nome) +
         (e.municipio ? ' <span class="sub">(' + U.esc(e.municipio) + ')</span>' : '') +
-        '</div><div class="hb-chips">' + chips + '</div></div>';
+        '</div>' + (blocos || '<div class="sub">Nenhum tipo exigido desta empresa.</div>') + '</div>';
     }).join('');
 
-    return indicadores(vencidos, vencendo, faltam, extras) +
+    return indicadores(vencidos, vencendo, faltam, extras, semData) +
       (dados.tarefas.length ? tarefas() : '') +
       '<h3 class="hb-titulo">Checklist por empresa — o que falta ou está vencido</h3>' +
       '<div class="hb-cartoes">' + cartoes + '</div>' +
-      '<div class="ajuda">Verde está em dia, âmbar vence dentro de trinta dias, vermelho venceu ou ' +
-      'não está no cofre; cinza é <b>extra</b> — está guardado e não é cobrado. O que é pendência e ' +
-      'o que é extra se decide na aba <b>Tipos de documento</b>. ' +
-      'O documento marcado como <b>Único</b> conta para as duas empresas da HJM, ' +
+      '<div class="ajuda">' +
+      '<b>Vermelho</b> inabilita hoje: venceu, ou não está no cofre. ' +
+      '<b>Amarelo</b> vence dentro de sete dias. <b>Verde</b> está válido — inclusive o que vence ' +
+      'em vinte e nove dias, que é documento bom e não pendência. ' +
+      '<b>Cinza</b> é extra guardado, ou documento sem data de validade lida.<br>' +
+      'O que é pendência, o que é extra e de quais empresas cada tipo é exigido se decide na aba ' +
+      '<b>Tipos de documento</b>. Empresa inativa sai deste painel e continua no cofre.<br>' +
+      'O documento marcado como <b>Único</b> conta para as duas empresas da mesma raiz de CNPJ, ' +
       'porque é isso que a certidão de matriz diz de si: vale para o estabelecimento matriz e suas ' +
-      'filiais. A Novaped tem outra raiz de CNPJ e nunca é coberta por um documento da HJM. ' +
+      'filiais. Empresa de outra raiz nunca é coberta por ele. ' +
       'O prazo usa a validade impressa no documento ou, quando ele não traz nenhuma, o prazo do ' +
       'tipo contado da emissão.</div>';
   }
@@ -466,15 +549,16 @@ ERP.habilitacao = (function () {
     '<span class="badge ' + cls + ' hb-chip"' +
     (titulo ? ' title="' + U.esc(titulo) + '"' : '') + '>' + U.esc(txt) + '</span>';
 
-  function indicadores(vencidos, vencendo, faltam, extras) {
+  function indicadores(vencidos, vencendo, faltam, extras, semData) {
     const cartao = (rot, val, det, vermelho) =>
       '<div class="ind-card"><div class="rot">' + rot + '</div>' +
       '<div class="valor"' + (vermelho && val !== '0' ? ' style="color:var(--red)"' : '') + '>' +
       val + '</div><div class="det">' + det + '</div></div>';
     return '<div class="ind-grade">' +
       cartao('Vencidos', String(vencidos), 'inabilitam hoje', true) +
-      cartao('Vencem em 30 dias', String(vencendo), 'entram na fila de renovação') +
+      cartao('Vencem em 7 dias', String(vencendo), 'renovar nesta semana') +
       cartao('Faltam no cofre', String(faltam), 'nunca foram guardados', true) +
+      (semData ? cartao('Sem data', String(semData), 'o alerta não alcança') : '') +
       (extras ? cartao('Extras guardados', String(extras), 'não entram na conta') : '') +
       '</div>';
   }
@@ -499,7 +583,15 @@ ERP.habilitacao = (function () {
       return (!filtro.empresa || empresasCobertas(d).indexOf(filtro.empresa) >= 0) &&
              (!filtro.categoria || (tipoDe(d.tipo).categoria || 'outros') === filtro.categoria) &&
              (!filtro.tipo || d.tipo === filtro.tipo) &&
-             (!filtro.situacao || situacao(d).id === filtro.situacao) &&
+             /* "Em dia" é TUDO que não venceu, inclusive o que
+                vence amanhã. Antes `ok` excluía a janela de alerta,
+                então pedir "em dia" escondia certidão válida — e
+                certidão válida é exatamente o que se procura ao
+                montar um envelope. */
+             (!filtro.situacao ||
+              (filtro.situacao === 'validos'
+                 ? ['ok', 'critico', 'perene'].indexOf(situacao(d).id) >= 0
+                 : situacao(d).id === filtro.situacao)) &&
              (!busca || ((d.tipo_nome || '') + ' ' + (d.numero || '') + ' ' +
                 (d.arquivo_nome || '') + ' ' + (d.observacao || ''))
                 .toLowerCase().indexOf(busca) >= 0);
@@ -511,6 +603,27 @@ ERP.habilitacao = (function () {
         String(a.tipo_nome || '').localeCompare(String(b.tipo_nome || ''));
     });
 
+    /* ── o cofre em BLOCOS, por categoria ─────────────────
+       Tudo numa pilha só obriga a caçar linha por linha para
+       montar um envelope. Em blocos, com um checkbox no título,
+       "quero cadastrais, certidões e três atestados" é quatro
+       cliques: marca os dois blocos inteiros e três linhas.
+
+       A ordem dos blocos é a do edital (CATEGORIAS), que é a ordem
+       em que o envelope se monta — não a alfabética. */
+    const porCat = {};
+    lista.forEach(function (d) {
+      const c = tipoDe(d.tipo).categoria || 'outros';
+      (porCat[c] = porCat[c] || []).push(d);
+    });
+    const ordemCat = CATEGORIAS.map(function (c) { return c[0]; })
+      .filter(function (c) { return porCat[c]; })
+      .concat(Object.keys(porCat).filter(function (c) {
+        return CATEGORIAS.every(function (x) { return x[0] !== c; });
+      }));
+
+    const colunas = podeMexer() ? 8 : 7;
+
     return filtros() +
       (lista.length
         ? barraMassa(lista) +
@@ -518,50 +631,77 @@ ERP.habilitacao = (function () {
           (podeMexer()
             ? '<th style="width:24px"><input type="checkbox" id="hb-marca-todos"' +
               (lista.length && lista.every(function (d) { return marcados.has(d.id); })
-                ? ' checked' : '') + '></th>'
+                ? ' checked' : '') + ' title="marca tudo que está no filtro"></th>'
             : '') +
           '<th>Documento</th><th>Pertence a</th><th>Número</th><th>Emissão</th>' +
-          '<th>Validade</th><th>Situação</th><th></th></tr></thead><tbody>' +
-          lista.map(function (d) {
-            const s = situacao(d), vale = valem[d.id];
-            return '<tr' + (vale ? '' : ' class="hb-velho"') + '>' +
-              (podeMexer()
-                ? '<td><input type="checkbox" data-hb-marca="' + U.esc(d.id) + '"' +
-                  (marcados.has(d.id) ? ' checked' : '') + '></td>'
-                : '') +
-              '<td class="desc">' + U.esc(d.tipo_nome || d.tipo) +
-                (d.tipo_dado_pessoal
-                  ? ' <span class="badge b-reprovado">dado de sócio</span>' : '') +
-                (vale ? '' : ' <span class="badge b-cancelado">substituído</span>') +
-                (d.arquivo_nome ? '<div class="sub">' + U.esc(d.arquivo_nome) + '</div>' : '') + '</td>' +
-              '<td>' + U.esc(d.abrangencia === 'matriz' ? 'Único' : nomeEmpresa(d.empresa)) +
-                (d.abrangencia === 'matriz'
-                  ? '<div class="sub">' + U.esc(empresasCobertas(d).map(nomeEmpresa).join(' e ')) +
-                    '</div>'
-                  : '') + '</td>' +
-              '<td class="mono">' + U.esc(d.numero || '—') + '</td>' +
-              '<td class="mono">' + (d.data_emissao ? U.fData(d.data_emissao) : '—') + '</td>' +
-              '<td class="mono">' +
-                (d.tipo_sem_validade ? '—'
-                  : d.validade_efetiva ? U.fData(d.validade_efetiva) : '—') +
-                (!d.data_validade && d.data_emissao && !d.tipo_sem_validade
-                  ? '<div class="sub">' + (d.tipo_prazo_dias || 90) +
-                    ' dias da emissão</div>' : '') + '</td>' +
-              '<td><span class="badge ' + s.cls + '">' + s.txt + '</span></td>' +
-              '<td class="acoes">' +
-                (d.arquivo_path
-                  ? '<button class="btn-sm" data-hb-abrir="' + U.esc(d.id) + '">Abrir</button>' : '') +
+          '<th>Validade</th><th>Situação</th><th></th></tr></thead>' +
+          ordemCat.map(function (c) {
+            const doBloco = porCat[c];
+            const todosMarcados = doBloco.every(function (d) { return marcados.has(d.id); });
+            return '<tbody>' +
+              '<tr class="hb-bloco"><td colspan="' + colunas + '">' +
                 (podeMexer()
-                  ? '<button class="btn-sm" data-hb-editar="' + U.esc(d.id) + '">Editar</button>' : '') +
-              '</td></tr>';
-          }).join('') + '</tbody></table></div>'
+                  ? '<label class="hb-marca"><input type="checkbox" data-hb-bloco="' + U.esc(c) + '"' +
+                    (todosMarcados ? ' checked' : '') + '> <b>' + U.esc(ROT_CAT[c] || c) +
+                    '</b></label>'
+                  : '<b>' + U.esc(ROT_CAT[c] || c) + '</b>') +
+                ' <span class="sub">' + doBloco.length + ' documento(s)' +
+                (todosMarcados ? ' · todos marcados' : '') + '</span>' +
+              '</td></tr>' +
+              doBloco.map(function (d) { return linhaCofre(d, valem); }).join('') +
+              '</tbody>';
+          }).join('') + '</table></div>'
         : '<div class="vazio"><strong>Nenhum documento neste filtro.</strong>' +
           (podeMexer() ? 'Use "+ Subir documento" para guardar o primeiro.' : '') + '</div>') +
-      '<div class="ajuda">O arquivo fica num endereço privado e abre por link temporário de cinco ' +
+      '<div class="ajuda">Marque o título de um bloco para levar a categoria inteira, ou linhas ' +
+      'soltas para escolher a dedo — <b>Baixar em lote</b> leva exatamente o que estiver marcado. ' +
+      'O arquivo fica num endereço privado e abre por link temporário de cinco ' +
       'minutos: documento de habilitação traz CNPJ, endereço e quadro societário, e não pode ficar ' +
       'num lugar que qualquer um alcança sabendo o caminho. A linha cinza é o documento já ' +
       'substituído por uma renovação — fica guardado porque provar regularidade numa data passada ' +
-      'exige o documento daquela data.</div>';
+      'exige o documento daquela data, e o botão <b>Coexistir</b> desliga a substituição quando o ' +
+      'tipo admite mais de um documento válido ao mesmo tempo.</div>';
+  }
+
+  function linhaCofre(d, valem) {
+    const s = situacao(d), vale = valem[d.id];
+    return '<tr' + (vale ? '' : ' class="hb-velho"') + '>' +
+      (podeMexer()
+        ? '<td><input type="checkbox" data-hb-marca="' + U.esc(d.id) + '"' +
+          (marcados.has(d.id) ? ' checked' : '') + '></td>'
+        : '') +
+      '<td class="desc">' + U.esc(d.tipo_nome || d.tipo) +
+        (d.tipo_dado_pessoal
+          ? ' <span class="badge b-reprovado">dado de sócio</span>' : '') +
+        (vale ? '' : ' <span class="badge b-cancelado">substituído</span>') +
+        (d.coexiste ? ' <span class="badge b-aprovado">coexiste</span>' : '') +
+        (d.arquivo_nome ? '<div class="sub">' + U.esc(d.arquivo_nome) + '</div>' : '') + '</td>' +
+      '<td>' + U.esc(d.abrangencia === 'matriz' ? 'Único' : nomeEmpresa(d.empresa)) +
+        (d.abrangencia === 'matriz'
+          ? '<div class="sub">' + U.esc(empresasCobertas(d).map(nomeEmpresa).join(' e ')) +
+            '</div>'
+          : '') + '</td>' +
+      '<td class="mono">' + U.esc(d.numero || '—') + '</td>' +
+      '<td class="mono">' + (d.data_emissao ? U.fData(d.data_emissao) : '—') + '</td>' +
+      '<td class="mono">' +
+        (d.tipo_sem_validade ? '—'
+          : d.validade_efetiva ? U.fData(d.validade_efetiva) : '—') +
+        (!d.data_validade && d.data_emissao && !d.tipo_sem_validade
+          ? '<div class="sub">' + (d.tipo_prazo_dias || 90) +
+            ' dias da emissão</div>' : '') + '</td>' +
+      '<td><span class="badge ' + s.cls + '">' + s.txt + '</span></td>' +
+      '<td class="acoes">' +
+        (d.arquivo_path
+          ? '<button class="btn-sm" data-hb-abrir="' + U.esc(d.id) + '">Abrir</button>' : '') +
+        (podeMexer()
+          ? '<button class="btn-sm" data-hb-editar="' + U.esc(d.id) + '">Editar</button>' : '') +
+        /* O botão aparece onde a substituição PODE acontecer: num
+           tipo que não colapsa ele não teria efeito, e botão sem
+           efeito é botão que ensina a desconfiar dos outros. */
+        (podeMexer() && (colapsa(d) || d.coexiste)
+          ? '<button class="btn-sm" data-hb-coexiste="' + U.esc(d.id) + '">' +
+            (d.coexiste ? 'Voltar a substituir' : 'Coexistir') + '</button>' : '') +
+      '</td></tr>';
   }
 
   /* ── alterar em massa ────────────────────────────────────
@@ -664,9 +804,9 @@ ERP.habilitacao = (function () {
            com o filtro ao lado e devolvem lista vazia. */
         opcoesTipo(filtro.tipo, filtro.categoria || null) + '</select></div>' +
       '<div class="f"><label for="hb-f-sit">Situação</label><select id="hb-f-sit">' +
-        [['', 'todas'], ['vencido', 'vencidos'], ['critico', 'vencem em 7 dias'],
-         ['alerta', 'vencem em 15 dias'], ['atencao', 'vencem em 30 dias'],
-         ['sem-data', 'sem validade lida'], ['ok', 'em dia'], ['perene', 'não vencem']]
+        [['', 'todas'], ['validos', 'em dia (todos os válidos)'],
+         ['vencido', 'vencidos'], ['critico', 'vencem em 7 dias'],
+         ['sem-data', 'sem data de validade'], ['perene', 'não vencem']]
           .map(function (o) { return opc(o[0], filtro.situacao, o[1]); }).join('') + '</select></div>' +
       '<div class="f"><label for="hb-f-busca">Buscar</label>' +
         '<input id="hb-f-busca" value="' + U.esc(filtro.busca) + '" placeholder="número, arquivo"></div>' +
@@ -729,34 +869,47 @@ ERP.habilitacao = (function () {
         return String(a.nome).localeCompare(String(b.nome), 'pt-BR');
       });
       if (!dentro.length) return '';
+      const emp = empresasAtivas();
       return '<h3 class="hb-titulo">' + U.esc(g[1]) +
         ' <span class="sub">· ' + dentro.filter(ehExigido).length + ' de ' + dentro.length +
         ' contam como pendência</span></h3>' +
-        '<div class="tabela-rolagem"><table><thead><tr><th>Nome</th><th>Órgão</th>' +
-        '<th class="num">Prazo</th><th>É pendência</th><th>No zip</th>' +
-        '<th>Como funciona</th><th></th></tr></thead><tbody>' +
+        '<div class="tabela-rolagem"><table><thead><tr><th>Documento</th>' +
+        '<th>É pendência</th><th>No zip</th>' +
+        /* Uma coluna por empresa. É aqui que se diz "a matriz tem
+           inscrição estadual, a filial não" — sem isto o painel
+           cobra da filial um documento que ela nunca vai ter. */
+        emp.map(function (e) {
+          return '<th title="exigido desta empresa">' + U.esc(e.apelido || e.nome) + '</th>';
+        }).join('') +
+        '<th></th></tr></thead><tbody>' +
         dentro.map(function (t) {
-          const notas = [];
-          if (t.sem_validade) notas.push('não vence');
-          if (t.dado_pessoal) notas.push('dado pessoal de sócio — acesso restrito');
-          if (t.exige_captcha) notas.push('a emissão exige captcha, não dá para automatizar');
-          if (t.renovacao_automatica) notas.push('dá para renovar sem intervenção');
           const caixa = function (campo, marcado, titulo) {
             return '<td style="text-align:center"><input type="checkbox"' +
               ' data-hb-tp="' + U.esc(t.id) + '" data-hb-campo="' + campo + '"' +
               (marcado ? ' checked' : '') + (adm ? '' : ' disabled') +
               ' title="' + U.esc(titulo) + '" style="width:auto"></td>';
           };
+          const notas = [];
+          if (t.sem_validade) notas.push('não vence');
+          if (t.dado_pessoal) notas.push('dado de sócio — acesso restrito');
           return '<tr><td class="desc">' + U.esc(t.nome) +
-              (t.sigla ? ' <span class="badge b-cancelado">' + U.esc(t.sigla) + '</span>' : '') + '</td>' +
-            '<td class="sub">' + U.esc(t.orgao_emissor || '—') + '</td>' +
-            '<td class="num">' + (t.prazo_padrao_dias ? t.prazo_padrao_dias + ' dias'
-                : t.sem_validade ? '—' : 'varia') + '</td>' +
+              (t.sigla ? ' <span class="badge b-cancelado">' + U.esc(t.sigla) + '</span>' : '') +
+              (notas.length ? '<div class="sub">' + U.esc(notas.join('; ')) + '</div>' : '') + '</td>' +
             caixa('exigido', ehExigido(t), 'marcado, a falta dele aparece como pendência no painel') +
             caixa('comum', ehComum(t), 'marcado, entra no download em lote sem precisar pedir') +
-            '<td class="sub">' + U.esc(notas.join('; ') || '—') +
-              (t.url_emissao ? ' · <a href="' + U.esc(t.url_emissao) +
-                '" target="_blank" rel="noopener">onde emitir</a>' : '') + '</td>' +
+            emp.map(function (e) {
+              /* A caixa é POSITIVA — "exigido desta empresa" —, e o
+                 que o banco guarda é a lista de isentos. Mostrar a
+                 isenção invertida obrigaria a pensar ao contrário
+                 justamente na tela em que se decide. */
+              return '<td style="text-align:center"><input type="checkbox"' +
+                ' data-hb-isento="' + U.esc(t.id) + '" data-hb-emp="' + U.esc(e.id) + '"' +
+                (isentoDe(t, e.id) ? '' : ' checked') +
+                (adm && ehExigido(t) ? '' : ' disabled') +
+                ' title="' + U.esc(ehExigido(t)
+                  ? 'desmarque se ' + (e.apelido || e.nome) + ' não precisa deste documento'
+                  : 'este tipo não é pendência de ninguém') + '" style="width:auto"></td>';
+            }).join('') +
             '<td>' + (adm ? '<button class="btn-sm" data-hb-tipo-edit="' + U.esc(t.id) +
               '">Editar</button>' : '') + '</td></tr>';
         }).join('') + '</tbody></table></div>';
@@ -775,9 +928,10 @@ ERP.habilitacao = (function () {
       'nascem desmarcados — são extras de edital, não falta.<br>' +
       '<b>No zip</b> decide o que o download em lote leva por padrão. O tipo desmarcado continua ' +
       'no cofre e entra quando a opção "incluir os pouco comuns" for marcada.<br>' +
-      'As palavras-chave são o que faz o sistema adivinhar o documento quando o arquivo é subido. ' +
-      'Prazo "varia" é o do tipo que não dura o mesmo em todo lugar — a CND estadual de São Paulo ' +
-      'não dura o mesmo que a do Rio Grande do Sul —, e aí vale a data impressa no documento.' +
+      'As colunas com o nome de cada <b>empresa</b> dizem de quem o documento é exigido. ' +
+      'Desmarcar a filial na Inscrição Estadual tira a pendência do painel dela e mantém a da ' +
+      'matriz — é o caso de quem não vende produto e nunca vai ter inscrição. Órgão emissor, ' +
+      'prazo e palavras-chave continuam no cadastro de cada tipo, no botão Editar.' +
       (adm ? '' : '<br>Alterar o catálogo exige perfil com nível A em Documentação.') +
       '</div>';
   }
@@ -940,6 +1094,27 @@ ERP.habilitacao = (function () {
     carregar();
   }
 
+  /* A exigência por empresa. A caixa é positiva na tela e a lista
+     gravada é de ISENTOS — então marcar remove da lista e
+     desmarcar acrescenta. */
+  async function marcarIsencao(caixa) {
+    const id = caixa.dataset.hbIsento, empresaId = caixa.dataset.hbEmp;
+    const exigido = caixa.checked;
+    const t = tipoDe(id);
+    const antes = isentosDe(t);
+    const depois = exigido
+      ? antes.filter(function (x) { return x !== empresaId; })
+      : antes.concat(antes.indexOf(empresaId) >= 0 ? [] : [empresaId]);
+    const r = await cli().from('hab_tipo_documento').update({ isento: depois }).eq('id', id);
+    if (r.error) {
+      caixa.checked = !exigido;
+      return ERP.app.aviso('Não salvou: ' + (/isento/.test(r.error.message)
+        ? 'a coluna de isenção ainda não existe no banco. Rode supabase/52-ATUALIZAR-v110.sql.'
+        : r.error.message), 'erro');
+    }
+    t.isento = depois;
+  }
+
   /* A caixa do catálogo salva sozinha. Se o banco recusar, ela
      volta ao que era: caixa que parece salva e não salvou é pior
      que caixa que não deixa marcar. */
@@ -974,13 +1149,45 @@ ERP.habilitacao = (function () {
       render();
     });
     liga('hb-f-tipo', 'change', function () { filtro.tipo = this.value; render(); });
-    liga('hb-baixar-lote', 'click', abrirBaixaEmLote);
+    liga('hb-baixar-lote', 'click', function () {
+      /* Com algo marcado, baixa EXATAMENTE aquilo. Abrir o
+         escolhedor de categorias por cima de uma seleção feita à
+         mão desfaria a escolha que a pessoa acabou de fazer. */
+      if (marcados.size) {
+        const sel = (dados.documentos || []).filter(function (d) {
+          return marcados.has(d.id) && d.arquivo_path;
+        });
+        if (!sel.length) return ERP.app.aviso('Os marcados não têm arquivo guardado.', 'erro');
+        catsZip = [];
+        return abrirProgressoZip(sel, 'selecionados');
+      }
+      abrirBaixaEmLote();
+    });
+    document.querySelectorAll('[data-hb-bloco]').forEach(function (c) {
+      c.addEventListener('change', function () {
+        /* O bloco marca só o que está NA TELA daquela categoria —
+           o filtro de cima continua valendo. */
+        const cat = this.dataset.hbBloco, ligar = this.checked;
+        (dados.documentos || []).forEach(function (d) {
+          if ((tipoDe(d.tipo).categoria || 'outros') !== cat) return;
+          if (!document.querySelector('[data-hb-marca="' + d.id + '"]')) return;
+          if (ligar) marcados.add(d.id); else marcados.delete(d.id);
+        });
+        render();
+      });
+    });
+    document.querySelectorAll('[data-hb-coexiste]').forEach(function (b) {
+      b.addEventListener('click', function () { alternarCoexiste(this.dataset.hbCoexiste); });
+    });
     liga('hb-tipo-novo', 'click', function () { abrirTipo(null); });
     document.querySelectorAll('[data-hb-tipo-edit]').forEach(function (b) {
       b.addEventListener('click', function () { abrirTipo(this.dataset.hbTipoEdit); });
     });
     document.querySelectorAll('[data-hb-tp]').forEach(function (c) {
       c.addEventListener('change', function () { marcarBandeira(this); });
+    });
+    document.querySelectorAll('[data-hb-isento]').forEach(function (c) {
+      c.addEventListener('change', function () { marcarIsencao(this); });
     });
     liga('hb-m-aplicar', 'click', aplicarEmMassa);
     liga('hb-m-arquivar', 'click', arquivarEmMassa);
@@ -1619,7 +1826,14 @@ ERP.habilitacao = (function () {
         '<b>Tipos de documento</b> fica fora do zip até ser pedido aqui — é o que evita mandar ' +
         'CREA e procuração num envelope que não pediu nenhum dos dois.</div>' +
         '<div class="ajuda" id="bl-conta"></div>',
-      acoes: [{ txt: 'Baixar zip', cls: 'btn-aprovar', fn: baixarLote }],
+      acoes: [{ txt: 'Baixar zip', cls: 'btn-aprovar', fn: function () {
+        const l = selecionadosParaZip();
+        if (!l.length) return ERP.app.aviso('Nenhum arquivo com essas marcações.', 'erro');
+        catsZip = Array.from(document.querySelectorAll('[data-bl-cat]'))
+          .filter(function (x) { return x.checked; })
+          .map(function (x) { return x.dataset.blCat; });
+        abrirProgressoZip(l, nomeEmpresa(U.val('bl-emp')));
+      } }],
       aposAbrir: function () {
         const recontar = function () {
           const cx = U.el('bl-conta');
@@ -1672,21 +1886,53 @@ ERP.habilitacao = (function () {
     });
   }
 
-  async function baixarLote() {
-    const lista = selecionadosParaZip();
+  /* ── a janela de progresso ───────────────────────────────
+     Vinte e oito arquivos são vinte e oito idas ao servidor, cada
+     uma com link assinado: leva tempo, e tempo sem sinal parece
+     travamento. Antes a contagem ia numa linha de ajuda pequena,
+     embaixo de tudo; aqui ela é o conteúdo da janela, em corpo
+     grande, com uma barra andando. Saber que está em 7 de 28 é o
+     que distingue "demora" de "quebrou". */
+  function abrirProgressoZip(lista, rotulo) {
+    if (!window.JSZip) return ERP.app.aviso('A biblioteca de zip não carregou nesta página.', 'erro');
+    ERP.app.modal({
+      titulo: 'Baixando ' + lista.length + ' documento(s)',
+      corpo:
+        '<div id="zip-painel" style="text-align:center;padding:6px 0 2px">' +
+          '<div id="zip-conta" style="font-size:26px;font-weight:700;line-height:1.2">' +
+            '0 de ' + lista.length + '</div>' +
+          '<div id="zip-qual" class="sub" style="margin:4px 0 10px;min-height:16px">preparando…</div>' +
+          '<div style="height:10px;border:1px solid var(--line);border-radius:6px;overflow:hidden">' +
+            '<div id="zip-barra" style="height:100%;width:0;background:var(--brand);' +
+              'transition:width .15s"></div></div>' +
+        '</div>' +
+        '<div class="ajuda">Cada arquivo abre por um link temporário próprio, então o zip ' +
+        'demora na proporção da quantidade. Pode deixar esta janela aberta.</div>',
+      acoes: [],
+      aposAbrir: function () { baixarLote(lista, rotulo); }
+    });
+  }
+
+  function passoZip(feitos, total, nome) {
+    const c = U.el('zip-conta'), q = U.el('zip-qual'), b = U.el('zip-barra');
+    if (c) c.textContent = feitos + ' de ' + total;
+    if (q) q.textContent = nome || '';
+    if (b) b.style.width = Math.round((feitos / Math.max(total, 1)) * 100) + '%';
+  }
+
+  async function baixarLote(listaDada, rotulo) {
+    const lista = listaDada || selecionadosParaZip();
     if (!lista.length) return ERP.app.aviso('Nenhum arquivo com essas marcações.', 'erro');
     if (!window.JSZip) return ERP.app.aviso('A biblioteca de zip não carregou nesta página.', 'erro');
-    const empresa = U.val('bl-emp');
-    const nomeEmp = nomeEmpresa(empresa);
-    const marcadas = Array.from(document.querySelectorAll('[data-bl-cat]'))
-      .filter(function (x) { return x.checked; })
-      .map(function (x) { return x.dataset.blCat; });
+    const nomeEmp = rotulo || 'documentacao';
+    const marcadas = catsZip;
     const c = cli();
     const zip = new window.JSZip();
     const cx = U.el('bl-conta');
     let feitos = 0, falhas = [];
 
     for (const d of lista) {
+      passoZip(feitos, lista.length, d.tipo_nome || d.tipo);
       if (cx) cx.textContent = 'baixando ' + (feitos + 1) + ' de ' + lista.length + '…';
       try {
         const assinado = await c.storage.from('habilitacao').createSignedUrl(d.arquivo_path, 300);
@@ -1700,6 +1946,8 @@ ERP.habilitacao = (function () {
            alvará que também vale por dispensa sanitária, pedido
            como sanitária, tem de aparecer em Certidões. */
         const cats = tiposCobertos(d).map(function (tp) { return tipoDe(tp).categoria || 'outros'; });
+        /* Sem o escolhedor aberto (download da seleção), `marcadas`
+           vem vazia e vale a categoria do próprio documento. */
         const qual = cats.filter(function (x) { return marcadas.indexOf(x) >= 0; })[0] || cats[0];
         const cat = ROT_CAT[qual] || 'Outros';
         const ext = (d.arquivo_nome || '').match(/\.[a-z0-9]+$/i);
@@ -1727,8 +1975,10 @@ ERP.habilitacao = (function () {
     }
     if (!feitos) {
       if (cx) cx.textContent = '';
+      ERP.app.fecharModal();
       return ERP.app.aviso('Nenhum arquivo baixou. ' + (falhas[0] || ''), 'erro');
     }
+    passoZip(feitos, lista.length, 'montando o zip…');
     if (cx) cx.textContent = 'montando o zip…';
     const blob = await zip.generateAsync({ type: 'blob' });
     const url = URL.createObjectURL(blob);
@@ -1873,6 +2123,29 @@ ERP.habilitacao = (function () {
     ERP.app.fecharModal();
     ERP.app.aviso('Documento atualizado.');
     carregar();
+  }
+
+  /* ── desligar a substituição num documento ───────────────
+     A regra automática acerta na certidão e erra onde o mesmo tipo
+     admite várias peças válidas. Em vez de tentar prever cada
+     caso, o sistema aceita ser corrigido: quem conhece o documento
+     marca que ele coexiste, e ele deixa de ser escondido. */
+  async function alternarCoexiste(id) {
+    const d = (dados.documentos || []).find(function (x) { return x.id === id; });
+    if (!d) return;
+    const novo = !d.coexiste;
+    const r = await cli().from('hab_documento').update({ coexiste: novo }).eq('id', id);
+    if (r.error) {
+      return ERP.app.aviso('Não salvou: ' + (/coexiste/.test(r.error.message)
+        ? 'a coluna de coexistência ainda não existe no banco. Rode ' +
+          'supabase/52-ATUALIZAR-v110.sql.'
+        : r.error.message), 'erro');
+    }
+    d.coexiste = novo;
+    ERP.app.aviso(novo
+      ? 'Este documento passa a valer junto com os outros do mesmo tipo.'
+      : 'Este documento volta a ser substituído pela renovação mais nova.');
+    render();
   }
 
   /* Arquivar, não apagar: o documento sai da vista e continua no
