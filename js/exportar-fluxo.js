@@ -285,7 +285,19 @@ ERP.exportarFluxo = (function () {
     larg.forEach(function (w, i) { ws.getColumn(i + 1 + off).width = w; });
     ws.getColumn(1).width = prev ? 2 : 6;
 
-    return { ws: ws, celSaldoFinal: cSaldo + ultima, linCab: linCab, ultima: ultima };
+    /* SEM NENHUMA LINHA, O SALDO FINAL É O SALDO DE PARTIDA.
+       `ultima` vale `linCab` quando a aba está vazia, e `linCab` é a
+       linha do CABEÇALHO: o saldo final apontava para a célula com a
+       palavra "Saldo" escrita. O previsto então partia de um texto, e
+       todo o saldo acumulado dali para baixo virava erro — foi o que
+       aconteceu com o contas a pagar sem lançamento nenhum.
+
+       Com a aba vazia, o saldo no fim do realizado é exatamente o
+       total em bancos, que é o que a célula de total já contém. */
+    const celTotalBancos = (prev ? 'F' : 'E') + linTotal;
+    return { ws: ws, linCab: linCab, ultima: ultima,
+      celTotalBancos: celTotalBancos,
+      celSaldoFinal: linhas.length ? cSaldo + ultima : celTotalBancos };
   }
 
   /* ── resumo com SUMIFS ──────────────────────────────────*/
@@ -326,6 +338,21 @@ ERP.exportarFluxo = (function () {
       });
     };
 
+    /* TOTAL DE UM BLOCO VAZIO É ZERO, NÃO UMA SOMA AO CONTRÁRIO.
+       Sem nenhuma receita (ou nenhuma despesa) classificada, o bloco
+       começava na linha seguinte à do total e terminava na anterior:
+       a faixa saía invertida, o Excel a endireitava e ela passava a
+       incluir a própria célula do total — referência circular, e o
+       arquivo abria com erro. Aconteceu com o contas a pagar vazio. */
+    const totalDoBloco = function (linha, ini, fim) {
+      meses.forEach(function (m, i) {
+        const letra = ws.getColumn(3 + i).letter;
+        const c = ws.getCell(linha, 3 + i);
+        c.value = fim >= ini ? { formula: 'SUM(' + letra + ini + ':' + letra + fim + ')' } : 0;
+        c.numFmt = MOEDA;
+      });
+    };
+
     let L = linCab + 1;
     const receitas = Array.from(new Set(lr.concat(lp)
       .filter(function (l) { return l.grupo.indexOf('Receita') === 0; })
@@ -342,12 +369,7 @@ ERP.exportarFluxo = (function () {
     const linReceitaFim = L - 1;
     ws.getCell(L, 2).value = 'Receita total';
     ws.getRow(L).font = { bold: true, name: 'Arial' };
-    meses.forEach(function (m, i) {
-      const letra = ws.getColumn(3 + i).letter;
-      const c = ws.getCell(L, 3 + i);
-      c.value = { formula: 'SUM(' + letra + linReceitaIni + ':' + letra + linReceitaFim + ')' };
-      c.numFmt = MOEDA;
-    });
+    totalDoBloco(L, linReceitaIni, linReceitaFim);
     const linReceitaTotal = L;
     L += 2;
 
@@ -359,12 +381,7 @@ ERP.exportarFluxo = (function () {
     const linSaidaFim = L - 1;
     ws.getCell(L, 2).value = 'Saídas totais';
     ws.getRow(L).font = { bold: true, name: 'Arial' };
-    meses.forEach(function (m, i) {
-      const letra = ws.getColumn(3 + i).letter;
-      const c = ws.getCell(L, 3 + i);
-      c.value = { formula: 'SUM(' + letra + linSaidaIni + ':' + letra + linSaidaFim + ')' };
-      c.numFmt = MOEDA;
-    });
+    totalDoBloco(L, linSaidaIni, linSaidaFim);
     const linSaidaTotal = L;
     L += 2;
 
@@ -407,10 +424,31 @@ ERP.exportarFluxo = (function () {
     return ws;
   }
 
-  /* ── geração ────────────────────────────────────────────*/
-  function gerar() {
+  /* ── geração ────────────────────────────────────────────
+     `op` aceita `de` e `ate` (aaaa-mm-dd). Vazios, saem o realizado
+     inteiro e seis meses de previsto — que é o fluxo completo, e é o
+     que a tela sugere. Com datas, o recorte vale para as duas abas e
+     o horizonte do previsto acompanha o "até": pedir o fluxo até
+     dezembro e receber só seis meses seria responder outra pergunta. */
+  function gerar(op) {
     if (!window.ExcelJS) return ERP.app.aviso('A biblioteca de Excel não carregou.', 'erro');
-    const lr = realizado(), lp = previsto(6);
+    op = op || {};
+    const de = op.de || '', ate = op.ate || '';
+    let frente = 6;
+    if (ate) {
+      /* +1 porque o mês do "até" conta inteiro. Teto de 60 meses:
+         uma data digitada errada (2206 em vez de 2026) não pode
+         montar uma planilha de dois mil meses. */
+      const n = U.mesesEntre(U.mesAtual() + '-01', ate.slice(0, 7) + '-01') + 1;
+      frente = Math.max(1, Math.min(60, n));
+    }
+    const dentro = l => {
+      if (!de && !ate) return true;
+      const d = (l.data || '').slice(0, 10);
+      if (!d) return false;
+      return (!de || d >= de) && (!ate || d <= ate);
+    };
+    const lr = realizado().filter(dentro), lp = previsto(frente).filter(dentro);
     const wb = new ExcelJS.Workbook();
     wb.creator = 'ERP Dom Pedro';
     wb.created = new Date();
@@ -470,6 +508,10 @@ ERP.exportarFluxo = (function () {
     titulo(wsI, 'B2', 'FLUXO DE CAIXA — ' + D.empresa.nome);
     [
       'Gerado pelo ERP em ' + ERP.util.fDataHora(new Date()),
+      de || ate
+        ? 'Período: ' + (de ? U.fData(de) : 'desde o início') + ' a ' +
+          (ate ? U.fData(ate) : 'sem limite')
+        : 'Período: tudo — realizado inteiro e seis meses de previsto.',
       '',
       'A planilha tem fórmulas de verdade — não é um retrato morto.',
       '',
@@ -515,7 +557,10 @@ ERP.exportarFluxo = (function () {
       setTimeout(function () { URL.revokeObjectURL(a.href); }, 2000);
       ERP.app.aviso('Excel gerado: ' + lr.length + ' linhas realizadas, ' + lp.length +
         ' previstas (' + lp.filter(function (l) { return l.origem === 'Previsão'; }).length +
-        ' de previsão por projeto). Com fórmulas: mude o "Pagar?" e o saldo recalcula.', 'ok');
+        ' de previsão por projeto)' +
+        (de || ate ? ', de ' + (de ? U.fData(de) : 'o início') + ' a ' +
+          (ate ? U.fData(ate) : 'o fim') : '') +
+        '. Com fórmulas: mude o "Pagar?" e o saldo recalcula.', 'ok');
     });
   }
 

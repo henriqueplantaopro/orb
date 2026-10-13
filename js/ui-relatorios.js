@@ -8,7 +8,6 @@ ERP.relatorios = (function () {
 
   function montar() {
     U.el('rel-tipo').addEventListener('change', function () { atual = this.value; render(); });
-    U.el('rel-fluxo-xls').addEventListener('click', function () { ERP.exportarFluxo.gerar(); });
     U.el('rel-exportar').addEventListener('click', () => {
       const t = document.querySelector('#rel-saida table');
       const dados = ERP.exportar.deTabela(t);
@@ -45,6 +44,8 @@ ERP.relatorios = (function () {
       atual === 'empresas'  ? timbrado('resultado por empresa do grupo') + filtrosMes() + porEmpresa() :
       atual === 'centro'    ? timbrado('quanto cada centro consumiu no mês') + filtrosMes() + porCentro() :
       atual === 'fluxo'     ? timbrado('caixa realizado e previsto, dia a dia dentro do período') + filtrosPeriodo() + fluxo() :
+      atual === 'fluxoCompleto' ? timbrado('a planilha com fórmulas, para abrir no Excel e mexer') +
+        fluxoCompleto() :
       atual === 'setortipo' ? timbrado('produtividade por setor e tipo de plantão') + filtrosMes() + porSetorTipo() :
       atual === 'fluxoDiario' ? timbrado('os próximos dias, com o saldo andando dia a dia') + fluxoDiario() :
       atual === 'aPagarReceber' ? timbrado('o que vence no período, com saldo corrido') + aPagarReceber() :
@@ -64,6 +65,13 @@ ERP.relatorios = (function () {
     if (atual === 'faturamento') ligarFiltrosFaturamento();
     if (atual === 'fatCompetencia') ligarFiltrosCompetencia();
     if (atual === 'comparativoProd') ligarFiltrosComparativo();
+    if (atual === 'fluxoCompleto') ligarFluxoCompleto();
+    /* Este não tem tabela: exportar e imprimir não têm o que pegar, e
+       botão que não faz nada é botão que ensina a desconfiar. */
+    const semTabela = atual === 'fluxoCompleto';
+    ['rel-exportar', 'rel-imprimir'].forEach(function (id) {
+      if (U.el(id)) U.el(id).style.display = semTabela ? 'none' : '';
+    });
     ligarPeriodo();   // o período vale pra todos os relatórios agora
     if (U.el('fd-dias')) {
       U.el('fd-dias').addEventListener('change', function () { fdDias = +this.value; render(); });
@@ -101,7 +109,8 @@ ERP.relatorios = (function () {
     fluxoDiario: 'Fluxo de caixa diário',
     gerencial: 'DRE gerencial',
     dre: 'DRE por competência', empresas: 'Resultado por empresa', centro: 'Total por centro de custo',
-    projeto: 'Resultado por projeto', fluxo: 'Fluxo de caixa', setortipo: 'Custos por setor/tipo',
+    projeto: 'Resultado por projeto', fluxo: 'Fluxo de caixa',
+    fluxoCompleto: 'Fluxo de caixa completo (Excel)', setortipo: 'Custos por setor/tipo',
     faturamento: 'Faturamento por projeto',
     fatEmissao: 'Faturamento por data de emissão',
     fatCompetencia: 'Faturado x a faturar por competência',
@@ -111,6 +120,11 @@ ERP.relatorios = (function () {
      mostrar "Período: 01/10 a 31/10" ali confundiria com o filtro
      geral, que não é o que está valendo. */
   const periodoTexto = () => {
+    if (atual === 'fluxoCompleto') {
+      if (!fcPer.de && !fcPer.ate) return 'Período: tudo — realizado inteiro e previsto à frente';
+      return 'Período: ' + (fcPer.de ? U.fData(fcPer.de) : 'início') + ' a ' +
+        (fcPer.ate ? U.fData(fcPer.ate) : 'sem limite');
+    }
     if (atual === 'faturamento' && fatModo === 'competencia') return 'Competência ' + U.fComp(fatComp);
     if (atual === 'fatCompetencia') return 'Competência ' + U.fComp(fatComp);
     if (atual === 'comparativoProd') {
@@ -1473,6 +1487,60 @@ ERP.relatorios = (function () {
         Entradas vêm do contas a receber (recebido = realizado,
         previsão = previsto); saídas, do contas a pagar. Meses sem
         movimento aparecem, senão a série fica mentirosa. */
+  /* ── FLUXO DE CAIXA COMPLETO (planilha com fórmulas) ────
+     Era um botão em destaque na barra, ao lado de "Exportar", e
+     disputava a atenção com o relatório que estivesse aberto. Virou
+     um item do seletor como os outros: quem quer a planilha a
+     escolhe, e quem não quer não tropeça nela.
+
+     O período nasce VAZIO de propósito. "Fluxo completo" quer dizer
+     o realizado inteiro mais o previsto à frente; obrigar a escolher
+     datas para ver o todo seria pedir que ele adivinhasse as pontas. */
+  let fcPer = { de: '', ate: '' };
+
+  function fluxoCompleto() {
+    const temFiltro = !!(fcPer.de || fcPer.ate);
+    return '<div class="filtros">' +
+      '<div class="f"><label for="fc-de">De</label>' +
+        '<input type="date" id="fc-de" value="' + fcPer.de + '"></div>' +
+      '<div class="f"><label for="fc-ate">Até</label>' +
+        '<input type="date" id="fc-ate" value="' + fcPer.ate + '"></div>' +
+      '<button class="btn-sm" id="fc-tudo"' + (temFiltro ? '' : ' disabled') + '>Sem filtro (tudo)</button>' +
+      '<button class="btn-sm" id="fc-ano">Este ano</button>' +
+      '<button class="btn-linha" id="fc-gerar" style="align-self:flex-end">Gerar Excel</button>' +
+      '<div class="ajuda" style="flex-basis:100%;margin:4px 0 0">' +
+        (temFiltro
+          ? 'Com datas, o recorte vale para as duas abas, e o previsto vai até a data final.'
+          : 'Sem datas: o realizado inteiro e seis meses de previsto — o fluxo completo.') +
+      '</div></div>' +
+      '<div class="ajuda" style="margin-top:12px">' +
+        'Sai um arquivo com <b>fórmulas de verdade</b>, não um retrato: trocar "S" por "N" na ' +
+        'coluna <b>Pagar?</b> do Fluxo previsto zera aquela saída e refaz o saldo acumulado dali ' +
+        'para baixo. O Resumo puxa das duas abas por SUMIFS e acompanha.' +
+      '</div>' +
+      '<div class="ajuda">Abas: Instruções, Fluxo realizado, Fluxo previsto, Resumo fluxo, ' +
+        'Contas a pagar, A receber-Recebido e Previsões.</div>';
+  }
+
+  function ligarFluxoCompleto() {
+    const liga = function (id, fn) { const e = U.el(id); if (e) e.addEventListener('change', fn); };
+    const clica = function (id, fn) { const e = U.el(id); if (e) e.addEventListener('click', fn); };
+    liga('fc-de', function () { fcPer.de = this.value; render(); });
+    liga('fc-ate', function () { fcPer.ate = this.value; render(); });
+    clica('fc-tudo', function () { fcPer = { de: '', ate: '' }; render(); });
+    clica('fc-ano', function () {
+      const ano = U.hoje().slice(0, 4);
+      fcPer = { de: ano + '-01-01', ate: ano + '-12-31' };
+      render();
+    });
+    clica('fc-gerar', function () {
+      if (fcPer.de && fcPer.ate && fcPer.de > fcPer.ate) {
+        return ERP.app.aviso('A data inicial é posterior à final.', 'erro');
+      }
+      ERP.exportarFluxo.gerar({ de: fcPer.de, ate: fcPer.ate });
+    });
+  }
+
   function fluxo() {
     const ent = {}, entP = {}, sai = {}, saiP = {};
     const bota = (obj, mes, v) => { if (mes) obj[mes] = Math.round(((obj[mes] || 0) + v) * 100) / 100; };
