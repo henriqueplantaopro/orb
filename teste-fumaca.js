@@ -9908,6 +9908,19 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /fim >= ini \? \{ formula: 'SUM\(/.test(flx), '');
   verificar('v113 — e os dois totais do resumo passam pelo mesmo guarda',
     (flx.match(/totalDoBloco\(L, /g) || []).length === 2, '');
+  /* A linha do cabeçalho era um número escrito à mão (6 no
+     realizado), e 6 é a primeira linha do bloco de saldos: com um
+     banco cadastrado que fosse, o cabeçalho era escrito por cima do
+     primeiro banco. Agora ela é calculada, e o painel congelado sai
+     da mesma conta. */
+  verificar('v113 — a linha do cabeçalho do fluxo é calculada, não escrita à mão',
+    /const linCab = linTotal \+ 2;/.test(flx) && !/linCab = prev \? 14 : 6/.test(flx), '');
+  verificar('v113 — e o painel congela na mesma linha que o cabeçalho',
+    /ySplit: linCab/.test(flx), '');
+  verificar('v113 — o bloco de bancos é medido antes de a aba ser criada',
+    flx.indexOf('const linTotal = lin0 + 1 + bancos.length;') <
+      flx.indexOf('wb.addWorksheet(nome'), '');
+
   verificar('v113 — o fluxo completo aceita recorte por data, com o horizonte acompanhando',
     /function gerar\(op\)/.test(flx) && /const dentro = l =>/.test(flx) &&
     /Math\.max\(1, Math\.min\(60, n\)\)/.test(flx), '');
