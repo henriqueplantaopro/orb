@@ -431,9 +431,38 @@ tr.linha-filha{background:#fcfdfe;}
 /* Inventário de ativos: a coluna de valor e a de ações não podem sumir
    quando a tabela rola de lado */
 table.tab-ativos td:nth-last-child(2), table.tab-ativos th:nth-last-child(2){white-space:nowrap;}
-table.tab-ativos td.desc{max-width:280px;}
+/* LARGURA COM TETO, e texto cortado com reticências em vez de
+   empurrar a tabela. A coluna de botões é `sticky` — ela flutua
+   por cima do que rola embaixo —, então toda largura que sobra
+   numa coluna de texto vira conteúdo escondido debaixo dos botões.
+   Era isso que cobria "Onde está". */
+table.tab-ativos td.desc{max-width:190px;}
+table.tab-ativos td, table.tab-ativos th{max-width:190px;}
+table.tab-ativos td.desc, table.tab-ativos td.sub{overflow:hidden;text-overflow:ellipsis;}
+table.tab-ativos td.sub{max-width:130px;}
+/* Os botões em DUAS LINHAS dentro da célula. Em linha única eles
+   somavam 384px de largura grudada; empilhados em duas, 230px — e
+   a tabela inteira passa a caber sem rolar, que é o que faz a
+   coluna grudada parar de cobrir alguma coisa. Nenhum botão foi
+   tirado: o que mudou foi a forma, não o que dá para fazer. */
+table.tab-ativos td.acoes{white-space:normal;max-width:190px;}
+table.tab-ativos td.acoes button{margin:1px 2px 1px 0;}
+/* Em tela estreita, as duas colunas de MENOR uso saem — e o dado
+   continua na Ficha do equipamento. Esconder coluna é pior que
+   mostrar tudo; é melhor que correr a tela para o lado, porque o
+   que está fora da vista não é conferido e nem se sabe que existe.
+   Os cortes são largos de propósito: num monitor comum nada some. */
+@media (max-width: 1200px) { table.tab-ativos .col-locacao { display: none; } }
+@media (max-width: 1080px) { table.tab-ativos .col-contratante { display: none; } }
+/* Abaixo disto a tabela ainda não cabia: a Categoria e o Valor de
+   aquisição são os próximos a sair, nessa ordem, porque é por tag,
+   equipamento, situação e lugar que se procura um equipamento. */
+@media (max-width: 1040px) {
+  table.tab-ativos td.desc { max-width: 150px; }
+  table.tab-ativos td.acoes { max-width: 120px; }
+}
 table.tab-ativos td:last-child, table.tab-ativos th:last-child{position:sticky;right:0;
-  background:var(--surface);box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);white-space:nowrap;}
+  background:var(--surface);box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);}
 
 /* Etiqueta de patrimônio com QR e painel de indicadores */
 .etiqueta-patrimonio{display:flex;gap:14px;align-items:center;border:1px solid var(--ink);
