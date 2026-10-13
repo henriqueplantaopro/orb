@@ -106,15 +106,27 @@ ERP.ativos = (function () {
         '<span>Parados <b class="' + (S.ociosidadeAtivos().length ? 'erro' : '') + '">' +
           S.ociosidadeAtivos().length + '</b></span>' +
       '</div>' +
-      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-ativos"><thead><tr>' +
-        '<th>Tag</th><th>Patrimônio</th><th>Equipamento</th><th>Categoria</th><th class="num">Valor</th>' +
-        '<th>Situação</th><th>Contratante</th><th>Onde está</th>' +
-        '<th>Custodiante</th><th>Locação</th><th class="num">Valor</th><th></th></tr></thead><tbody>' +
+      /* A coluna de PATRIMÔNIO só aparece se alguém tiver um.
+         Ela guarda a etiqueta que o equipamento já trazia de antes
+         do ERP, e a maioria dos itens não tem nenhuma — uma coluna
+         inteira de travessão custa a largura que falta para "Onde
+         está" caber antes dos botões. */
+      (function () {
+        const temPatrimonio = lista.some(function (a) { return a.patrimonio; });
+        /* O colspan do aviso de lista vazia é CONTADO, não escrito:
+           escrito, ele envelhece a cada coluna que entra ou sai — e
+           estava em 9 numa tabela de doze. */
+        const colunas = 10 + (temPatrimonio ? 1 : 0);
+        return '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-ativos"><thead><tr>' +
+        '<th>Tag</th>' + (temPatrimonio ? '<th>Patrimônio</th>' : '') +
+        '<th>Equipamento</th><th>Categoria</th><th class="num">Valor</th>' +
+        '<th>Situação</th><th class="col-contratante">Contratante</th><th>Onde está</th>' +
+        '<th class="col-locacao">Locação</th><th></th></tr></thead><tbody>' +
         (lista.length ? lista.map(function (a) {
           return '<tr><td class="mono">' + U.esc(a.tag) + '</td>' +
             /* Número de patrimônio é a etiqueta que já existe no
                equipamento, diferente da tag do sistema. */
-            '<td class="mono sub">' + U.esc(a.patrimonio || '—') + '</td>' +
+            (temPatrimonio ? '<td class="mono sub">' + U.esc(a.patrimonio || '—') + '</td>' : '') +
             '<td class="desc">' + U.esc(a.descricao) +
               (a.serie ? '<div class="sub">série ' + U.esc(a.serie) + '</div>'
                 : (a.qtd > 1 ? '<div class="sub">' + a.qtd + ' unidades no mesmo registro</div>' : '')) + '</td>' +
@@ -125,16 +137,26 @@ ERP.ativos = (function () {
             /* Quem contratou é uma coisa; onde o equipamento está é
                outra: a Unifor contrata e o aparelho opera na Santa
                Casa. */
-            '<td class="sub">' + U.esc(S.nomeContratante(a) || '—') + '</td>' +
+            '<td class="sub col-contratante">' + U.esc(S.nomeContratante(a) || '—') + '</td>' +
+            /* CUSTODIANTE desceu para dentro de "Onde está": é a
+               pessoa daquele lugar, e as duas informações só são
+               lidas juntas ("está na Santa Casa, com a Monique").
+               Em coluna própria custava largura para repetir o
+               contexto da coluna vizinha. */
             '<td class="desc">' + U.esc(a.local || '—') +
-              (a.projeto ? '<div class="sub">' + U.esc(nomeProjeto(a.projeto)) + '</div>' : '') + '</td>' +
-            '<td class="sub">' + U.esc(a.custodiante || '—') +
-              (a.desde ? '<div class="sub">desde ' + U.fData(a.desde) + '</div>' : '') + '</td>' +
-            '<td class="sub">' + (a.contrato
+              (a.projeto ? '<div class="sub">' + U.esc(nomeProjeto(a.projeto)) + '</div>' : '') +
+              (a.custodiante
+                ? '<div class="sub">com ' + U.esc(a.custodiante) +
+                  (a.desde ? ' desde ' + U.fData(a.desde) : '') + '</div>' : '') + '</td>' +
+            '<td class="sub col-locacao">' + (a.contrato
               ? U.esc((S.contratos({}).find(function (c) { return c.id === a.contrato; }) || {}).numero || '') +
                 '<div class="sub">' + brlSeguro(a.valor_locacao || 0) + '/mês</div>'
               : '—') + '</td>' +
-            '<td class="num">' + brlSeguro(a.valor || 0) + '</td>' +
+            /* Havia uma SEGUNDA coluna "Valor" aqui, com exatamente
+               o mesmo `a.valor` da quinta. Duas colunas iguais na
+               mesma linha não são redundância inofensiva: custam a
+               largura que falta, e quem lê fica procurando a
+               diferença entre elas. */
             '<td class="acoes">' +
               '<button class="btn-sm" data-av-ficha="' + a.id + '">Ficha</button>' +
               ' <button class="btn-sm" data-av-etiqueta="' + a.id + '">Etiqueta</button>' +
@@ -148,8 +170,10 @@ ERP.ativos = (function () {
               (S.pode('estoque') ? ' <button class="btn-sm btn-aprovar" data-av-mov="' + a.id + '">Movimentar</button>' : '') +
             '</td></tr>';
         }).join('')
-          : '<tr><td colspan="9" class="vazio"><strong>Nenhum equipamento com esse filtro.</strong></td></tr>') +
+          : '<tr><td colspan="' + colunas + '" class="vazio">' +
+            '<strong>Nenhum equipamento com esse filtro.</strong></td></tr>') +
       '</tbody></table></div>';
+      })();
   }
 
   /* Ficha: o histórico é o coração. Cada evento com origem, destino,

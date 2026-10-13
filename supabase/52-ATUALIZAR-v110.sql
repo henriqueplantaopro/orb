@@ -24,6 +24,22 @@
 --      colunas na criação.
 
 -- ══════════════════════════════════════════════════════════════
+-- 0. A coluna `extra` em `empresas`
+--
+-- Toda tabela que a tela grava tem uma coluna `extra` em jsonb: a
+-- gravação separa o que é coluna conhecida do que não é, e manda o
+-- resto para lá, para que nenhum campo se perca quando o sistema
+-- passa a ter um dado que o banco ainda não tem.
+--
+-- `empresas` era a única das 32 sem ela, porque até a v110 esta
+-- tabela não era gravada pela tela — entrava por SQL. Ao virar
+-- cadastro, a primeira gravação bateu em "Could not find the
+-- 'extra' column of 'empresas'" e a alteração ficou só na tela.
+-- ══════════════════════════════════════════════════════════════
+alter table empresas
+  add column if not exists extra jsonb not null default '{}'::jsonb;
+
+-- ══════════════════════════════════════════════════════════════
 -- 1. O documento que não é substituído por ninguém
 -- ══════════════════════════════════════════════════════════════
 alter table hab_documento
@@ -143,6 +159,10 @@ begin
   end if;
   if not exists (select 1 from pg_proc where proname = 'excluir_empresa') then
     raise exception 'A funcao excluir_empresa nao foi criada.';
+  end if;
+  if not exists (select 1 from information_schema.columns
+                  where table_name = 'empresas' and column_name = 'extra') then
+    raise exception 'A tabela empresas ficou sem a coluna extra — a tela nao consegue gravar.';
   end if;
 end $$;
 

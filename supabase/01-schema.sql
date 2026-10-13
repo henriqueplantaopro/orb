@@ -38,6 +38,9 @@ create table empresas (
   inscricao_municipal text,
   matriz        boolean not null default false,
   ativo         boolean not null default true,
+  -- Como toda tabela que a tela grava: o que o sistema tem e esta
+  -- tabela ainda nao tem fica aqui, em vez de se perder.
+  extra         jsonb not null default '{}'::jsonb,
   criado_em     timestamptz not null default now()
 );
 

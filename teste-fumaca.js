@@ -9614,6 +9614,36 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v110 — empresas entra no mapa de gravação, antes de centros',
     per.indexOf("empresas: { tabela: 'empresas'") > 0 &&
     per.indexOf("empresas: { tabela: 'empresas'") < per.indexOf("centros: { tabela: 'centros'"), '');
+  /* ── TODA tabela gravada precisa da coluna `extra` ────────
+     A gravação separa o que é coluna conhecida do que não é e
+     manda o resto para `extra`, SEMPRE — não é opcional por
+     tabela. `empresas` era a única das 32 sem ela, porque até a
+     v110 não era gravada pela tela; ao virar cadastro, a primeira
+     gravação morreu em "Could not find the 'extra' column" e a
+     alteração ficou só na tela, parecendo salva.
+
+     O teste é da CLASSE: lê o mapa de gravação, lê o schema, e
+     cobra `extra` de cada tabela. A próxima tabela que entrar no
+     mapa sem a coluna reprova aqui, e não no uso. */
+  (function () {
+    const blocoMapa = (per.match(/const MAPA[^=]*= \{([\s\S]*?)\n  \};/) || [])[1] || '';
+    const tabelas = [...new Set([...blocoMapa.matchAll(/tabela: '([a-z_]+)'/g)].map(m => m[1]))];
+    let esquema = '';
+    fsA.readdirSync(__dirname + '/supabase').forEach(function (f) {
+      if (/\.sql$/.test(f)) esquema += fsA.readFileSync(__dirname + '/supabase/' + f, 'utf8');
+    });
+    const semExtra = tabelas.filter(function (t) {
+      const cria = esquema.match(
+        new RegExp('create table (if not exists )?' + t + '\\s*\\(([\\s\\S]*?)\\n\\);', 'i'));
+      const noCreate = cria && /\bextra\b\s+jsonb/i.test(cria[2]);
+      const noAlter = new RegExp(
+        'alter table ' + t + '[\\s\\S]{0,240}add column[^;]*\\bextra\\b', 'i').test(esquema);
+      return !noCreate && !noAlter;
+    });
+    verificar('v110 — toda tabela do mapa de gravação tem a coluna extra no schema',
+      semExtra.length === 0, semExtra.join(', ') || tabelas.length + ' tabelas conferidas');
+  })();
+
   verificar('v110 — e o estado aponta para a MESMA lista de dados',
     /get empresas\(\) \{ return D\.empresas; \}/.test(sto), '');
   /* CNPJ errado aqui vira arquivo de remessa recusado pelo banco e
@@ -9667,6 +9697,46 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /colapsa \? d\.empresa \+ '\|' \+ d\.tipo : 'id:' \+ d\.id/.test(sto), '');
   verificar('v110 — "em dia" inclui tudo que não venceu',
     /filtro\.situacao === 'validos'[\s\S]{0,120}\['ok', 'critico', 'perene'\]/.test(hab), '');
+})();
+
+// ── v110: a tabela de Ativos cabe na tela ───────────────────
+(function () {
+  const fsB = require('fs');
+  const av = fsB.readFileSync(__dirname + '/js/ui-ativos.js', 'utf8');
+  const css = fsB.readFileSync(__dirname + '/css/erp.css', 'utf8');
+
+  /* A coluna de botões é `sticky`: ela FLUTUA sobre o que rola
+     embaixo. Enquanto a tabela não coubesse, ela cobria "Onde
+     está" — e o conteúdo escondido debaixo de um botão não é
+     conferido nem se sabe que existe. A correção foi tirar largura,
+     não tirar o grudado. */
+  const cab = (av.match(/<th>Tag<\/th>[\s\S]{0,700}?<\/tr>/) || [''])[0];
+  verificar('v110 — a tabela de ativos não tem coluna Valor repetida',
+    (cab.match(/>Valor</g) || []).length === 1,
+    (cab.match(/>Valor</g) || []).length + ' coluna(s) Valor no cabeçalho');
+  /* Escrito à mão, o colspan envelhece a cada coluna que entra ou
+     sai: estava em 9 numa tabela de doze. */
+  verificar('v110 — o colspan da lista vazia é contado, não escrito',
+    /colspan="' \+ colunas \+ '"/.test(av) && /const colunas = 10 \+/.test(av), '');
+  verificar('v110 — a coluna de patrimônio só aparece se alguém tiver um',
+    /const temPatrimonio = lista\.some/.test(av) &&
+    /temPatrimonio \? '<th>Patrimônio<\/th>' : ''/.test(av), '');
+  verificar('v110 — o custodiante desceu para dentro de "Onde está"',
+    /com ' \+ U\.esc\(a\.custodiante\)/.test(av) &&
+    !/<th>Custodiante<\/th>/.test(av), '');
+  /* Largura com teto e reticências: sem teto, o texto comprido
+     empurra a tabela e devolve a rolagem. */
+  verificar('v110 — as colunas de texto têm teto de largura e cortam com reticências',
+    /table\.tab-ativos td\.desc\{max-width:190px;\}/.test(css) &&
+    /text-overflow:ellipsis/.test(css), '');
+  verificar('v110 — os botões ocupam duas linhas em vez de uma faixa grudada larga',
+    /table\.tab-ativos td\.acoes\{white-space:normal;max-width:190px;\}/.test(css), '');
+  /* Em tela estreita as duas colunas de menor uso saem, e o dado
+     continua na Ficha. */
+  verificar('v110 — em tela estreita saem as colunas de menor uso, por classe e não por posição',
+    /col-locacao \{ display: none; \}/.test(css) &&
+    /col-contratante \{ display: none; \}/.test(css) &&
+    /class="col-contratante"/.test(av) && /col-locacao"/.test(av), '');
 })();
 
 concluir();
