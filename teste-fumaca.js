@@ -9812,8 +9812,77 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   /* Doze meses com doze larguras tiram a referência de quem compara
      mês a mês, que é a única coisa que se faz nessa tabela. */
   verificar('v112 — as colunas de número têm largura própria e igual',
-    /table\.rel th\.num, table\.rel td\.num\{width:96px/.test(css2) &&
-    /table\.tab-resultado th\.num, table\.tab-resultado td\.num\{width:120px/.test(css2), '');
+    /table\.rel th\.num, table\.rel td\.num\{\s*width:var\(--col-num,96px\)/.test(css2) &&
+    /table\.tab-resultado th\.num, table\.tab-resultado td\.num\{\s*width:var\(--col-num,120px\)/.test(css2), '');
+
+  /* ── v113 ─────────────────────────────────────────────── */
+
+  /* Treze colunas de 96px não cabem em tela nenhuma: a largura comum
+     passa a sair do espaço que existe, e continua comum. */
+  const lerArq = n => fsC.readFileSync(__dirname + '/' + n, 'utf8');
+  const util2 = lerArq('js/util.js');
+  verificar('v113 — a largura comum das colunas é medida, não fixa',
+    /function ajustarColunas/.test(util2) &&
+    /--col-num/.test(util2) && /ajustarColunas: ajustarColunas/.test(util2), '');
+  verificar('v113 — e ela nunca desce abaixo do que o maior valor MEDE',
+    /const precisaDe = function \(\)/.test(util2) &&
+    /Math\.max\(precisa, Math\.min\(padrao, cada\)\)/.test(util2), '');
+  verificar('v113 — há degraus de aperto, e o primeiro que couber encerra a busca',
+    /const DEGRAUS = \[/.test(util2) &&
+    /if \(largura \* nums \+ minDesc <= espaco\) break;/.test(util2), '');
+  /* No layout automático a largura de célula é sugestão: sem
+     `table-layout:fixed` a descrição ignorava o teto e a tabela saía
+     para fora por mais que as colunas de número encolhessem. */
+  verificar('v113 — no modo apertado o navegador é obrigado a obedecer às larguras',
+    /table\.rel\.apertada, table\.tab-resultado\.apertada\{font-size:11\.5px;table-layout:fixed;\}/.test(css2), '');
+  verificar('v113 — a conta refaz quando a janela muda de tamanho',
+    /addEventListener\('resize'/.test(util2), '');
+  verificar('v113 — e o ouvinte não derruba o módulo fora do navegador',
+    /typeof window\.addEventListener === 'function'/.test(util2), '');
+  verificar('v113 — as duas telas que têm tabela larga chamam o ajuste',
+    /U\.ajustarColunas\(U\.el\('rel-saida'\)\)/.test(rel) &&
+    /U\.ajustarColunas\(box\)/.test(lerArq('js/ui-faturamento.js')), '');
+
+  /* A linha de total é parte do relatório: num DRE ela é a resposta.
+     Descartá-la fazia o Excel sair sem "Resultado líquido". */
+  const exp2 = lerArq('js/exportar.js');
+  verificar('v113 — a exportação não descarta mais a linha de total',
+    !/if \(tr\.classList\.contains\('total'\) \|\| tr\.classList\.contains\('linha-total'\)\) return null;/.test(exp2) &&
+    /valores\.__total = true/.test(exp2), '');
+  verificar('v113 — e ela sai em negrito, como na tela',
+    /if \(l\.__total\) r\.font = \{ bold: true \}/.test(exp2), '');
+  verificar('v113 — o filtro do Excel para antes do total, para não ordenar junto',
+    /ultimaFiltravel/.test(exp2) &&
+    /for \(let k = linhas\.length - 1; k >= 0 && linhas\[k\]\.__total; k--\)/.test(exp2), '');
+  verificar('v113 — linha com colspan é expandida em vez de descartada',
+    /parseInt\(td\.getAttribute\('colspan'\)/.test(exp2) &&
+    !/if \(celulas\.length < ths\.length\) return null;/.test(exp2), '');
+
+  /* A depreciação valia só para dois relatórios; o mesmo mês dava
+     resultados diferentes conforme a tela. */
+  const st2 = lerArq('js/store.js');
+  verificar('v113 — existe um só lugar que apura a depreciação do período',
+    /function depreciacaoNoPeriodo\(de, ate\)/.test(st2) &&
+    /depreciacaoNoPeriodo,/.test(st2), '');
+  verificar('v113 — e ele devolve por mês, por centro e por empresa',
+    /porMes: \{\}, porCentro: \{\}, porEmpresa: \{\}/.test(st2), '');
+  verificar('v113 — o laço do período tem teto, e não trava a tela',
+    /guarda < 600/.test(st2), '');
+  verificar('v113 — a apuração por empresa desconta a depreciação do resultado',
+    /e\.resultado = Math\.round\(\(e\.receita - e\.despesa - e\.depreciacao\) \* 100\) \/ 100;/.test(st2), '');
+  verificar('v113 — mas não a soma dentro de "despesa", que concilia com o banco',
+    /Fica em campo PRÓPRIO/.test(st2), '');
+  verificar('v113 — o DRE por competência passou a ter a linha de depreciação',
+    /Depreciação de equipamento alocado/.test(rel) &&
+    /const dep = S\.depreciacaoNoPeriodo\(per\.de, per\.ate\);/.test(rel), '');
+  verificar('v113 — e ela entra antes da margem de contribuição, como no gerencial',
+    rel.indexOf('cols.forEach(m => { acumulado[m] -= depMes[m]; });') <
+      rel.indexOf("linhaTotal('= Margem de contribuição'"), '');
+  verificar('v113 — o total por centro de custo mostra depreciação e custo do período',
+    /Custo no período/.test(rel) &&
+    /dep\.porCentro\[id\]/.test(rel), '');
+  verificar('v113 — o resultado por empresa também',
+    /c\.depreciacao \? U\.num\(c\.depreciacao\)/.test(rel), '');
 })();
 
 concluir();

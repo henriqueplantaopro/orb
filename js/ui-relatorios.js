@@ -70,6 +70,10 @@ ERP.relatorios = (function () {
       U.el('fd-sem-venc').addEventListener('change', function () { fdSemVencidos = this.checked; render(); });
       U.el('fd-saldo').addEventListener('change', function () { fdSaldo = U.parseValor(this.value); render(); });
     }
+    /* As colunas de número são todas iguais entre si, e a largura
+       dessa igualdade sai do espaço que existe: com treze colunas
+       (doze meses e o total) a tabela saía pela direita da tela. */
+    U.ajustarColunas(U.el('rel-saida'));
   }
 
   /* Base dos relatórios de resultado, já recortada pelo PERÍODO: antes
@@ -950,11 +954,15 @@ ERP.relatorios = (function () {
         '<div class="sub mono">' + U.esc(e.cnpj) + '</div></td>' +
       '<td class="num">' + U.brl(e.receita) + '</td>' +
       '<td class="num">' + U.brl(e.despesa) + '</td>' +
+      '<td class="num sub">' + (e.depreciacao ? U.num(e.depreciacao) : '—') + '</td>' +
       '<td class="num ' + (e.resultado < 0 ? 'erro' : '') + '">' + U.brl(e.resultado) + '</td>' +
       '<td class="num">' + (e.margem === null ? '—' : U.pct(e.margem)) + '</td>' +
       '<td class="num sub">' + (e.intragrupo_receita || e.intragrupo_despesa
         ? U.brl(e.intragrupo_receita) + ' / ' + U.brl(e.intragrupo_despesa) : '—') + '</td></tr>';
-    return '<table><thead><tr><th>Empresa</th><th class="num">Receita</th><th class="num">Despesa</th>' +
+    return '<table class="rel"><thead><tr><th>Empresa</th><th class="num">Receita</th>' +
+        '<th class="num">Despesa</th>' +
+        '<th class="num" title="Equipamento alocado em projeto da empresa. Não é desembolso: ' +
+          'o dinheiro saiu na compra.">Depreciação</th>' +
         '<th class="num">Resultado</th><th class="num">Margem</th>' +
         '<th class="num">Intragrupo (rec/desp)</th></tr></thead><tbody>' +
         a.empresas.map(linha).join('') +
@@ -964,6 +972,7 @@ ERP.relatorios = (function () {
           (c.eliminacao_receita ? '<div class="sub">bruto ' + U.brl(c.receita_bruta) + '</div>' : '') + '</td>' +
         '<td class="num"><b>' + U.brl(c.despesa) + '</b>' +
           (c.eliminacao_despesa ? '<div class="sub">bruto ' + U.brl(c.despesa_bruta) + '</div>' : '') + '</td>' +
+        '<td class="num sub">' + (c.depreciacao ? U.num(c.depreciacao) : '—') + '</td>' +
         '<td class="num ' + (c.resultado < 0 ? 'erro' : '') + '"><b>' + U.brl(c.resultado) + '</b></td>' +
         '<td class="num"><b>' + (c.margem === null ? '—' : U.pct(c.margem)) + '</b></td>' +
         '<td class="num sub">' + (c.eliminacao_receita || c.eliminacao_despesa
@@ -982,7 +991,10 @@ ERP.relatorios = (function () {
             'aparece aqui.</div>'
         : '') +
       '<div class="ajuda">Receita pela empresa do projeto; despesa repartida pelo rateio, então conta ' +
-        'dividida entre centros de empresas diferentes já se divide entre os CNPJs.</div>';
+        'dividida entre centros de empresas diferentes já se divide entre os CNPJs. ' +
+        '<b>Depreciação</b> fica em coluna própria porque não é título a pagar: é o equipamento ' +
+        'alocado em projeto da empresa se pagando mês a mês. Ela entra no resultado — a compra, não, ' +
+        'senão o mesmo bem custaria duas vezes.</div>';
   }
 
   /* ── DRE GERENCIAL ──────────────────────────────────────
@@ -1222,6 +1234,13 @@ ERP.relatorios = (function () {
       meses.add(m);
     });
 
+    /* DEPRECIAÇÃO: custo do mês que não nasce de título nenhum, e por
+       isso não entrava neste DRE — que lê parcelas. O mês em que só
+       há depreciação também é mês: entra nas colunas, senão o custo
+       existe e não tem onde aparecer. */
+    const dep = S.depreciacaoNoPeriodo(per.de, per.ate);
+    Object.keys(dep.porMes).forEach(function (m) { if (dep.porMes[m]) meses.add(m); });
+
     const cols = Array.from(meses).sort();
     if (!cols.length) return vazio('Nenhum lançamento para consolidar.');
 
@@ -1288,6 +1307,20 @@ ERP.relatorios = (function () {
     // ── custos e despesas, grupo a grupo ──
     const acumulado = {}; cols.forEach(m => { acumulado[m] = liq[m]; });
     let margem = null;
+
+    /* A depreciação vem antes dos grupos do plano porque é custo
+       DIRETO: o equipamento está num projeto, e é lá que ele custa.
+       Vindo antes, ela entra na margem de contribuição — que é o
+       mesmo lugar onde o DRE gerencial a põe. Os dois relatórios
+       passam a responder a mesma pergunta com o mesmo número. */
+    if (Math.abs(dep.total) > 0.004) {
+      const depMes = {};
+      cols.forEach(m => { depMes[m] = dep.porMes[m] || 0; });
+      html += '<tr><td class="g">(−) Depreciação de equipamento alocado ' +
+        '<span class="sub">não é desembolso — vem do módulo de Ativos</span></td>' +
+        cols.map(m => cel(depMes[m], 'g')).join('') + cel(soma(depMes), 'g') + '</tr>';
+      cols.forEach(m => { acumulado[m] -= depMes[m]; });
+    }
 
     D.plano.filter(g => g.nivel === 1).forEach(g => {
       if (g.tipo === 'receita' || g.tipo === 'deducao') return;
@@ -1366,6 +1399,12 @@ ERP.relatorios = (function () {
       '<div class="ajuda">Regime de competência: a despesa aparece no mês de referência do serviço, ' +
       'não na data do pagamento. Juros e multa de atraso entram na competência em que foram pagos. ' +
       'A receita sai das notas emitidas, pelo bruto, com a retenção como dedução.</div>' +
+      (Math.abs(dep.total) > 0.004
+        ? '<div class="ajuda">A depreciação é a única linha que não vem de título: ela sai do ' +
+          'módulo de Ativos, pelo equipamento alocado em cada projeto. Para o mesmo bem não custar ' +
+          'duas vezes, a <b>compra</b> do equipamento tem de estar classificada como investimento ' +
+          '(abaixo da linha), e não numa conta de custo.</div>'
+        : '') +
       (temFora
         ? '<div class="ajuda">Retirada de sócio é distribuição de lucro e a parcela de empréstimo é, ' +
           'em boa parte, amortização de dívida — nenhuma das duas é despesa, e por isso ficam abaixo ' +
@@ -1377,34 +1416,56 @@ ERP.relatorios = (function () {
   /* 2. Total por centro de custo */
   function porCentro() {
     const acc = {};
+    const pega = id => (acc[id] = acc[id] || { total: 0, aberto: 0, pago: 0, n: 0, dep: 0 });
     validas().forEach(p => {
       (p.rateio || []).forEach(function (rt) {
-        const c = acc[rt.centro] = acc[rt.centro] || { total: 0, aberto: 0, pago: 0, n: 0 };
-        const f = rt.pct / 100;
+        const c = pega(rt.centro);
         c.total += Math.round(p.valor * rt.pct) / 100;
         c.aberto += (p.status === 'aberto' || p.status === 'parcial') ? Math.round(S.saldoDe(p) * rt.pct) / 100 : 0;
         c.pago += Math.round(S.caixaDe(p.id) * rt.pct) / 100;
         c.n++;
       });
     });
+
+    /* DEPRECIAÇÃO DO EQUIPAMENTO ALOCADO. Em coluna própria, ao lado
+       do que veio de parcela: o centro que opera com R$ 680.000 de
+       equipamento consome isso mês a mês e aparecia aqui como se nada
+       custasse. Não entra em "em aberto" nem em "pago" — não há o que
+       pagar: o desembolso foi na compra. */
+    const dep = S.depreciacaoNoPeriodo(per.de, per.ate);
+    Object.keys(dep.porCentro).forEach(function (id) { pega(id).dep = dep.porCentro[id]; });
+
     const ids = Object.keys(acc);
     if (!ids.length) return vazio('Nenhum lançamento para consolidar.');
 
-    const t = { total: 0, aberto: 0, pago: 0, n: 0 };
+    const custoDe = v => Math.round((v.total + v.dep) * 100) / 100;
+    const t = { total: 0, aberto: 0, pago: 0, n: 0, dep: 0 };
     let html = '<table class="rel"><thead><tr><th>Centro de custo</th><th>Tipo</th>' +
       '<th class="num">Parcelas</th><th class="num">Total (competência)</th>' +
+      '<th class="num" title="Equipamento alocado no centro, mês a mês. Não é desembolso.">' +
+        'Depreciação</th>' +
+      '<th class="num">Custo no período</th>' +
       '<th class="num">Em aberto</th><th class="num">Pago</th></tr></thead><tbody>';
-    ids.sort((a, b) => acc[b].total - acc[a].total).forEach(id => {
+    ids.sort((a, b) => custoDe(acc[b]) - custoDe(acc[a])).forEach(id => {
       const c = D.centro(id) || { nome: '—', tipo: '' }, v = acc[id];
-      ['total', 'aberto', 'pago', 'n'].forEach(k => t[k] += v[k]);
+      ['total', 'aberto', 'pago', 'n', 'dep'].forEach(k => t[k] += v[k]);
       html += '<tr><td>' + U.esc(c.nome) + (c.ativo === false ? ' <span class="sub">(encerrado)</span>' : '') + '</td>' +
         '<td>' + U.esc(c.tipo) + '</td><td class="num">' + v.n + '</td>' +
-        '<td class="num">' + U.num(v.total) + '</td><td class="num">' + U.num(v.aberto) + '</td>' +
+        '<td class="num">' + U.num(v.total) + '</td>' +
+        '<td class="num sub">' + (v.dep ? U.num(v.dep) : '—') + '</td>' +
+        '<td class="num">' + U.num(custoDe(v)) + '</td>' +
+        '<td class="num">' + U.num(v.aberto) + '</td>' +
         '<td class="num">' + U.num(v.pago) + '</td></tr>';
     });
     html += '<tr class="total"><td colspan="2">Total</td><td class="num">' + t.n + '</td>' +
-      '<td class="num">' + U.num(t.total) + '</td><td class="num">' + U.num(t.aberto) + '</td>' +
-      '<td class="num">' + U.num(t.pago) + '</td></tr></tbody></table>';
+      '<td class="num">' + U.num(t.total) + '</td>' +
+      '<td class="num">' + U.num(t.dep) + '</td>' +
+      '<td class="num">' + U.num(custoDe(t)) + '</td>' +
+      '<td class="num">' + U.num(t.aberto) + '</td>' +
+      '<td class="num">' + U.num(t.pago) + '</td></tr></tbody></table>' +
+      '<div class="ajuda">Parcelas, em aberto e pago vêm do contas a pagar e conciliam com o banco. ' +
+        'A <b>depreciação</b> não: ela é o equipamento alocado no centro se pagando mês a mês, sem ' +
+        'título nenhum. Por isso a coluna é separada — e "custo no período" é a soma das duas.</div>';
     return html;
   }
 

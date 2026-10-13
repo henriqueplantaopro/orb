@@ -294,8 +294,103 @@ ERP.util = (function () {
     });
   }
 
+  /* ── COLUNAS QUE CABEM NA TELA ─────────────────────────
+     As colunas de número têm largura fixa e igual entre si — é o que
+     permite comparar mês a mês sem o olho se perder. Com doze meses
+     mais o total, porém, treze colunas de 96px não cabem em tela
+     nenhuma, e a tabela passava a sair pela direita.
+
+     A saída não é desistir da simetria: é escolher a largura comum
+     PELO ESPAÇO QUE EXISTE. Mede-se o que a caixa tem, desconta-se o
+     mínimo da coluna de descrição e divide-se o resto pelo número de
+     colunas. Elas continuam todas iguais — só menores.
+
+     E o piso de cada coluna não é um número escolhido: é o que o
+     MAIOR VALOR da tabela mede naquela fonte. Chutar o piso cortava
+     "-6.208.928,30" e a tabela voltava a sair pela direita — pior do
+     que o defeito original, porque um número cortado mente. */
+  const COL_PADRAO = { rel: 96, 'tab-resultado': 120 };
+  /* Três degraus, do mais confortável ao mais apertado. Cada um só é
+     usado se o anterior não couber: primeiro o tamanho de sempre,
+     depois fonte e respiro menores, por último a descrição estreita.
+     Nenhum deles corta número — quem encolhe é o espaço em volta. */
+  const DEGRAUS = [
+    { classe: '',                   desc: null },
+    { classe: 'apertada',           desc: 150  },
+    { classe: 'apertada muito',     desc: 110  }
+  ];
+
+  function ajustarColunas(raiz) {
+    const onde = raiz && raiz.querySelectorAll ? raiz : document;
+    Array.prototype.forEach.call(
+      onde.querySelectorAll('table.rel, table.tab-resultado'), function (t) {
+        const nums = t.querySelectorAll('thead th.num').length;
+        if (!nums) return;
+        const padrao = t.classList.contains('tab-resultado')
+          ? COL_PADRAO['tab-resultado'] : COL_PADRAO.rel;
+        const caixa = t.parentElement;
+        const espaco = (caixa && caixa.clientWidth) || t.clientWidth || 0;
+        if (!espaco) return;
+        const th0 = t.querySelector('thead th');
+        /* O mínimo da descrição é o que a própria tela pediu (o DRE
+           gerencial pede 230px); sem pedido, 150px, que é onde um
+           nome de conta ainda se lê. */
+        const pedido = th0 ? (parseFloat(getComputedStyle(th0).minWidth) || 0) : 0;
+
+        /* QUANTO O NÚMERO PRECISA, MEDIDO E NÃO ARBITRADO. Com a
+           coluna espremida a 1px, o `scrollWidth` da célula é
+           exatamente a largura que o maior valor pede naquela fonte.
+           Uma largura escolhida no chute cortava "-6.208.928,30" e a
+           tabela voltava a sair pela direita. */
+        const precisaDe = function () {
+          t.style.setProperty('--col-num', '1px');
+          let maior = 0;
+          Array.prototype.forEach.call(t.querySelectorAll('th.num, td.num'), function (c) {
+            if (c.scrollWidth > maior) maior = c.scrollWidth;
+          });
+          return maior + 2;
+        };
+
+        let escolhido = null;
+        for (let i = 0; i < DEGRAUS.length; i++) {
+          const d = DEGRAUS[i];
+          t.className = t.className.replace(/\s*\bapertada\b|\s*\bmuito\b/g, '') +
+            (d.classe ? ' ' + d.classe : '');
+          const minDesc = d.desc === null ? (pedido > 0 ? pedido : 150)
+            : Math.min(pedido > 0 ? pedido : d.desc, d.desc);
+          if (d.desc === null) t.style.removeProperty('--col-desc');
+          else t.style.setProperty('--col-desc', minDesc + 'px');
+          const cada = Math.floor((espaco - minDesc - 2) / nums);
+          const precisa = precisaDe();
+          const largura = Math.max(precisa, Math.min(padrao, cada));
+          escolhido = { classe: d.classe, desc: d.desc, minDesc: minDesc, largura: largura };
+          t.style.setProperty('--col-num', largura + 'px');
+          /* Coube? Pronto — não se aperta o que já está confortável. */
+          if (largura * nums + minDesc <= espaco) break;
+        }
+        /* Se nem o último degrau couber (tela de telefone com doze
+           meses), fica o último: as colunas continuam iguais entre si
+           e a caixa rola, que é melhor que número cortado. */
+        if (escolhido) t.style.setProperty('--col-num', escolhido.largura + 'px');
+      });
+  }
+
+  /* A mesma conta vale quando a janela muda de tamanho — senão a
+     tabela nasce certa e fica errada ao primeiro arrasto. */
+  let pendente = null;
+  /* A bateria carrega este arquivo fora do navegador, com um `window`
+     de mentira: sem a conferência, o módulo inteiro deixa de carregar
+     e 1.771 verificações param por causa de um ouvinte de tela. */
+  if (typeof window.addEventListener === 'function') {
+    window.addEventListener('resize', function () {
+      clearTimeout(pendente);
+      pendente = setTimeout(function () { ajustarColunas(); }, 120);
+    });
+  }
+
   return {
     ligarData: ligarData,
+    ajustarColunas: ajustarColunas,
     slug,
     mesesEntre,
     diasUteis, brl, num, parseValor, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,

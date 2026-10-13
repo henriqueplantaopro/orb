@@ -259,6 +259,7 @@ ERP.faturamento = (function () {
           }).join('') + '</tbody></table></div>'
         : '<div class="vazio"><strong>Nada em ' + U.fComp(resComp) + '.</strong>' +
           'Escolha outra competência.</div>');
+    U.ajustarColunas(box);
     U.el('res-comp').addEventListener('change', function () {
       /* O campo de mês pode ser esvaziado pelo teclado; esvaziado,
          ele volta para o mês corrente em vez de virar "todas". */

@@ -298,11 +298,46 @@ td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
 
    A primeira coluna fica livre (os nomes de conta têm tamanhos
    muito diferentes); as de número passam a ter largura própria e
-   igual entre si. */
-table.rel th.num, table.rel td.num{width:96px;min-width:96px;}
+   igual entre si.
+
+   A largura comum sai de `--col-num`, que o `util.ajustarColunas`
+   calcula pelo espaço que a caixa tem: com doze meses mais o total,
+   treze colunas de 96px não cabem em tela nenhuma, e a tabela saía
+   pela direita. Elas continuam iguais entre si — só menores. O valor
+   aqui é só o de partida, para a tabela já nascer certa antes da
+   primeira medição. */
+table.rel th.num, table.rel td.num{
+  width:var(--col-num,96px);min-width:var(--col-num,96px);max-width:var(--col-num,96px);}
 table.rel th:first-child, table.rel td:first-child{width:auto;}
-table.tab-resultado th.num, table.tab-resultado td.num{width:120px;min-width:120px;}
+table.tab-resultado th.num, table.tab-resultado td.num{
+  width:var(--col-num,120px);min-width:var(--col-num,120px);max-width:var(--col-num,120px);}
 table.tab-resultado th:first-child, table.tab-resultado td:first-child{width:auto;min-width:200px;}
+/* Muitas colunas: fonte e respiro menores devolvem uns 20px por
+   coluna. "1.234.567,89" continua inteiro — é o número que define o
+   piso. A descrição também cede, porque ela é a única que pode. */
+/* `table-layout:fixed` é o que faz o navegador OBEDECER às larguras.
+   No layout automático a largura de uma célula é uma sugestão: a
+   coluna de descrição ignorava o `max-width` e ficava com 200px onde
+   lhe foram dados 150, e a tabela saía 10px para fora por mais que as
+   colunas de número encolhessem. Vale só no modo apertado — nas
+   tabelas que já cabem, o automático acerta melhor. */
+table.rel.apertada, table.tab-resultado.apertada{font-size:11.5px;table-layout:fixed;}
+table.rel.apertada th, table.rel.apertada td,
+table.tab-resultado.apertada th, table.tab-resultado.apertada td{padding-left:4px;padding-right:4px;}
+/* O último degrau, para o ano inteiro em tela pequena. */
+table.rel.apertada.muito, table.tab-resultado.apertada.muito{font-size:10.5px;}
+table.rel.apertada.muito th, table.rel.apertada.muito td,
+table.tab-resultado.apertada.muito th, table.tab-resultado.apertada.muito td{
+  padding-left:3px;padding-right:3px;}
+/* A descrição passa a QUEBRAR em duas linhas em vez de empurrar a
+   tabela para fora: `white-space:nowrap` (o padrão das células aqui)
+   faz a largura mínima da coluna ser o texto inteiro, e era ela que
+   comia o espaço devolvido pelas colunas de número. Quebrar é melhor
+   que cortar com reticências — nome de conta cortado não se lê. */
+table.rel.apertada th:first-child, table.rel.apertada td:first-child,
+table.tab-resultado.apertada th:first-child, table.tab-resultado.apertada td:first-child{
+  min-width:var(--col-desc,150px) !important;max-width:var(--col-desc,150px);
+  white-space:normal;overflow-wrap:anywhere;}
 /* A linha do cliente é o total do grupo: ela se lê antes das
    filhas, e sem peso visual as duas se confundem. */
 table.tab-resultado tr.res-cliente td{background:#f2f4f5;font-weight:650;

@@ -1543,7 +1543,8 @@ ERP.store = (function () {
       emps[id] = emps[id] || {
         empresa: id, apelido: (D.empresaPor(id) || {}).apelido || id,
         cnpj: (D.empresaPor(id) || {}).cnpj || '',
-        receita: 0, despesa: 0, intragrupo_receita: 0, intragrupo_despesa: 0
+        receita: 0, despesa: 0, depreciacao: 0,
+        intragrupo_receita: 0, intragrupo_despesa: 0
       };
       return emps[id];
     };
@@ -1596,9 +1597,28 @@ ERP.store = (function () {
       });
     });
 
+    /* DEPRECIAÇÃO: custo do mês sem título nenhum. O equipamento
+       alocado num projeto consome capital da empresa dona daquele
+       projeto, e ela some do resultado se só se olhar para parcelas.
+       Fica em campo PRÓPRIO, e não somada em `despesa`: despesa
+       continua querendo dizer "o que foi lançado a pagar", que é o
+       que concilia com o contas a pagar e com o banco.
+
+       Sem período declarado não há depreciação a atribuir — ela é
+       mensal por definição, e "todos os meses" não é um mês. */
+    const periodo = f.competencia ? { de: f.competencia + '-01', ate: f.competencia + '-01' }
+      : (f.de && f.ate ? { de: f.de, ate: f.ate } : null);
+    if (periodo) {
+      const dep = depreciacaoNoPeriodo(periodo.de, periodo.ate);
+      Object.keys(dep.porEmpresa).forEach(function (id) {
+        if (!id || id === 'null' || id === 'undefined') return;
+        nova(id).depreciacao = dep.porEmpresa[id];
+      });
+    }
+
     const lista = Object.keys(emps).map(function (k) {
       const e = emps[k];
-      e.resultado = Math.round((e.receita - e.despesa) * 100) / 100;
+      e.resultado = Math.round((e.receita - e.despesa - e.depreciacao) * 100) / 100;
       e.margem = e.receita > 0 ? Math.round(e.resultado / e.receita * 1000) / 10 : null;
       return e;
     });
@@ -1613,14 +1633,18 @@ ERP.store = (function () {
       receita_bruta: somar('receita'), despesa_bruta: somar('despesa'),
       eliminacao_receita: elimReceita, eliminacao_despesa: elimDespesa,
       receita: Math.round((somar('receita') - elimReceita) * 100) / 100,
-      despesa: Math.round((somar('despesa') - elimDespesa) * 100) / 100
+      despesa: Math.round((somar('despesa') - elimDespesa) * 100) / 100,
+      /* A depreciação não tem contrapartida intragrupo: o bem é de uma
+         empresa só, e não há nota entre elas para eliminar. */
+      depreciacao: somar('depreciacao')
     };
     /* Prova real: eliminar receita sem eliminar a despesa do outro
        lado (ou o contrário) significa que falta lançar a contrapartida
        — o consolidado deixa de fechar com a soma das empresas. */
     consolidado.eliminacao_fecha = Math.abs(elimReceita - elimDespesa) < 0.02;
     consolidado.eliminacao_diferenca = Math.round((elimReceita - elimDespesa) * 100) / 100;
-    consolidado.resultado = Math.round((consolidado.receita - consolidado.despesa) * 100) / 100;
+    consolidado.resultado = Math.round(
+      (consolidado.receita - consolidado.despesa - consolidado.depreciacao) * 100) / 100;
     consolidado.margem = consolidado.receita > 0
       ? Math.round(consolidado.resultado / consolidado.receita * 1000) / 10 : null;
 
@@ -16765,6 +16789,36 @@ ERP.store = (function () {
     return Object.keys(por).map(function (k) { return por[k]; });
   }
 
+  /* A MESMA DEPRECIAÇÃO, PARA QUEM PRECISAR DELA. O DRE gerencial e o
+     resultado por projeto já cobravam a depreciação do projeto onde o
+     equipamento está; o DRE por competência, o resultado por empresa e
+     o total por centro de custo não — e o mesmo mês dava três
+     resultados diferentes conforme a tela aberta.
+
+     A conta é uma só e mora aqui; cada relatório só escolhe por qual
+     chave quer ler (mês, centro ou empresa). */
+  function depreciacaoNoPeriodo(de, ate) {
+    const vazio = { porMes: {}, porCentro: {}, porEmpresa: {}, total: 0 };
+    if (!de || !ate) return vazio;
+    let m = U.compDe(de);
+    const fim = U.compDe(ate);
+    if (m > fim) return vazio;
+    const r = { porMes: {}, porCentro: {}, porEmpresa: {}, total: 0 };
+    const soma = (obj, k, v) => { obj[k] = Math.round(((obj[k] || 0) + v) * 100) / 100; };
+    /* Teto de segurança: competência inválida vinda de um filtro
+       quebrado não pode virar laço infinito na tela do usuário. */
+    for (let guarda = 0; m <= fim && guarda < 600; guarda++) {
+      depreciacaoPorProjeto(m).forEach(function (d) {
+        soma(r.porMes, m, d.valor);
+        soma(r.porCentro, d.centro, d.valor);
+        soma(r.porEmpresa, empresaDoCentro(d.centro), d.valor);
+        r.total = Math.round((r.total + d.valor) * 100) / 100;
+      });
+      m = U.compDe(U.addMeses(m + '-01', 1));
+    }
+    return r;
+  }
+
   /* ── leitura gerencial ──────────────────────────────────*/
   /* Ociosidade: o que está parado, há quanto tempo e quanto de capital
      está imobilizado nisso. */
@@ -17524,7 +17578,8 @@ ERP.store = (function () {
     abrirOS, ordensServico, fecharOS, salvarPlanoManutencao, gerarPreventivas,
     moverOS, cancelarOS, reabrirOS, ETAPAS_OS, NOME_ETAPA_OS, indicadoresManutencao, calibracoesVencendo,
     desmembrarAtivo, vincularLocacao, resultadoDaCompra, baixarAtivo, nomeContratante, reativarAtivo, proximaTag, estornarMovimentacao,
-    depreciacaoMensal, depreciacaoDoAtivo, depreciacaoPorProjeto, VIDA_UTIL_PADRAO,
+    depreciacaoMensal, depreciacaoDoAtivo, depreciacaoPorProjeto, depreciacaoNoPeriodo,
+    VIDA_UTIL_PADRAO,
     ociosidadeAtivos, resultadoDoAtivo,
     contasAPagarEReceber, contasPagasERecebidas, fluxoDiario,
     atestadosPendentes, historicoAtestado, registrarAtestado, atestadosDoCliente, prestacaoDoCliente
