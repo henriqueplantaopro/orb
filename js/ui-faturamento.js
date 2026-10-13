@@ -169,18 +169,48 @@ ERP.faturamento = (function () {
   /* ── Resultado ──────────────────────────────────────────
      O que sobra de cada projeto no mês: faturamento menos custo e
      impostos previstos. */
-  let resComp = '', resCentro = '';
+  /* A competência começa no MÊS CORRENTE e não pode ficar vazia:
+     resultado somado de várias competências mistura mês fechado com
+     mês em andamento, e a margem que sai disso não descreve nenhum
+     dos dois. */
+  let resComp = U.hoje().slice(0, 7), resCentro = '';
+
   function renderResultado() {
     const box = U.el('fa-aba-resultado');
     if (!box) return;
+    if (!resComp) resComp = U.hoje().slice(0, 7);
     const lista = S.resultadoFaturamento({ competencia: resComp, centro: resCentro });
     const som = campo => Math.round(lista.reduce(function (t, l) { return t + (l[campo] || 0); }, 0) * 100) / 100;
     const totFat = som('faturamento'), totLucro = som('lucro');
+
+    /* ── agrupado por CLIENTE ──────────────────────────────
+       É o cliente que paga a nota e com quem se negocia preço e
+       prazo; projeto é o recorte interno. Vinte linhas de projeto
+       soltas não respondem "quanto a AGIR me dá de margem", que é
+       a pergunta de quem abre esta tela. */
+    const porCliente = {};
+    lista.forEach(function (l) {
+      const cid = D.clienteDoCentro(l.projeto.id) || '';
+      const cli = (D.clientes || []).find(function (x) { return x.id === cid; });
+      const chave = cli ? cli.nome : 'Sem cliente vinculado';
+      (porCliente[chave] = porCliente[chave] || []).push(l);
+    });
+    const nomes = Object.keys(porCliente).sort(function (a, b) {
+      /* O que não tem cliente vai para o fim: é pendência de
+         cadastro, não um cliente chamado "Sem cliente". */
+      if (a === 'Sem cliente vinculado') return 1;
+      if (b === 'Sem cliente vinculado') return -1;
+      return a.localeCompare(b, 'pt-BR');
+    });
+
+    const soma = (ls, campo) =>
+      Math.round(ls.reduce(function (t, l) { return t + (l[campo] || 0); }, 0) * 100) / 100;
+
     box.innerHTML =
-      '<h2>Resultado por projeto<span class="sub">faturamento menos custo e impostos previstos</span></h2>' +
+      '<h2>Resultado por cliente<span class="sub">faturamento menos custo e impostos previstos</span></h2>' +
       '<div class="filtros">' +
         '<div class="f"><label for="res-comp">Competência</label>' +
-          '<input type="month" id="res-comp" value="' + resComp + '" title="vazio = todas"></div>' +
+          '<input type="month" id="res-comp" value="' + resComp + '" required></div>' +
         '<div class="f"><label for="res-centro">Projeto</label><select id="res-centro">' +
           '<option value="">todos</option>' +
           D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo; })
@@ -198,24 +228,43 @@ ERP.faturamento = (function () {
         '<span>Margem <b>' + (totFat > 0 ? U.pct(Math.round(totLucro / totFat * 1000) / 10) : '—') + '</b></span>' +
       '</div>' +
       (lista.length
-        ? '<div class="tabela-rolagem"><table><thead><tr><th>Projeto</th><th>Faturamento</th>' +
-          '<th>Produtividade</th><th class="num">Valor faturado</th><th class="num">Custo</th>' +
+        ? '<div class="tabela-rolagem"><table class="tab-resultado"><thead><tr>' +
+          '<th>Cliente / projeto</th><th>Faturamento</th>' +
+          '<th class="num">Valor faturado</th><th class="num">Custo</th>' +
           '<th class="num">Impostos</th><th class="num">Lucro direto</th><th class="num">Margem</th>' +
           '</tr></thead><tbody>' +
-          lista.map(function (l) {
-            return '<tr><td class="desc">' + U.esc(l.projeto.curto || l.projeto.nome) +
-                '<div class="sub">' + U.fComp(l.competencia) + '</div></td>' +
-              '<td class="sub">' + U.esc(S.NOME_STATUS_FAT[l.status] || l.status) + '</td>' +
-              '<td class="sub">' + U.esc(S.NOME_STATUS_PROD[(l.prod || {}).status] || '—') + '</td>' +
-              '<td class="num">' + U.brl(l.faturamento) + '</td>' +
-              '<td class="num">' + U.brl(l.custo) +
-                '<div class="sub">' + U.esc(l.tipo_custo) + '</div></td>' +
-              '<td class="num sub">' + U.brl(l.impostos) + ' <span class="sub">' + l.impostos_pct + '%</span></td>' +
-              '<td class="num ' + (l.lucro < 0 ? 'erro' : '') + '">' + U.brl(l.lucro) + '</td>' +
-              '<td class="num">' + (l.margem === null ? '—' : U.pct(l.margem)) + '</td></tr>';
+          nomes.map(function (nome) {
+            const ls = porCliente[nome];
+            const f = soma(ls, 'faturamento'), lu = soma(ls, 'lucro');
+            return '<tr class="res-cliente"><td class="desc">' + U.esc(nome) +
+                '<div class="sub">' + ls.length + ' projeto(s)</div></td>' +
+              '<td></td>' +
+              '<td class="num">' + U.brl(f) + '</td>' +
+              '<td class="num">' + U.brl(soma(ls, 'custo')) + '</td>' +
+              '<td class="num">' + U.brl(soma(ls, 'impostos')) + '</td>' +
+              '<td class="num' + (lu < 0 ? ' erro' : '') + '">' + U.brl(lu) + '</td>' +
+              '<td class="num">' + (f > 0 ? U.pct(Math.round(lu / f * 1000) / 10) : '—') + '</td></tr>' +
+              ls.map(function (l) {
+                return '<tr><td class="desc" style="padding-left:24px">' +
+                    U.esc(l.projeto.curto || l.projeto.nome) + '</td>' +
+                  '<td class="sub">' + U.esc(S.NOME_STATUS_FAT[l.status] || l.status) + '</td>' +
+                  '<td class="num">' + U.brl(l.faturamento) + '</td>' +
+                  '<td class="num">' + U.brl(l.custo) +
+                    '<div class="sub">' + U.esc(l.tipo_custo) + '</div></td>' +
+                  '<td class="num sub">' + U.brl(l.impostos) +
+                    ' <span class="sub">' + U.pct(l.impostos_pct) + '</span></td>' +
+                  '<td class="num ' + (l.lucro < 0 ? 'erro' : '') + '">' + U.brl(l.lucro) + '</td>' +
+                  '<td class="num">' + (l.margem === null ? '—' : U.pct(l.margem)) + '</td></tr>';
+              }).join('');
           }).join('') + '</tbody></table></div>'
-        : '<div class="vazio">Nada nesta combinação de filtros.</div>');
-    U.el('res-comp').addEventListener('change', function () { resComp = this.value; renderResultado(); });
+        : '<div class="vazio"><strong>Nada em ' + U.fComp(resComp) + '.</strong>' +
+          'Escolha outra competência.</div>');
+    U.el('res-comp').addEventListener('change', function () {
+      /* O campo de mês pode ser esvaziado pelo teclado; esvaziado,
+         ele volta para o mês corrente em vez de virar "todas". */
+      resComp = this.value || U.hoje().slice(0, 7);
+      renderResultado();
+    });
     U.el('res-centro').addEventListener('change', function () { resCentro = this.value; renderResultado(); });
   }
 
@@ -404,7 +453,12 @@ ERP.faturamento = (function () {
      Onde cada competência de cada projeto está, do previsto ao
      faturado, com o carimbo de quem fez cada etapa. Ordem: mais atrás
      na esteira e parado há mais tempo primeiro; faturado no fim. */
-  let fEst = { pendentes: true, competencia: '', etapa: '' };
+  /* A esteira abre na competência do MÊS CORRENTE, e não em
+     "todas". Faturamento se acompanha mês a mês: a lista de todas
+     as competências junta o que está fechado com o que está em
+     andamento, e o número que a pessoa olha deixa de querer dizer
+     alguma coisa. */
+  let fEst = { pendentes: true, competencia: U.hoje().slice(0, 7), etapa: '' };
   const ETAPAS_NOME = { previsao: 'Previsão', confirmado: 'Valor confirmado',
     autorizado: 'Autorizado pelo órgão', liberado: 'Liberado p/ faturar', faturado: 'Faturado' };
   /* Versão curta para o cabeçalho da esteira, que tem oito colunas e
@@ -437,9 +491,15 @@ ERP.faturamento = (function () {
       '<h2>Esteira do faturamento<span class="sub">confirmar o valor não é autorizar, e autorizar não é liberar</span></h2>' +
       '<div class="filtros">' +
         '<div class="f"><label for="es-comp">Competência</label><select id="es-comp">' +
-          '<option value="">Todas</option>' + comps.map(function (c) {
-            return '<option value="' + c + '"' + (fEst.competencia === c ? ' selected' : '') + '>' + U.fComp(c) + '</option>';
-          }).join('') + '</select></div>' +
+          /* Sem a opção "Todas": uma competência por vez, sempre. E
+             o mês corrente entra na lista mesmo quando ainda não
+             tem nada lançado — senão a tela abriria vazia e sem
+             dizer por quê. */
+          (comps.indexOf(fEst.competencia) < 0 ? [fEst.competencia] : []).concat(comps)
+            .map(function (c) {
+              return '<option value="' + c + '"' + (fEst.competencia === c ? ' selected' : '') + '>' +
+                U.fComp(c) + '</option>';
+            }).join('') + '</select></div>' +
         '<div class="f"><label for="es-etapa">Etapa</label><select id="es-etapa">' +
           '<option value="">Todas</option>' + ORDEM_ETAPAS.map(function (e) {
             return '<option value="' + e + '"' + (fEst.etapa === e ? ' selected' : '') + '>' +
@@ -458,8 +518,12 @@ ERP.faturamento = (function () {
            faturar") empurrando a tabela para fora da tela, e cada um
            guarda só uma data ou um visto. O nome completo fica no
            `title`, para quem passar o mouse. */
+        /* A PRODUTIVIDADE saiu desta aba. Ela tem estágio e valor
+           próprios, que não são os do faturamento, e lado a lado as
+           duas colunas de valor eram lidas como se fossem a mesma
+           coisa. O acompanhamento da produtividade está na aba
+           Previsões e no módulo de Produtividade. */
         '<th>Projeto</th><th class="col-comp">Comp.</th>' +
-        '<th class="col-prod">Prod.</th><th class="num col-val">Valor prod.</th>' +
         '<th class="num col-val">Valor</th>' +
         ORDEM_ETAPAS.slice(1).map(function (e) {
           return '<th class="num col-etapa" title="' + ETAPAS_NOME[e] + '">' +
@@ -483,10 +547,7 @@ ERP.faturamento = (function () {
             /* Em que pé está a produtividade, e o valor que corresponde
                a esse estágio — sem misturar estimativa com o que já é
                firme. */
-            '<td>' + '<span class="badge ' +
-              ({ previsto: 'b-pendente', lancado: 'b-aguardando', confirmado: 'b-aprovado' }[(l.prod || {}).status] || 'b-pendente') +
-              '">' + U.esc(S.NOME_STATUS_PROD[(l.prod || {}).status] || '—') + '</span></td>' +
-            '<td class="num">' + U.brl((l.prod || {}).valor || 0) + '</td>' +
+
             /* Estimativa editável na própria esteira: quem opera o
                faturamento corrige o número sem sair da tela. Depois de
                confirmado, o valor deixa de ser estimativa e só muda
@@ -518,7 +579,7 @@ ERP.faturamento = (function () {
                 }).join('')
               : '');
         }).join('')
-          : '<tr><td colspan="9" class="vazio"><strong>Nada na esteira com esse filtro.</strong></td></tr>') +
+          : '<tr><td colspan="8" class="vazio"><strong>Nada na esteira nesta competência.</strong></td></tr>') +
       '</tbody></table></div>' +
       '<div class="ajuda">Linha em vermelho está parada há mais de 15 dias na mesma etapa. ' +
         'Quem confirma o fechamento registra a autorização do órgão; a liberação é de quem responde pelo ' +

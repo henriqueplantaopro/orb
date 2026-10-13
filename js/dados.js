@@ -423,6 +423,24 @@ ERP.dados = (function () {
   ];
 
   const TIPOS_SERVICO = { medico: 'Serviços médicos', locacao: 'Locações', venda: 'Venda de material' };
+
+  /* TEM REPASSE DE PRODUTIVIDADE?
+     A resposta sai do TIPO DE SERVIÇO, e não de uma cópia guardada
+     dele. O campo `produtividade` do projeto é, por definição,
+     `tipo_servico === 'medico'` — e valor derivado guardado ao lado
+     da origem é valor que envelhece: bastou um projeto entrar por
+     importação, e não pelo formulário, para a cópia ficar `false`
+     num projeto de serviços médicos. Na tela de previsões isso
+     apareceu como "locação — sem repasse" em todos os projetos,
+     inclusive nos que repassam.
+     O campo guardado continua sendo gravado, porque o banco e os
+     relatórios antigos contam com ele; o que mudou é que ninguém
+     mais DECIDE por ele. Projeto sem `tipo_servico` — registro
+     velho, de antes do campo — ainda cai na cópia, que é a única
+     informação que ele tem. */
+  const temRepasse = c => !!c && (c.tipo_servico
+    ? c.tipo_servico === 'medico'
+    : c.produtividade !== false);
   const unidades = () => Array.from(new Set(centros.filter(function (c) { return c.unidade; })
     .map(function (c) { return c.unidade; }))).sort();
 
@@ -2031,7 +2049,7 @@ ERP.dados = (function () {
     return g ? g.tipo : null;
   };
 
-  return { empresa, usuarios, perfis, perfil, ACOES, MODULOS, centros, TIPOS_SERVICO, unidades, contratosSeed, TIPOS_CONTRATO,
+  return { empresa, usuarios, perfis, perfil, ACOES, MODULOS, centros, TIPOS_SERVICO, temRepasse, unidades, contratosSeed, TIPOS_CONTRATO,
            clienteDoCentro, projetosDoCliente, migrarVinculoCliente,
            ativosSeed, STATUS_ATIVO, nomeStatusAtivo, parametrosManutencao,
            empresas, empresaPor,

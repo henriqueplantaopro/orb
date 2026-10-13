@@ -9739,4 +9739,81 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /class="col-contratante"/.test(av) && /col-locacao"/.test(av), '');
 })();
 
+// ── v112: repasse derivado, esteira e relatórios por mês ────
+(function () {
+  const fsC = require('fs');
+  const dd = fsC.readFileSync(__dirname + '/js/dados.js', 'utf8');
+  const fat = fsC.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const rel = fsC.readFileSync(__dirname + '/js/ui-relatorios.js', 'utf8');
+  const pv = fsC.readFileSync(__dirname + '/js/ui-previsoes.js', 'utf8');
+  const css2 = fsC.readFileSync(__dirname + '/css/erp.css', 'utf8');
+  const sto2 = fsC.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const sql55 = fsC.readFileSync(__dirname + '/supabase/55-ATUALIZAR-v112.sql', 'utf8');
+
+  /* O campo `produtividade` do projeto é, por definição,
+     `tipo_servico === 'medico'`. A coluna nasceu com DEFAULT FALSE,
+     então todo projeto que entrou sem passar pelo formulário ficou
+     "sem repasse" — e a tela de previsões dizia isso de 100% dos
+     projetos, inclusive dos que repassam. Cópia de valor derivado
+     envelhece; a decisão passa a sair da origem. */
+  verificar('v112 — existe um só lugar que decide se o projeto tem repasse',
+    /const temRepasse = c => !!c && \(c\.tipo_servico/.test(dd) &&
+    /c\.tipo_servico === 'medico'/.test(dd), '');
+  verificar('v112 — e o registro antigo, sem tipo de serviço, ainda cai no campo guardado',
+    /: c\.produtividade !== false\)/.test(dd), '');
+  /* Ninguém mais pode LER a cópia para decidir. */
+  const leemCopia = ['js/ui-previsoes.js', 'js/ui-cadastros.js', 'js/ui-relatorios.js', 'js/store.js']
+    .filter(function (f) {
+      const t = fsC.readFileSync(__dirname + '/' + f, 'utf8');
+      return /c\.produtividade === false|!!c\.produtividade|&& c\.produtividade\b/.test(t);
+    });
+  verificar('v112 — e nenhuma tela decide mais pela cópia guardada',
+    leemCopia.length === 0, leemCopia.join(', ') || 'nenhuma');
+  verificar('v112 — o SQL alinha a cópia com o tipo, sem mexer em quem não tem tipo',
+    /set produtividade = \(tipo_servico = 'medico'\)/.test(sql55) &&
+    /and tipo_servico is not null/.test(sql55), '');
+
+  /* A esteira abre numa competência e não oferece "todas":
+     faturamento se acompanha mês a mês. */
+  verificar('v112 — a esteira abre na competência do mês corrente',
+    /competencia: U\.hoje\(\)\.slice\(0, 7\)/.test(fat), '');
+  verificar('v112 — e não tem mais a opção "todas"',
+    !/<option value="">Todas<\/option>' \+ comps/.test(fat), '');
+  verificar('v112 — o mês corrente entra na lista mesmo sem lançamento',
+    /comps\.indexOf\(fEst\.competencia\) < 0 \? \[fEst\.competencia\] : \[\]/.test(fat), '');
+  verificar('v112 — a produtividade saiu da esteira',
+    !/col-prod/.test(fat) && !/Valor prod\./.test(fat), '');
+
+  /* O resultado é por cliente, e a competência não pode ficar
+     vazia: somar meses fechados com o mês em andamento produz uma
+     margem que não descreve nenhum dos dois. */
+  verificar('v112 — o resultado agrupa por cliente',
+    /Resultado por cliente/.test(fat) && /const porCliente = \{\};/.test(fat) &&
+    /res-cliente/.test(fat), '');
+  verificar('v112 — e o que não tem cliente vai para o fim, nomeado',
+    /Sem cliente vinculado/.test(fat), '');
+  verificar('v112 — a competência do resultado nunca fica vazia',
+    /resComp = this\.value \|\| U\.hoje\(\)\.slice\(0, 7\)/.test(fat) &&
+    /if \(!resComp\) resComp = U\.hoje\(\)\.slice\(0, 7\);/.test(fat), '');
+
+  /* Resultado de 05/10 a 13/10 confronta a receita do mês inteiro
+     com nove dias de custo. */
+  verificar('v112 — os relatórios de resultado escolhem mês, não dia',
+    /function filtrosMes/.test(rel) &&
+    (rel.match(/filtrosMes\(\)/g) || []).length === 5, '');
+  verificar('v112 — e por baixo o período continua de data a data, com as pontas no mês',
+    /const primeiroDia = mes => mes \+ '-01';/.test(rel) &&
+    /const ultimoDia = function \(mes\)/.test(rel), '');
+  /* O recorte por dia CONTINUA onde faz sentido: o que vence esta
+     semana, o que foi baixado ontem. */
+  verificar('v112 — e o recorte por dia continua nos relatórios de caixa',
+    /function filtrosPeriodo/.test(rel) && /id="rp-de"/.test(rel), '');
+
+  /* Doze meses com doze larguras tiram a referência de quem compara
+     mês a mês, que é a única coisa que se faz nessa tabela. */
+  verificar('v112 — as colunas de número têm largura própria e igual',
+    /table\.rel th\.num, table\.rel td\.num\{width:96px/.test(css2) &&
+    /table\.tab-resultado th\.num, table\.tab-resultado td\.num\{width:120px/.test(css2), '');
+})();
+
 concluir();
