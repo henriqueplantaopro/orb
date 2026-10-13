@@ -289,6 +289,24 @@ td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
 .rel-nav button{background:#fff;border:1px solid var(--line);color:var(--ink2);padding:5px 10px;font-size:12px;font-weight:500;}
 .rel-nav button[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;}
 .rel-acoes{display:flex;gap:6px;margin-left:auto;}
+/* ── COLUNAS DE NÚMERO COM A MESMA LARGURA ────────────────────
+   A largura de uma coluna automática é a do seu conteúdo: no DRE do
+   ano todo, o mês com "1.234.567,89" fica largo e o mês vazio fica
+   estreito, e doze meses saem com doze larguras. Além de feio, o
+   olho perde a referência ao comparar mês a mês — que é a única
+   coisa que se faz nessa tabela.
+
+   A primeira coluna fica livre (os nomes de conta têm tamanhos
+   muito diferentes); as de número passam a ter largura própria e
+   igual entre si. */
+table.rel th.num, table.rel td.num{width:96px;min-width:96px;}
+table.rel th:first-child, table.rel td:first-child{width:auto;}
+table.tab-resultado th.num, table.tab-resultado td.num{width:120px;min-width:120px;}
+table.tab-resultado th:first-child, table.tab-resultado td:first-child{width:auto;min-width:200px;}
+/* A linha do cliente é o total do grupo: ela se lê antes das
+   filhas, e sem peso visual as duas se confundem. */
+table.tab-resultado tr.res-cliente td{background:#f2f4f5;font-weight:650;
+  border-top:1px solid var(--line);}
 table.rel td{border-bottom:1px solid var(--line2);}
 table.rel td.g{font-weight:650;background:#f2f4f5;}
 table.rel tr.total td{font-weight:700;border-top:1px solid var(--ink3);background:#f2f4f5;}

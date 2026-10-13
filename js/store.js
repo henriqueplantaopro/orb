@@ -3822,7 +3822,7 @@ ERP.store = (function () {
     });
     const projetos = D.centros.filter(function (c) {
       if (!c.ativo || c.tipo !== 'projeto') return false;
-      return todos ? true : (!!c.produtividade || !!temLote[c.id]);
+      return todos ? true : (D.temRepasse(c) || !!temLote[c.id]);
     }).sort(function (a2, b2) {
       /* Ordem alfabética: a lista é de conferência, e quem procura
          um projeto procura pelo nome. */
@@ -3841,7 +3841,7 @@ ERP.store = (function () {
         /* Se este projeto DEVERIA ter produtividade. Sem isso, a
            lista completa misturaria locação com serviço médico e a
            contagem de "faltando" perderia o sentido. */
-        esperado: !!c.produtividade,
+        esperado: D.temRepasse(c),
         qtd_lotes: lotes.length,
         valor: Math.round(lotes.reduce(function (a2, l) { return a2 + l.valor; }, 0) * 100) / 100,
         medicos: lotes.reduce(function (a2, l) { return a2 + l.medicos; }, 0)
@@ -14327,7 +14327,7 @@ ERP.store = (function () {
         (D.centro(d.centro) || {}).curto + ' · ' + U.brl(achado.faturamento) + ' → ' + U.brl(novoValor));
     }
     alvo.faturamento = novoValor;
-    alvo.produtividade = c.produtividade === false ? 0 : Math.round((d.produtividade || 0) * 100) / 100;
+    alvo.produtividade = D.temRepasse(c) ? Math.round((d.produtividade || 0) * 100) / 100 : 0;
     alvo.data = data;
     alvo.prazo_dias = pz.dias;
     alvo.observacao = d.observacao || '';
@@ -17353,7 +17353,7 @@ ERP.store = (function () {
   /* Unidades (projetos mãe) que têm produtividade: é por elas que se
      filtra "tudo da AGIR" sem escolher setor por setor. */
   const unidadesComProdutividade = () => D.centros
-    .filter(function (c) { return c.tipo === 'projeto' && c.produtividade && c.unidade; })
+    .filter(function (c) { return c.tipo === 'projeto' && D.temRepasse(c) && c.unidade; })
     .map(function (c) { return c.unidade; })
     .filter(function (u, i, a) { return a.indexOf(u) === i; })
     .sort(function (a, b) { return String(a).localeCompare(String(b), 'pt-BR'); });

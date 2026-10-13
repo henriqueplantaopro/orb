@@ -41,11 +41,11 @@ ERP.relatorios = (function () {
           ? 'o que de fato entrou e saiu em cada mês'
           : 'o resultado do período, com a despesa da casa rateada pelo faturamento') +
         filtrosGerencial() + dreGerencial() :
-      atual === 'dre'       ? timbrado('o que entrou e saiu por competência') + filtrosPeriodo() + dre() :
-      atual === 'empresas'  ? timbrado('resultado por empresa do grupo') + filtrosPeriodo() + porEmpresa() :
-      atual === 'centro'    ? timbrado('quanto cada centro consumiu no período') + filtrosPeriodo() + porCentro() :
+      atual === 'dre'       ? timbrado('o que entrou e saiu por competência') + filtrosMes() + dre() :
+      atual === 'empresas'  ? timbrado('resultado por empresa do grupo') + filtrosMes() + porEmpresa() :
+      atual === 'centro'    ? timbrado('quanto cada centro consumiu no mês') + filtrosMes() + porCentro() :
       atual === 'fluxo'     ? timbrado('caixa realizado e previsto, dia a dia dentro do período') + filtrosPeriodo() + fluxo() :
-      atual === 'setortipo' ? timbrado('produtividade por setor e tipo de plantão') + filtrosPeriodo() + porSetorTipo() :
+      atual === 'setortipo' ? timbrado('produtividade por setor e tipo de plantão') + filtrosMes() + porSetorTipo() :
       atual === 'fluxoDiario' ? timbrado('os próximos dias, com o saldo andando dia a dia') + fluxoDiario() :
       atual === 'aPagarReceber' ? timbrado('o que vence no período, com saldo corrido') + aPagarReceber() :
       atual === 'pagasRecebidas' ? timbrado('o que foi baixado no período') + pagasRecebidas() :
@@ -57,7 +57,8 @@ ERP.relatorios = (function () {
         filtrosCompetencia() + fatPorCompetencia() :
       atual === 'comparativoProd' ? timbrado('quanto a produtividade pesa sobre o faturamento, mês a mês') +
         filtrosComparativo() + comparativo() :
-                               timbrado('receita, custo e margem por projeto') + filtrosPeriodo() + projeto();
+                               timbrado('receita, custo e margem por projeto') + filtrosMes() + projeto();
+    if (['dre', 'empresas', 'centro', 'setortipo', 'projeto'].indexOf(atual) >= 0) ligarFiltrosMes();
     if (atual === 'gerencial') ligarGerencial();
     if (atual === 'setortipo') ligarFiltrosSetorTipo();
     if (atual === 'faturamento') ligarFiltrosFaturamento();
@@ -533,6 +534,69 @@ ERP.relatorios = (function () {
     const t = U.el('cp-trocar');
     if (t) t.addEventListener('click', function () {
       const x = compA; compA = compB; compB = x; render();
+    });
+  }
+
+  /* ── período em MESES INTEIROS, para os relatórios de resultado
+     Receita, custo e margem de 05/10 a 13/10 não descrevem nada: a
+     receita do mês inteiro é confrontada com nove dias de custo, e
+     a margem que sai disso é ficção. O recorte por dia continua
+     onde faz sentido — o que vence esta semana, o que foi baixado
+     ontem, as notas emitidas num intervalo —, e sai de onde o
+     número só fecha com o mês fechado.
+
+     Por baixo o período continua sendo de data a data: o que muda é
+     que as pontas são sempre o primeiro e o último dia de um mês.
+     Assim nada do que lê `per.de` e `per.ate` precisou mudar. */
+  const primeiroDia = mes => mes + '-01';
+  const ultimoDia = function (mes) {
+    const [a, m] = mes.split('-').map(Number);
+    return new Date(Date.UTC(a, m, 0)).toISOString().slice(0, 10);
+  };
+
+  function filtrosMes(extra) {
+    const de = (per.de || U.mesAtual()).slice(0, 7);
+    const ate = (per.ate || U.mesAtual()).slice(0, 7);
+    return '<div class="filtros">' +
+      '<div class="f"><label for="rm-de">De</label>' +
+        '<input type="month" id="rm-de" value="' + de + '"></div>' +
+      '<div class="f"><label for="rm-ate">Até</label>' +
+        '<input type="month" id="rm-ate" value="' + ate + '"></div>' +
+      '<button class="btn-sm" id="rm-mes">Mês atual</button>' +
+      '<button class="btn-sm" id="rm-mes-ant">Mês anterior</button>' +
+      '<button class="btn-sm" id="rm-ano">Ano todo</button>' +
+      (extra || '') +
+      '<div class="ajuda" style="flex-basis:100%;margin:4px 0 0">O recorte é por mês fechado: ' +
+      'resultado de meio mês confronta a receita do mês inteiro com o custo de alguns dias.</div>' +
+      '</div>';
+  }
+
+  function ligarFiltrosMes() {
+    const re = function () { render(); };
+    const liga = function (id, fn) { const e = U.el(id); if (e) e.addEventListener('change', fn); };
+    const clica = function (id, fn) { const e = U.el(id); if (e) e.addEventListener('click', fn); };
+    liga('rm-de', function () {
+      if (!this.value) return;
+      per.de = primeiroDia(this.value);
+      if (per.ate < per.de) per.ate = ultimoDia(this.value);
+      re();
+    });
+    liga('rm-ate', function () {
+      if (!this.value) return;
+      per.ate = ultimoDia(this.value);
+      if (per.de > per.ate) per.de = primeiroDia(this.value);
+      re();
+    });
+    clica('rm-mes', function () {
+      per.de = primeiroDia(U.mesAtual()); per.ate = ultimoDia(U.mesAtual()); re();
+    });
+    clica('rm-mes-ant', function () {
+      const m = U.addMeses(U.mesAtual() + '-01', -1).slice(0, 7);
+      per.de = primeiroDia(m); per.ate = ultimoDia(m); re();
+    });
+    clica('rm-ano', function () {
+      const ano = U.mesAtual().slice(0, 4);
+      per.de = ano + '-01-01'; per.ate = ano + '-12-31'; re();
     });
   }
 
@@ -1626,7 +1690,7 @@ ERP.relatorios = (function () {
   let filtroST = { centro: '', setor: '', tipo: '' };
 
   function porSetorTipo() {
-    const projetos = D.centros.filter(function (c) { return c.tipo === 'projeto' && c.produtividade; })
+    const projetos = D.centros.filter(function (c) { return c.tipo === 'projeto' && D.temRepasse(c); })
       .sort(function (a, b) { return (a.curto || a.nome).localeCompare(b.curto || b.nome, 'pt-BR'); });
     if (!projetos.length) return vazio('Nenhum projeto com produtividade cadastrado.');
     /* A lista traz as UNIDADES (projeto mãe) antes dos projetos: quem

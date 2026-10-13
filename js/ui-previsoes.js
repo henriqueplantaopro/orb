@@ -143,8 +143,8 @@ ERP.previsoes = (function () {
           ? '<td class="num sub">' + U.num(pv.faturamento) + '<div class="sub">rateio do grupo</div></td>'
           : '<td><input class="num" data-pv-fat="' + c.id + '" inputmode="decimal" value="' +
             U.num(pv.faturamento) + '"></td>') +
-        '<td>' + (c.produtividade === false
-          ? '<span class="sub">locação — sem repasse</span>'
+        '<td>' + (!D.temRepasse(c)
+          ? '<span class="sub">' + (D.TIPOS_SERVICO[c.tipo_servico] || 'sem repasse') + ' — sem repasse</span>'
           : '<input class="num" data-pv-prod="' + c.id + '" inputmode="decimal" value="' +
             U.num(pv.produtividade) + '">') + '</td>' +
         /* Só quatro colunas, por decisão da operação: projeto, previsão

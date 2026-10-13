@@ -495,7 +495,7 @@ ERP.cadastros = (function () {
             : '<span class="erro">definir</span>') + '</td>' +
           '<td>' + (c.tipo === 'projeto'
             ? U.esc(D.TIPOS_SERVICO[c.tipo_servico] || c.tipo_servico || '?') +
-              (c.produtividade === false ? '<div class="sub">sem repasse</div>' : '')
+              (D.temRepasse(c) ? '' : '<div class="sub">sem repasse</div>')
             : '<span class="sub">' + U.esc(c.tipo) + '</span>') + '</td>' +
           '<td class="num">' + (c.prazo_dias ? c.prazo_dias + 'd' : '—') + '</td>' +
           IMP.map(function (i) { return '<td class="num sub">' + pct(imp[i[0]]) + '</td>'; }).join('') +
