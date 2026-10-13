@@ -154,6 +154,10 @@ ERP.exportar = (function () {
     colunas.forEach(function (c, i) { rTit.getCell(i + 1).value = c.titulo; });
     linhas.forEach(function (l) {
       const r = ws.addRow(colunas.map(function (c) { return valorDe(c, l, false); }));
+      /* Linha de total vem em negrito, como na tela. Ela é parte do
+         relatório — o "Resultado líquido" de um DRE não é um registro
+         a mais, é a resposta —, e some do arquivo se for descartada. */
+      if (l.__total) r.font = { bold: true };
       /* Alerta pintado na tela: a planilha recebe a mesma cor, para
          quem abrir o arquivo ver o que quem olhou a tela viu. */
       const cores = l.__cores;
@@ -204,7 +208,15 @@ ERP.exportar = (function () {
        configuração de visualização, e definir duas vezes faz a
        segunda apagar a primeira. */
     ws.views = [{ state: 'frozen', ySplit: linhaTitulos, showGridLines: false }];
-    ws.autoFilter = { from: { row: linhaTitulos, column: 1 }, to: { row: linhaTitulos, column: colunas.length } };
+    /* O FILTRO COBRE SÓ AS LINHAS DE DADOS. Sem um fim declarado, o
+       Excel estende o filtro até a última linha preenchida, e a linha
+       de total passa a ser ordenada junto com os registros — ela
+       sobe para o meio da planilha à primeira ordenação. Declarando
+       o fim no último registro, o total fica fora e continua no pé. */
+    let ultimaFiltravel = linhaTitulos + linhas.length;
+    for (let k = linhas.length - 1; k >= 0 && linhas[k].__total; k--) ultimaFiltravel--;
+    ws.autoFilter = { from: { row: linhaTitulos, column: 1 },
+      to: { row: Math.max(ultimaFiltravel, linhaTitulos), column: colunas.length } };
     /* LARGURA PELO CONTEÚDO. Antes era 18 para quase tudo, e aí
        "Competência" virava "Competênc", "Vencimento" virava
        "Vencimenti" e a pessoa tinha de arrastar coluna por coluna
@@ -295,22 +307,40 @@ ERP.exportar = (function () {
   function deTabela(tabela) {
     if (!tabela) return null;
     const ths = Array.prototype.slice.call(tabela.querySelectorAll('thead th'));
-    /* Colunas sem título são de AÇÃO (botões "Baixar", "Editar") e a
-       linha de TOTAL não é um registro — as duas sujavam o arquivo:
-       coluna com o texto dos botões e o total exportado como se fosse
-       mais um funcionário. */
+    /* Colunas sem título são de AÇÃO (botões "Baixar", "Editar"): sem
+       isto o arquivo saía com uma coluna cheia do texto dos botões. */
     const usar = ths.map(function (th, i) {
       const t = th.textContent.trim();
       return { i: i, titulo: t, ok: !!t && !th.classList.contains('acoes') };
     }).filter(function (c) { return c.ok; });
     const cabs = usar.map(function (c) { return c.titulo; });
+
+    /* LINHA DE TOTAL É LINHA. A versão anterior jogava fora toda linha
+       marcada como total — e num DRE isso apaga justamente o que se
+       foi ler: "Resultado líquido" aparecia na tela e sumia no Excel.
+       Agora ela sai, em negrito, na posição em que está; o que a tira
+       do caminho de quem ordena a planilha é o filtro, que passa a
+       cobrir só as linhas de dados.
+
+       `colspan` também deixa de descartar a linha. Antes, qualquer
+       linha com menos células que o cabeçalho (subtotal por cliente,
+       título de bloco) era descartada "para não sair deslocada"; aqui
+       ela é expandida — a célula ocupa as colunas que diz ocupar e
+       tudo volta para o lugar certo. */
+    const ehTotal = function (tr) {
+      if (tr.classList.contains('total') || tr.classList.contains('linha-total') ||
+          tr.classList.contains('res-cliente')) return true;
+      const primeira = ((tr.children[0] || {}).innerText || '').trim();
+      return /^(total|soma|=)/i.test(primeira);
+    };
     const linhas = Array.prototype.map.call(tabela.querySelectorAll('tbody tr'), function (tr) {
-      if (/^(total|soma)\b/i.test((tr.children[0] || {}).innerText || '')) return null;
-      if (tr.classList.contains('total') || tr.classList.contains('linha-total')) return null;
-      const celulas = Array.prototype.slice.call(tr.children);
-      /* linha com menos células que o cabeçalho é subtotal/agrupamento
-         e sairia deslocada uma coluna */
-      if (celulas.length < ths.length) return null;
+      /* Expande o colspan: cada célula ocupa as colunas que declara,
+         e as colunas seguintes ficam vazias. */
+      const celulas = [];
+      Array.prototype.forEach.call(tr.children, function (td) {
+        const n = Math.max(1, parseInt(td.getAttribute('colspan') || '1', 10) || 1);
+        for (let k = 0; k < n; k++) celulas.push(k === 0 ? td : null);
+      });
       const valores = usar.map(function (c) {
         const td = celulas[c.i];
         return td ? td.innerText.replace(/\n+/g, ' ').trim() : '';
@@ -320,6 +350,7 @@ ERP.exportar = (function () {
          array de textos. */
       const cores = usar.map(function (c) { return corDaCelula(celulas[c.i]); });
       if (cores.some(Boolean)) valores.__cores = cores;
+      if (ehTotal(tr)) valores.__total = true;
       return valores;
     }).filter(function (l) { return l && l.some(function (c) { return c; }); });
 
