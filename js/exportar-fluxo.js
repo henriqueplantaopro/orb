@@ -192,9 +192,28 @@ ERP.exportarFluxo = (function () {
 
   /* ── aba de fluxo, com fórmulas ─────────────────────────*/
   function abaFluxo(wb, nome, linhas, prev, saldoInicialRef) {
-    const ws = wb.addWorksheet(nome, { views: [{ state: 'frozen', ySplit: prev ? 14 : 6 }] });
     const off = prev ? 1 : 0;                    // o previsto começa na coluna B
     const col = i => String.fromCharCode(65 + i + off);
+
+    /* ONDE A TABELA COMEÇA DEPENDE DE QUANTOS BANCOS EXISTEM.
+       O bloco de saldos ocupa da linha 5 até 6 + nº de bancos. A
+       linha do cabeçalho era um número escrito à mão — 6 no
+       realizado —, e 6 é a PRIMEIRA linha do bloco: com um banco
+       cadastrado que fosse, o cabeçalho era escrito por cima do
+       primeiro banco, e o "Total em bancos" somava uma faixa que
+       incluía a célula "Entrada". Com quatro bancos, a aba inteira
+       saía embaralhada.
+
+       Agora a conta é feita: o cabeçalho vem duas linhas depois do
+       total, sempre, para qualquer quantidade de bancos — e o painel
+       congelado acompanha, porque congelar numa linha e escrever em
+       outra seria o mesmo erro com outra cara. */
+    const bancos = D.bancos.filter(function (b) { return b.ativo; });
+    const lin0 = 5;
+    const linTotal = lin0 + 1 + bancos.length;
+    const linCab = linTotal + 2;
+
+    const ws = wb.addWorksheet(nome, { views: [{ state: 'frozen', ySplit: linCab }] });
 
     titulo(ws, prev ? 'C2' : 'B2', (prev ? 'FLUXO DE CAIXA PREVISTO' : 'FLUXO DE CAIXA REALIZADO') +
       ' — ' + D.empresa.nome);
@@ -202,8 +221,6 @@ ERP.exportarFluxo = (function () {
     ws.getCell(prev ? 'C3' : 'B3').font = { size: 9, color: { argb: 'FF6B7280' }, name: 'Arial' };
 
     // bloco de saldos
-    const bancos = D.bancos.filter(function (b) { return b.ativo; });
-    const lin0 = 5;
     ws.getCell((prev ? 'D' : 'C') + lin0).value = 'Saldos bancários';
     ws.getCell((prev ? 'D' : 'C') + lin0).font = { bold: true, name: 'Arial' };
     ws.getCell((prev ? 'F' : 'E') + lin0).value = 'Saldo';
@@ -214,7 +231,6 @@ ERP.exportarFluxo = (function () {
       c.value = n2(b.saldo_inicial || 0);
       c.numFmt = MOEDA;
     });
-    const linTotal = lin0 + 1 + bancos.length;
     ws.getCell((prev ? 'D' : 'C') + linTotal).value = prev ? 'Saldo de partida (fim do realizado)' : 'Total em bancos';
     ws.getCell((prev ? 'D' : 'C') + linTotal).font = { bold: true, name: 'Arial' };
     const celTotal = ws.getCell((prev ? 'F' : 'E') + linTotal);
@@ -224,7 +240,6 @@ ERP.exportarFluxo = (function () {
     celTotal.numFmt = MOEDA;
     celTotal.font = { bold: true, name: 'Arial' };
 
-    const linCab = prev ? 14 : 6;
     const cab = prev
       ? ['Seq', 'Mês', 'Data', 'Descrição', 'Entrada', 'Saída', 'Pagar?', 'Saída efet.',
          'Mov. líq.', 'Saldo', '', 'Grupo', 'Subgrupo', 'Projeto', 'Fornecedor', '', '', 'Origem']
