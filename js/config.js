@@ -26,7 +26,7 @@ ERP.config = {
      ATENÇÃO ao atualizar o sistema: este arquivo vem no pacote e
      sobrescreve o local. Se o acesso parar de ser criado depois de
      uma atualização, é esta linha que voltou ao padrão. */
-  funcaoCriarLogin: 'quick-service',
+  funcaoCriarLogin: 'dynamic-responder',
 
   /* AMBIENTE. 'producao' é o normal; 'teste' pinta o topo de
      laranja e põe um selo no título da aba.
