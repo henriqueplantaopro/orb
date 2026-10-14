@@ -83,6 +83,13 @@ ERP.persistencia = (function () {
     bancos: { tabela: 'bancos', colunas: ['id', 'empresa', 'apelido', 'banco', 'agencia', 'agencia_dv', 'conta', 'conta_dv', 'layout_remessa', 'convenio', 'saldo_inicial', 'saldo_inicial_em', 'ativo'] },
     produtos: { tabela: 'produtos', colunas: ['id', 'codigo', 'descricao', 'unidade', 'ncm', 'cest', 'familia', 'minimo', 'ideal', 'custo', 'conta', 'ativo'] },
     armazens: { tabela: 'armazens', colunas: ['id', 'codigo', 'nome', 'centro', 'tipo', 'pai', 'responsavel', 'ativo', 'especialidade'] },
+    /* `cargos` ANTES de `funcionarios` — e funcionários gravam depois
+       deste laço inteiro, então basta estar aqui. Até a v115 esta
+       tabela não era gravada: os cinco cargos de origem vinham do
+       banco e a lista era tratada como fixa. O botão "+ cadastrar"
+       na tela do DP criava o cargo só na memória, e o funcionário
+       que apontasse para ele batia em "funcionarios_cargo_fkey". */
+    cargos: { tabela: 'cargos', colunas: ['id', 'nome', 'cbo', 'salario_piso'] },
     titulos: { tabela: 'titulos', colunas: ['id', 'descricao', 'credor', 'doc', 'tipo_titulo', 'emissao', 'origem', 'origem_ref', 'obs', 'valor_total', 'valor_bruto', 'qtd', 'empresa_tomadora', 'criado_por', 'criado_por_id', 'criado_em'] },
     parcelas: { tabela: 'parcelas', colunas: ['id', 'titulo_id', 'num', 'total', 'descricao', 'credor', 'conta', 'centro', 'rateio', 'tipo_titulo', 'emissao', 'comp', 'venc', 'valor', 'status', 'valor_pago', 'pago_em', 'aprovacao', 'aprovado_por', 'aprovado_em', 'motivo', 'origem', 'doc', 'obs', 'chave', 'retencoes', 'valor_retido', 'itens', 'criado_por', 'criado_por_id', 'criado_em'] },
     pagamentos: { tabela: 'pagamentos', colunas: ['id', 'parcela_id', 'data', 'valor', 'juros', 'multa', 'desconto', 'banco', 'empresa', 'cruzamento', 'doc', 'obs', 'forma', 'forma_codigo', 'situacao', 'estornado', 'usuario', 'usuario_id', 'criado_em'] },
@@ -496,6 +503,7 @@ ERP.persistencia = (function () {
     bancos:       function (v) { return (ERP.dados.bancos || []).some(function (x) { return x.id === v; }); },
     empresas:     function (v) { return (ERP.dados.empresas || []).some(function (x) { return x.id === v; }); },
     produtos:     function (v) { return (ERP.dados.produtos || []).some(function (x) { return x.id === v; }); },
+    cargos:       function (v) { return (ERP.dados.cargos || []).some(function (x) { return x.id === v; }); },
     contratos:    function (v) { return (ERP.store.st.contratos || []).some(function (x) { return x.id === v; }); },
     ativos:       function (v) { return (ERP.store.st.ativos || []).some(function (x) { return x.id === v; }); },
     /* Usuário e funcionário não são conferidos: a lista na memória
@@ -534,7 +542,11 @@ ERP.persistencia = (function () {
     procedimentos:             { centro: 'centros', armazem: 'armazens', usuario_id: 'nao_confere' },
     fechamentos_procedimentos: { centro: 'centros' },
     lotes_produtividade:       { centro: 'centros' },
-    funcionarios:              { cargo: 'nao_confere', centro: 'centros' },
+    /* `cargo` deixou de ser 'nao_confere' quando `cargos` passou a
+       ser gravada: agora a lista na memória é a mesma do banco, e
+       conferir aqui é o que transforma um erro do Postgres num campo
+       em branco e um aviso com o nome do cargo. */
+    funcionarios:              { cargo: 'cargos', centro: 'centros' },
     decimos:                   { funcionario: 'nao_confere' },
     ativos:                    { projeto: 'centros', contrato: 'contratos', lote_origem: 'ativos' },
     ativo_movimentos:          { ativo: 'ativos', usuario_id: 'nao_confere' },
