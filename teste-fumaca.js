@@ -9729,8 +9729,18 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v110 — as colunas de texto têm teto de largura e cortam com reticências',
     /table\.tab-ativos td\.desc\{max-width:190px;\}/.test(css) &&
     /text-overflow:ellipsis/.test(css), '');
-  verificar('v110 — os botões ocupam duas linhas em vez de uma faixa grudada larga',
-    /table\.tab-ativos td\.acoes\{white-space:normal;max-width:190px;\}/.test(css), '');
+  /* ESTE TESTE ERA UMA MENTIRA ÚTIL. Ele conferia que o CSS continha
+     `white-space:normal` e passava — enquanto na tela os botões
+     seguiam numa linha só, por cima de "Onde está". O motivo: a
+     regra geral `.acoes` aplica `display:flex`, e caixa flex não
+     quebra linha; `white-space` não tem efeito nenhum ali. Medir o
+     TEXTO do CSS não mede o que é pintado.
+     Agora ele cobra o mecanismo que de fato faz os botões quebrarem,
+     e quem mede o resultado é a prova de navegador, que compara o
+     retângulo de cada botão com o da célula vizinha. */
+  verificar('v117 — a célula de ações volta a ser célula de tabela, e os botões quebram linha',
+    /table\.tab-ativos td\.acoes\{display:table-cell;white-space:normal/.test(css) &&
+    /table\.tab-ativos td\.acoes button\{display:inline-block/.test(css), '');
   /* Em tela estreita as duas colunas de menor uso saem, e o dado
      continua na Ficha. */
   verificar('v110 — em tela estreita saem as colunas de menor uso, por classe e não por posição',
