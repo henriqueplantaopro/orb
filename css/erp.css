@@ -498,8 +498,18 @@ table.tab-ativos td.sub{max-width:130px;}
    a tabela inteira passa a caber sem rolar, que é o que faz a
    coluna grudada parar de cobrir alguma coisa. Nenhum botão foi
    tirado: o que mudou foi a forma, não o que dá para fazer. */
-table.tab-ativos td.acoes{white-space:normal;max-width:190px;}
-table.tab-ativos td.acoes button{margin:1px 2px 1px 0;}
+/* `display:flex` — que a regra geral `.acoes` aplica — era o que
+   mantinha os botões numa linha só. Caixa flex não quebra linha sem
+   `flex-wrap`, então eles continuavam somando 420px e transbordando
+   da célula; e como a coluna é `sticky`, o que transborda é PINTADO
+   POR CIMA de "Onde está". O `max-width` não segurava nada: largura
+   de célula em tabela automática é sugestão, e flex item que não
+   cabe vaza.
+   Aqui a célula volta a ser célula de tabela de verdade, e os botões
+   voltam a ser elementos de linha, que quebram sozinhos. */
+table.tab-ativos td.acoes{display:table-cell;white-space:normal;text-align:right;
+  max-width:230px;width:230px;}
+table.tab-ativos td.acoes button{display:inline-block;margin:1px 0 1px 3px;float:none;}
 /* Em tela estreita, as duas colunas de MENOR uso saem — e o dado
    continua na Ficha do equipamento. Esconder coluna é pior que
    mostrar tudo; é melhor que correr a tela para o lado, porque o
