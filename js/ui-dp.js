@@ -436,7 +436,12 @@ ERP.dp = (function () {
     U.el('fn-cargo-salvar').addEventListener('click', function () {
       const nome = U.val('fn-cargo-nome');
       if (!nome) return ERP.app.aviso('Informe o nome do cargo.', 'erro');
-      const r = S.criarCargo({ nome: nome, cbo: U.val('fn-cargo-cbo'), piso_salarial: U.parseValor(U.val('fn-cargo-piso')) });
+      /* `salario_piso`, e não `piso_salarial`: a tela mandava um nome
+         e o store lia outro, então o piso digitado sumia e todo cargo
+         novo nascia com zero. Erro silencioso — o cargo era criado, e
+         só quem fosse conferir o piso depois notaria. */
+      const r = S.criarCargo({ nome: nome, cbo: U.val('fn-cargo-cbo'),
+        salario_piso: U.parseValor(U.val('fn-cargo-piso')) });
       if (ERP.app.erroDoRetorno(r)) return;
       U.el('fn-cargo').innerHTML = opcoesCargo(r.cargo.id);
       U.el('fn-cargo-form').style.display = 'none';

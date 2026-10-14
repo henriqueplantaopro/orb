@@ -9924,6 +9924,37 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v113 — o fluxo completo aceita recorte por data, com o horizonte acompanhando',
     /function gerar\(op\)/.test(flx) && /const dentro = l =>/.test(flx) &&
     /Math\.max\(1, Math\.min\(60, n\)\)/.test(flx), '');
+
+  /* ── v116 ─────────────────────────────────────────────── */
+
+  /* O cargo cadastrado pela tela do DP nascia só na memória: o
+     funcionário que apontasse para ele morria em
+     "funcionarios_cargo_fkey". */
+  const per2 = lerArq('js/persistencia.js');
+  verificar('v116 — cargos entrou no mapa de gravação',
+    /cargos: \{ tabela: 'cargos', colunas: \['id', 'nome', 'cbo', 'salario_piso'\] \}/.test(per2), '');
+  verificar('v116 — e o estado aponta para a MESMA lista de dados',
+    /get cargos\(\) \{ return D\.cargos; \}/.test(st2), '');
+  /* `funcionarios` grava DEPOIS do laço do mapa, então basta cargos
+     estar no mapa para ir antes. Mas a ordem precisa continuar assim. */
+  verificar('v116 — e os funcionários continuam gravando depois do mapa inteiro',
+    per2.indexOf('Object.keys(MAPA)') < per2.indexOf('await gravarFuncionarios()'), '');
+  verificar('v116 — o cargo do funcionário deixou de ser "nao_confere"',
+    /funcionarios: +\{ cargo: 'cargos', centro: 'centros' \}/.test(per2) &&
+    /cargos: +function \(v\) \{ return \(ERP\.dados\.cargos/.test(per2), '');
+  /* A tela mandava `piso_salarial` e o store lia `salario_piso`: todo
+     cargo novo nascia com piso zero, sem ninguém notar. */
+  const dp2 = lerArq('js/ui-dp.js');
+  verificar('v116 — a tela manda o piso com o nome que o store lê',
+    /salario_piso: U\.parseValor\(U\.val\('fn-cargo-piso'\)\)/.test(dp2) &&
+    !/piso_salarial:/.test(dp2), '');
+  const sql56 = lerArq('supabase/56-ATUALIZAR-v116.sql');
+  verificar('v116 — o SQL dá a coluna extra a cargos',
+    /alter table cargos\s+add column if not exists extra jsonb/.test(sql56), '');
+  verificar('v116 — e confere a política de escrita antes de dizer que está pronto',
+    /from pg_policies[\s\S]{0,120}tablename = 'cargos'/.test(sql56), '');
+  verificar('v116 — o número da conferência sai no formato da casa',
+    /translate\(to_char\(coalesce\(c\.salario_piso, 0\), 'FM999,999,990\.00'\),\s*',\.', '\.,'\)/.test(sql56), '');
 })();
 
 concluir();

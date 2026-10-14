@@ -34,6 +34,12 @@ ERP.store = (function () {
        memória, e o primeiro centro de custo apontando para ela
        derrubaria a gravação com "centros_empresa_fkey". */
     get empresas() { return D.empresas; },
+    /* `cargos` entrou na v116 pelo mesmo motivo, e o sintoma foi
+       exatamente o mesmo: o DP cadastrava o cargo pelo botão
+       "+ cadastrar", ele nascia só na memória, e o funcionário que
+       apontava para ele derrubava a gravação com
+       "funcionarios_cargo_fkey". */
+    get cargos() { return D.cargos; },
     get centros() { return D.centros; },
     get clientes() { return D.clientes; },
     get bancos() { return D.bancos; },
