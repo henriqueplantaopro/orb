@@ -12700,7 +12700,11 @@ ERP.store = (function () {
         vencimento sugerido, na cobrança de atraso e nos alertas */
      'dia_vencimento', 'prazo_dias', 'dia_entrega_nf', 'multa_atraso_pct', 'juros_mes_pct',
      'correcao_atraso', 'regra_reajuste', 'regra_renovacao', 'aviso_rescisao_dias',
-     'garantia', 'contato_cobranca'].forEach(function (k) {
+     'garantia', 'contato_cobranca',
+     /* A forma de pagamento é do CONTRATO: o mesmo hospital paga um
+        por empenho e outro por boleto. Sem estar nesta lista, o
+        campo era digitado na tela e descartado em silêncio. */
+     'forma_pagamento'].forEach(function (k) {
       if (d[k] !== undefined) alvo[k] = d[k];
     });
     alvo.itens = itens.map(function (i) {
@@ -12723,6 +12727,39 @@ ERP.store = (function () {
     logar('contrato', alvo.id, d.id ? 'editou contrato' : 'criou contrato',
       alvo.numero + ' · ' + U.brl(alvo.valor_mensal) + '/mês · até ' + U.fData(alvo.vigencia_fim));
     return { ok: true, contrato: alvo };
+  }
+
+  /* ── anexos do contrato ──────────────────────────────────
+     O arquivo em si vive no balde do Supabase; aqui fica o
+     ponteiro para ele, dentro do próprio contrato. Passar pelo
+     store — em vez de empurrar direto no objeto — é o que faz a
+     sincronização enxergar a mudança e o que deixa a trilha de
+     auditoria saber quem anexou o quê. */
+  function anexarAoContrato(id, anexo) {
+    if (!podeMover('contratos')) return { erro: 'Seu perfil não altera contratos.' };
+    const c = contrato(id);
+    if (!c) return { erro: 'Contrato não encontrado.' };
+    if (!anexo || !anexo.path || !anexo.nome) return { erro: 'Anexo sem arquivo.' };
+    c.anexos = (c.anexos || []).concat([anexo]);
+    c.atualizado_em = new Date();
+    logar('contrato', c.id, 'anexou arquivo ao contrato',
+      (c.numero || c.id) + ' · ' + (anexo.tipo || 'outro') + ' · ' + anexo.nome);
+    return { ok: true, anexo: anexo };
+  }
+
+  /* Remover é exclusão de verdade, e por isso fica registrada: o
+     anexo pode ser a única cópia do contrato assinado. */
+  function removerAnexoDoContrato(id, anexoId) {
+    if (!podeMover('contratos')) return { erro: 'Seu perfil não altera contratos.' };
+    const c = contrato(id);
+    if (!c) return { erro: 'Contrato não encontrado.' };
+    const an = (c.anexos || []).find(function (x) { return x.id === anexoId; });
+    if (!an) return { erro: 'Anexo não encontrado.' };
+    c.anexos = (c.anexos || []).filter(function (x) { return x.id !== anexoId; });
+    c.atualizado_em = new Date();
+    logar('contrato', c.id, 'removeu anexo do contrato',
+      (c.numero || c.id) + ' · ' + (an.tipo || 'outro') + ' · ' + an.nome);
+    return { ok: true };
   }
 
   function addAditivo(contratoId, d) {
@@ -17518,7 +17555,8 @@ ERP.store = (function () {
     informarSaldoBancario, saldoInformado, saldoDoSistema, saldoBancarioAtual, classificarLinhas, conciliar, conciliarLote,
     classificarLinha, lancarLote, lancarReceitaDoExtrato, aplicarRegra, salvarRegra, regras, regraDe, excluirRegra,
     chaveContraparte, nomeDaLinha, gruposProdutividade, ignorarLinha, extratos, resumoConciliacao,
-    salvarContrato, addAditivo, contratos, contrato, contratoDoProjeto, excluirContrato, alertasContrato, pendenciasHome,
+    salvarContrato, addAditivo, anexarAoContrato, removerAnexoDoContrato,
+    contratos, contrato, contratoDoProjeto, excluirContrato, alertasContrato, pendenciasHome,
     cronogramaContrato, gerarTitulosContrato, titulosDoContrato, previsoesDoContrato,
     entrada, saida, baixaMultipla, transferir, estornarMovimento, entradaLote, camadas, custoMedio,
     saldoEstoque, valorEstoque, movimentos, textoDoMovimento, consumoPorPaciente,

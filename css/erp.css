@@ -510,6 +510,18 @@ table.tab-ativos td.sub{max-width:130px;}
 table.tab-ativos td.acoes{display:table-cell;white-space:normal;text-align:right;
   max-width:230px;width:230px;}
 table.tab-ativos td.acoes button{display:inline-block;margin:1px 0 1px 3px;float:none;}
+
+/* Coluna de marcação: estreita e fixa. Ela entra antes da Tag e não
+   pode roubar largura de "Onde está", que é a coluna que já vivia
+   apertada nesta tabela. */
+table.tab-ativos th.col-marca,table.tab-ativos td.col-marca{width:28px;min-width:28px;
+  padding-left:4px;padding-right:0;text-align:center;}
+table.tab-ativos tr.sel>td{background:#eef4ff;}
+/* A barra da seleção repete o visual da linha de conferência, com
+   os botões à direita — mesma gramática das outras telas. */
+.sel-barra{align-items:center;gap:8px;flex-wrap:wrap;}
+.sel-barra button{margin-left:auto;}
+.sel-barra button + button{margin-left:0;}
 /* Em tela estreita, as duas colunas de MENOR uso saem — e o dado
    continua na Ficha do equipamento. Esconder coluna é pior que
    mostrar tudo; é melhor que correr a tela para o lado, porque o
@@ -527,13 +539,55 @@ table.tab-ativos td.acoes button{display:inline-block;margin:1px 0 1px 3px;float
 table.tab-ativos td:last-child, table.tab-ativos th:last-child{position:sticky;right:0;
   background:var(--surface);box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);}
 
+/* ── janela larga: documento que se OLHA ───────────────────
+   O modal comum tem 520px porque é feito para formulário. Uma
+   certidão nessa largura obriga a apertar os olhos ou a baixar o
+   arquivo — que é justamente o que a janela existe para evitar.
+
+   Aqui o modal vira coluna flexível de altura fixa: o visor ocupa
+   o que sobra entre o topo e o rodapé, e NÃO empurra a página. O
+   `.modal.modal-largo` tem dois nomes de propósito, para ganhar
+   das regras de `.modal` sem depender da ordem do arquivo. */
+.modal.modal-largo{max-width:min(1100px,96vw);height:90vh;max-height:90vh;
+  display:flex;flex-direction:column;overflow:hidden;}
+.modal.modal-largo .corpo{flex:1;min-height:0;padding:0;display:flex;}
+.visor{flex:1;min-height:0;display:flex;flex-direction:column;background:#f1f2f4;}
+.visor .visor-barra{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:7px 12px;border-bottom:1px solid var(--line);background:#f7f8f9;font-size:12px;}
+.visor .visor-barra .nome{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.visor iframe{flex:1;min-height:0;width:100%;border:0;background:#525659;}
+.visor img{flex:1;min-height:0;width:100%;object-fit:contain;background:#525659;}
+.visor .visor-aviso{flex:1;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;gap:10px;padding:30px;text-align:center;color:var(--ink3);}
+
+/* Crachá do painel que abre o documento. Só ganha a mão quem TEM
+   arquivo: ponteiro em crachá que não abre nada é promessa falsa. */
+.hb-chip-abre{cursor:pointer;}
+.hb-chip-abre:hover{filter:brightness(.94);}
+.hb-chip-abre:focus-visible{outline:2px solid var(--ink);outline-offset:1px;}
+
 /* Etiqueta de patrimônio com QR e painel de indicadores */
-.etiqueta-patrimonio{display:flex;gap:14px;align-items:center;border:1px solid var(--ink);
-  border-radius:6px;padding:12px;background:#fff;max-width:420px;}
-.etiqueta-patrimonio .et-empresa{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--ink3);}
-.etiqueta-patrimonio .et-tag{font:700 22px/1.1 ui-monospace,monospace;}
-.etiqueta-patrimonio .et-desc{font-size:13px;margin-top:2px;}
-.etiqueta-patrimonio .et-sub{font-size:11px;color:var(--ink3);}
+/* A PRÉVIA ESTÁ NO TAMANHO REAL: as medidas são as mesmas da
+   impressão, em milímetros, e não uma aproximação em pixel. Quem
+   olha a janela vê a etiqueta do tamanho que vai sair — e descobre
+   ali, não depois de gastar a folha, que uma descrição longa não
+   cabe. As regras repetem as da impressão de propósito: lá elas
+   vivem embutidas na janela nova, que não enxerga este arquivo. */
+.etiqueta-previa{display:flex;justify-content:center;padding:6px 0 12px;}
+.etiqueta-previa .et{width:85mm;height:55mm;box-sizing:border-box;padding:3.5mm;
+  display:flex;gap:3.5mm;align-items:center;overflow:hidden;background:#fff;color:#000;
+  border:1px solid var(--line);border-radius:4px;}
+.etiqueta-previa .et-qr{width:30mm;height:30mm;flex:0 0 30mm;}
+.etiqueta-previa .et-qr svg{width:100%;height:100%;display:block;}
+.etiqueta-previa .et-dados{min-width:0;flex:1;text-align:left;}
+.etiqueta-previa .et-empresa{font-size:2.4mm;text-transform:uppercase;letter-spacing:.2mm;color:#555;}
+.etiqueta-previa .et-tag{font:700 7mm/1.05 ui-monospace,Consolas,monospace;margin:.3mm 0;}
+.etiqueta-previa .et-desc{font-size:3.1mm;line-height:1.15;display:-webkit-box;
+  -webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;}
+.etiqueta-previa .et-sub{font-size:2.4mm;color:#444;line-height:1.2;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap;}
+.etiqueta-previa .et-chamado{margin-top:.8mm;color:#666;white-space:normal;line-height:1.1;}
+.etiqueta-previa .et-erro{font-size:2.4mm;color:var(--red);}
 .ind-grade{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 12px;}
 .ind-card{flex:1 1 150px;border:1px solid var(--line);border-radius:10px;padding:12px 14px;background:var(--surface);}
 .ind-card .rot{font-size:12px;color:var(--ink3);}

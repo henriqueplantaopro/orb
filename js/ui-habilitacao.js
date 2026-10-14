@@ -492,29 +492,33 @@ ERP.habilitacao = (function () {
           }
           const porOutro = d.tipo !== t.id
             ? ' — coberto por ' + (tipoDe(d.tipo).nome || d.tipo) : '';
+          /* Daqui para baixo HÁ documento — inclusive no vencido,
+             que é arquivo fora do prazo e não arquivo ausente.
+             Todos abrem. */
+          const abre = d.arquivo_path ? d.id : null;
           if (extra) {
             extras++;
             return chip(t.nome, 'b-cancelado',
-              'extra — está guardado e não entra na conta de pendências' + porOutro);
+              'extra — está guardado e não entra na conta de pendências' + porOutro, abre);
           }
           const st = situacao(d);
           if (st.id === 'vencido') {
             vencidos++;
             return chip(t.nome + ' · vencido', 'b-reprovado',
-              'venceu em ' + U.fData(d.validade_efetiva) + porOutro);
+              'venceu em ' + U.fData(d.validade_efetiva) + porOutro, abre);
           }
           if (st.id === 'critico') {
             vencendo++;
             return chip(t.nome + ' · ' + d.dias_para_vencer + 'd', 'b-pendente',
-              'vence em ' + U.fData(d.validade_efetiva) + porOutro);
+              'vence em ' + U.fData(d.validade_efetiva) + porOutro, abre);
           }
           if (st.id === 'sem-data') {
             semData++;
             return chip(t.nome + ' · sem data', 'b-cancelado',
-              'está guardado, mas sem data — o alerta não alcança este' + porOutro);
+              'está guardado, mas sem data — o alerta não alcança este' + porOutro, abre);
           }
           return chip(t.nome, 'b-pago', (d.validade_efetiva
-            ? 'vale até ' + U.fData(d.validade_efetiva) : 'não vence') + porOutro);
+            ? 'vale até ' + U.fData(d.validade_efetiva) : 'não vence') + porOutro, abre);
         }).join('');
 
         return '<div class="hb-grupo-rot">' + U.esc(c[1]) + '</div>' +
@@ -536,6 +540,8 @@ ERP.habilitacao = (function () {
       '<b>Amarelo</b> vence dentro de sete dias. <b>Verde</b> está válido — inclusive o que vence ' +
       'em vinte e nove dias, que é documento bom e não pendência. ' +
       '<b>Cinza</b> é extra guardado, ou documento sem data de validade lida.<br>' +
+      'Clique num crachá que tenha documento — inclusive o vencido — para <b>vê-lo aqui mesmo</b>, ' +
+      'com opção de baixar. O crachá de documento que falta não abre nada, porque não há arquivo.<br>' +
       'O que é pendência, o que é extra e de quais empresas cada tipo é exigido se decide na aba ' +
       '<b>Tipos de documento</b>. Empresa inativa sai deste painel e continua no cofre.<br>' +
       'O documento marcado como <b>Único</b> conta para as duas empresas da mesma raiz de CNPJ, ' +
@@ -545,9 +551,15 @@ ERP.habilitacao = (function () {
       'tipo contado da emissão.</div>';
   }
 
-  const chip = (txt, cls, titulo) =>
-    '<span class="badge ' + cls + ' hb-chip"' +
-    (titulo ? ' title="' + U.esc(titulo) + '"' : '') + '>' + U.esc(txt) + '</span>';
+  /* O crachá que TEM documento abre o documento. O que falta não
+     abre nada — e por isso não ganha nem a mão do ponteiro nem a
+     tecla: afordância que não cumpre o que promete é pior que
+     nenhuma. */
+  const chip = (txt, cls, titulo, docId) =>
+    '<span class="badge ' + cls + ' hb-chip' + (docId ? ' hb-chip-abre' : '') + '"' +
+    (titulo ? ' title="' + U.esc(titulo + (docId ? ' · clique para ver' : '')) + '"' : '') +
+    (docId ? ' data-hb-abrir="' + U.esc(docId) + '" role="button" tabindex="0"' : '') +
+    '>' + U.esc(txt) + '</span>';
 
   function indicadores(vencidos, vencendo, faltam, extras, semData) {
     const cartao = (rot, val, det, vermelho) =>
@@ -1225,6 +1237,16 @@ ERP.habilitacao = (function () {
 
     document.querySelectorAll('[data-hb-abrir]').forEach(function (b) {
       b.addEventListener('click', function () { abrirArquivo(this.dataset.hbAbrir); });
+      /* O crachá é um `span`, não um botão: sem isto, quem navega
+         pelo teclado chega nele e não consegue abrir. */
+      if (b.getAttribute('role') === 'button') {
+        b.addEventListener('keydown', function (e) {
+          if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            abrirArquivo(this.dataset.hbAbrir);
+          }
+        });
+      }
     });
     document.querySelectorAll('[data-hb-editar]').forEach(function (b) {
       b.addEventListener('click', function () { abrirFormulario(this.dataset.hbEditar); });
@@ -1239,19 +1261,42 @@ ERP.habilitacao = (function () {
     });
   }
 
-  /* ── abrir o arquivo ─────────────────────────────────────
-     Link ASSINADO, válido por cinco minutos. O balde é privado de
-     propósito: um endereço público resolveria isto em uma linha e
-     deixaria o RG do sócio alcançável para sempre por quem tivesse
-     visto a URL uma vez. */
+  /* ── abrir o arquivo, na própria tela ────────────────────
+     Link ASSINADO. O balde é privado de propósito: um endereço
+     público resolveria isto em uma linha e deixaria o RG do sócio
+     alcançável para sempre por quem tivesse visto a URL uma vez.
+
+     ANTES ERA `window.open`, e tinha dois defeitos. O link assinado
+     só volta do servidor DEPOIS do clique, e nesse instante o
+     navegador já considerou o gesto gasto — então o bloqueador de
+     pop-up comia a aba em silêncio, e a pessoa ficava olhando para
+     uma tela que não reagiu. E sair do sistema para ver uma
+     certidão perde o lugar onde se estava.
+
+     Agora a janela abre NA HORA, antes de pedir o link, e o
+     conteúdo chega dentro dela. PDF e imagem o navegador desenha —
+     é o que quase toda certidão é. `.docx` e `.xlsx` ele não sabe
+     desenhar, e aí o caminho honesto é oferecer o download e dizer
+     por quê, em vez de mostrar uma moldura cinza vazia.
+
+     O VISOR em si mora em `app.js`: os anexos de contrato abrem do
+     mesmo jeito, de outro balde, e duas cópias do mesmo visor é o
+     par que se desencontra na primeira correção. Aqui fica só o
+     que é do cofre — qual balde, qual caminho, que nome dar. */
+  const extDe = function (p) {
+    return (String(p || '').split('?')[0].split('.').pop() || '').toLowerCase();
+  };
+
   async function abrirArquivo(id) {
     const d = (dados.documentos || []).find(function (x) { return x.id === id; });
     if (!d || !d.arquivo_path) return ERP.app.aviso('Este registro não tem arquivo guardado.', 'erro');
-    const r = await cli().storage.from('habilitacao').createSignedUrl(d.arquivo_path, 300);
-    if (r.error) return ERP.app.aviso('Não foi possível abrir: ' + r.error.message, 'erro');
-    window.open(r.data.signedUrl, '_blank', 'noopener');
+    return ERP.app.verDocumento({
+      bucket: 'habilitacao',
+      path: d.arquivo_path,
+      nome: d.arquivo_nome || ((d.tipo_nome || d.tipo || 'documento') + '.' + extDe(d.arquivo_path)),
+      titulo: (d.tipo_nome || d.tipo || 'Documento') + ' · ' + nomeEmpresa(d.empresa)
+    });
   }
-
 
   /* ═══════════════════════════════════════════════════════════
      ENVIAR EM LOTE
