@@ -133,7 +133,11 @@ ERP.app = (function () {
     fundo.className = 'modal-fundo';
     fundo.id = 'modal-fundo';
     fundo.innerHTML =
-      '<div class="modal" role="dialog" aria-modal="true">' +
+      /* `largo` é para conteúdo que se OLHA — documento, imagem —
+         e não para formulário. Formulário largo espalha campo curto
+         por uma linha inteira e piora a leitura; documento estreito
+         obriga a apertar os olhos. */
+      '<div class="modal' + (cfg.largo ? ' modal-largo' : '') + '" role="dialog" aria-modal="true">' +
         '<div class="topo"><h3>' + U.esc(cfg.titulo) + '</h3>' +
         '<button class="btn-ghost" id="modal-x" aria-label="Fechar">✕</button></div>' +
         '<div class="corpo">' + cfg.corpo + '</div>' +
@@ -609,7 +613,79 @@ ERP.app = (function () {
     if (moduloAberto && moduloAberto !== 'home') abrirModulo(moduloAberto);
   }
 
+  /* ── ver um arquivo guardado, na própria tela ───────────
+     Vive aqui, e não dentro de um módulo, porque dois módulos
+     precisam dele — a Documentação e os anexos de contrato — e
+     porque o jeito de abrir um arquivo guardado é o mesmo em
+     qualquer balde: pedir link assinado, desenhar o que o
+     navegador sabe desenhar, oferecer o download do resto.
+
+     A JANELA ABRE ANTES do link chegar. O link assinado volta do
+     servidor depois do clique, e nesse instante o navegador já
+     considerou o gesto gasto: abrir aba nova ali é entregar a
+     tarefa ao bloqueador de pop-up, que a come em silêncio. */
+  const IMAGENS_VISOR = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'];
+  const extDoCaminho = function (p) {
+    return (String(p || '').split('?')[0].split('.').pop() || '').toLowerCase();
+  };
+
+  async function verDocumento(cfg) {
+    const nome = cfg.nome || (cfg.path || '').split('/').pop() || 'documento';
+    modal({
+      titulo: cfg.titulo || nome,
+      largo: true,
+      fecharTxt: 'Fechar',
+      corpo: '<div class="visor" id="visor-doc"><div class="visor-aviso">abrindo…</div></div>'
+    });
+
+    const c = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+    const alvo = () => document.getElementById('visor-doc');
+    if (!c) {
+      if (alvo()) alvo().innerHTML = '<div class="visor-aviso"><b>Sem conexão com o banco.</b>' +
+        '<div>Os arquivos ficam no servidor — não há como abri-los no modo local.</div></div>';
+      return;
+    }
+
+    /* Quinze minutos: a janela fica aberta enquanto a pessoa lê, e
+       um "Baixar" que expira no meio da leitura é defeito que só
+       aparece com quem lê devagar. */
+    const r = await c.storage.from(cfg.bucket).createSignedUrl(cfg.path, 900);
+
+    const onde = alvo();
+    if (!onde) return;                      /* fechou antes de chegar */
+    if (r.error) {
+      onde.innerHTML = '<div class="visor-aviso"><b>Não foi possível abrir.</b>' +
+        '<div>' + U.esc(r.error.message) + '</div></div>';
+      return;
+    }
+
+    const url = r.data.signedUrl;
+    /* O `download=` acrescenta o cabeçalho que faz o navegador
+       BAIXAR em vez de abrir. Sem ele, "Baixar" num PDF apenas
+       abriria o PDF de novo. */
+    const urlBaixar = url + (url.indexOf('?') > -1 ? '&' : '?') +
+      'download=' + encodeURIComponent(nome);
+    const ext = extDoCaminho(cfg.path);
+    const baixar = '<a class="btn-sm" href="' + U.esc(urlBaixar) + '" download>Baixar</a>';
+    const barra = '<div class="visor-barra"><span class="nome mono">' + U.esc(nome) +
+      '</span>' + baixar + '</div>';
+
+    if (ext === 'pdf') {
+      onde.innerHTML = barra + '<iframe src="' + U.esc(url) +
+        '" title="' + U.esc(nome) + '" referrerpolicy="no-referrer"></iframe>';
+    } else if (IMAGENS_VISOR.indexOf(ext) > -1) {
+      onde.innerHTML = barra + '<img src="' + U.esc(url) + '" alt="' + U.esc(nome) + '">';
+    } else {
+      onde.innerHTML = barra +
+        '<div class="visor-aviso"><b>Este formato o navegador não desenha.</b>' +
+        '<div>Arquivo <span class="mono">.' + U.esc(ext || '?') + '</span> — ' +
+        'PDF e imagem abrem aqui dentro; os demais precisam ser abertos no programa deles.</div>' +
+        '<div>' + baixar + '</div></div>';
+    }
+  }
+
   return { init: init, redesenharModulo: redesenharModulo, iniciar: init, aviso: aviso, redesenhar: redesenhar, erroCampo: erroCampo, erroDoRetorno: erroDoRetorno, modal: modal, fecharModal: fecharModal,
+           verDocumento: verDocumento,
            abrirModulo: abrirModulo, abrirAba: abrirAba, abrirArea: abrirArea, renderHome: renderHome,
            atualizar: atualizar, atualizarContadores: atualizarContadores };
 })();

@@ -172,9 +172,154 @@ ERP.contratos = (function () {
           }).join('') + '</ul></div>'
         : '') +
       (c.renovacao ? '<div class="ajuda">Renovação: ' + U.esc(c.renovacao) +
-        (c.processo ? ' · processo ' + U.esc(c.processo) : '') + '</div>' : '') +
+        (c.processo ? ' · processo ' + U.esc(c.processo) : '') +
+        (c.forma_pagamento ? ' · pagamento por ' + U.esc(nomeForma(c.forma_pagamento)) : '') +
+        '</div>'
+        : (c.forma_pagamento
+            ? '<div class="ajuda">Pagamento por ' + U.esc(nomeForma(c.forma_pagamento)) + '</div>' : '')) +
+      blocoAnexos(c) +
       blocoPagamentos(c) +
       '</td></tr>';
+  }
+
+  const nomeForma = k =>
+    (D.formasPagamento[k] && D.formasPagamento[k].nome) ||
+    (k ? k.charAt(0).toUpperCase() + k.slice(1) : '');
+
+  /* ── anexos do contrato ──────────────────────────────────
+     O contrato assinado e a proposta vivem AQUI, no registro do
+     contrato, e não numa pasta de rede que ninguém acha na hora da
+     diligência. Mesma mecânica do cofre de habilitação: balde
+     privado, link assinado de curta duração, nada público.
+
+     A lista fica em `anexos`, uma coluna jsonb do próprio
+     contrato — como `itens` e `aditivos`, que já são assim. Tabela
+     nova exigiria mapa de sincronização, políticas próprias e um
+     id a mais para manter; para um punhado de arquivos por
+     contrato, o custo não se paga. */
+  const TIPOS_ANEXO = [
+    ['contrato', 'Contrato assinado'],
+    ['proposta', 'Proposta'],
+    ['aditivo', 'Aditivo'],
+    ['edital', 'Edital / termo de referência'],
+    ['outro', 'Outro']
+  ];
+  const nomeTipoAnexo = k =>
+    (TIPOS_ANEXO.find(function (x) { return x[0] === k; }) || [k, k])[1];
+
+  function blocoAnexos(c) {
+    const lista = (c.anexos || []).slice().sort(function (x, y) {
+      return String(y.em || '').localeCompare(String(x.em || ''));
+    });
+    const podeMexer = S.podeMover('contratos');
+    return '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e6e9ee">' +
+      '<b>Anexos</b>' +
+      (podeMexer
+        ? ' <button class="btn-sm" data-ct-anexar="' + U.esc(c.id) + '">+ anexar</button>' : '') +
+      (lista.length
+        ? '<ul class="historico">' + lista.map(function (an) {
+            return '<li>' +
+              '<span class="badge b-aguardando">' + U.esc(nomeTipoAnexo(an.tipo)) + '</span> ' +
+              '<span class="mono">' + U.esc(an.nome) + '</span>' +
+              (an.em ? ' <span class="sub">· ' + U.fData(String(an.em).slice(0, 10)) + '</span>' : '') +
+              ' <button class="btn-sm" data-ct-ver="' + U.esc(c.id) + '|' + U.esc(an.id) + '">Ver</button>' +
+              (podeMexer
+                ? ' <button class="btn-sm btn-cancelar" data-ct-del="' + U.esc(c.id) + '|' +
+                  U.esc(an.id) + '">Remover</button>' : '') +
+              '</li>';
+          }).join('') + '</ul>'
+        : '<div class="sub">Nenhum arquivo anexado — o contrato assinado e a proposta entram aqui.</div>') +
+      '</div>';
+  }
+
+  function anexar(id) {
+    const c = S.contrato(id);
+    if (!c) return;
+    ERP.app.modal({
+      titulo: 'Anexar ao contrato ' + U.esc(c.numero || ''),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="row2">' +
+          '<div><label>O que é este arquivo *</label><select id="an-tipo">' +
+            TIPOS_ANEXO.map(function (x) {
+              return '<option value="' + x[0] + '">' + U.esc(x[1]) + '</option>';
+            }).join('') + '</select></div>' +
+          '<div><label>Arquivo *</label><input type="file" id="an-arq"></div>' +
+        '</div>' +
+        '<div class="ajuda" id="an-aviso">O arquivo fica guardado no servidor, em pasta privada: ' +
+          'só quem tem o módulo de Contratos consegue abrir, e sempre por link temporário. ' +
+          'PDF e imagem abrem na própria tela; os demais ficam para baixar.</div>',
+      acoes: [{ txt: 'Anexar', cls: 'btn-aprovar', fn: function () { enviarAnexo(id); } }]
+    });
+  }
+
+  async function enviarAnexo(id) {
+    const campo = U.el('an-arq');
+    const file = campo && campo.files && campo.files[0];
+    if (!file) return ERP.app.aviso('Escolha um arquivo.', 'erro');
+    const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+    if (!cli) return ERP.app.aviso('Sem conexão com o banco — o anexo precisa do servidor.', 'erro');
+    const c = S.contrato(id);
+    if (!c) return;
+
+    const aviso = U.el('an-aviso');
+    if (aviso) aviso.textContent = 'enviando ' + file.name + '…';
+
+    /* O nome do arquivo é limpo antes de virar caminho: acento,
+       espaço e barra em nome de objeto no balde são fonte certa de
+       arquivo que sobe e não abre. */
+    const limpo = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
+    const caminho = id + '/' + Date.now() + '-' +
+      Math.random().toString(36).slice(2, 6) + '-' + limpo;
+
+    const sub = await cli.storage.from('contratos')
+      .upload(caminho, file, { contentType: file.type || 'application/octet-stream' });
+    if (sub.error) {
+      if (aviso) aviso.textContent = '';
+      return ERP.app.aviso('Não enviou: ' + sub.error.message, 'erro');
+    }
+
+    const anexo = { id: S.proximoId('ax'), tipo: U.val('an-tipo') || 'outro',
+      nome: file.name, path: caminho, tamanho: file.size,
+      em: new Date().toISOString(), por: (S.usuario() || {}).nome || '' };
+    const r = S.anexarAoContrato(id, anexo);
+    if (ERP.app.erroDoRetorno(r)) return;
+    ERP.app.fecharModal();
+    render();
+    ERP.app.aviso('Anexado ao contrato ' + (c.numero || '') + '.', 'ok');
+  }
+
+  function verAnexo(chave) {
+    const p = String(chave).split('|');
+    const c = S.contrato(p[0]);
+    const an = ((c || {}).anexos || []).find(function (x) { return x.id === p[1]; });
+    if (!an) return ERP.app.aviso('Anexo não encontrado.', 'erro');
+    ERP.app.verDocumento({ bucket: 'contratos', path: an.path, nome: an.nome,
+      titulo: nomeTipoAnexo(an.tipo) + ' · contrato ' + (c.numero || '') });
+  }
+
+  function removerAnexo(chave) {
+    const p = String(chave).split('|');
+    const c = S.contrato(p[0]);
+    const an = ((c || {}).anexos || []).find(function (x) { return x.id === p[1]; });
+    if (!an) return;
+    ERP.app.modal({
+      titulo: 'Remover anexo',
+      fecharTxt: 'Cancelar',
+      corpo: '<p>Remover <b>' + U.esc(an.nome) + '</b> do contrato ' +
+        U.esc(c.numero || '') + '?</p>' +
+        '<div class="ajuda">O arquivo sai do contrato e do servidor. Se ele for a única cópia do ' +
+        'contrato assinado, não há como recuperá-lo depois.</div>',
+      acoes: [{ txt: 'Remover', cls: 'btn-cancelar', fn: async function () {
+        const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+        if (cli) await cli.storage.from('contratos').remove([an.path]);
+        const r = S.removerAnexoDoContrato(c.id, an.id);
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        render();
+        ERP.app.aviso('Anexo removido.', 'ok');
+      } }]
+    });
   }
 
   function blocoExemplos(todos) {
@@ -226,6 +371,7 @@ ERP.contratos = (function () {
       /* As condições comerciais também entram no rascunho: sem elas,
          usar "+ cadastrar cliente" no meio do contrato apagava
          vencimento, multa, juros, regras, garantia e contato. */
+      forma_pagamento: U.val('ct-forma'),
       dia_vencimento: U.val('ct-dia-venc'), prazo_dias: U.val('ct-prazo'),
       dia_entrega_nf: U.val('ct-dia-nf'), multa_atraso_pct: U.val('ct-multa'),
       juros_mes_pct: U.val('ct-juros'), correcao_atraso: U.val('ct-corr'),
@@ -333,9 +479,30 @@ ERP.contratos = (function () {
         '<div><label>Mês do próximo reajuste</label><input type="month" id="ct-reaj" value="' +
           (c ? (c.reajuste_mes || '') : '') + '"></div></div>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Pagamento e reajuste previstos em contrato</h2>' +
-        '<div class="row3">' +
+        /* A FORMA DE PAGAMENTO é do contrato, não do credor: o
+           mesmo hospital pode pagar um contrato por empenho e
+           outro por boleto, e é no contrato que isso está escrito.
+           No contrato de cliente ela diz como o dinheiro ENTRA; no
+           de fornecedor, como SAI. */
+        '<div class="row2">' +
+          '<div><label>Forma de pagamento</label><select id="ct-forma">' +
+            '<option value="">Não informada</option>' +
+            Object.keys(D.formasPagamento).map(function (k) {
+              return '<option value="' + k + '"' +
+                (c && c.forma_pagamento === k ? ' selected' : '') + '>' +
+                U.esc(D.formasPagamento[k].nome) + '</option>';
+            }).join('') +
+            /* Empenho e precatório não são formas de pagar do
+               cadastro de credor — são do contrato público, e é
+               aqui que precisam existir. */
+            ['empenho', 'depósito judicial', 'outra'].map(function (k) {
+              return '<option value="' + k + '"' +
+                (c && c.forma_pagamento === k ? ' selected' : '') + '>' +
+                U.esc(k.charAt(0).toUpperCase() + k.slice(1)) + '</option>';
+            }).join('') + '</select></div>' +
           '<div><label>Dia de vencimento</label><input class="num" id="ct-dia-venc" inputmode="numeric" placeholder="ex.: 10" value="' +
-            (c && c.dia_vencimento ? c.dia_vencimento : '') + '"></div>' +
+            (c && c.dia_vencimento ? c.dia_vencimento : '') + '"></div></div>' +
+        '<div class="row2">' +
           '<div><label>Prazo de pagamento (dias após a NF)</label><input class="num" id="ct-prazo" inputmode="numeric" value="' +
             (c && c.prazo_dias ? c.prazo_dias : '') + '"></div>' +
           '<div><label>Dia limite para entrega da NF</label><input class="num" id="ct-dia-nf" inputmode="numeric" placeholder="ex.: 5" value="' +
@@ -399,6 +566,7 @@ ERP.contratos = (function () {
           objeto: U.val('ct-obj'),
           vigencia_ini: U.val('ct-ini'), vigencia_fim: U.val('ct-fim'),
           renovacao: U.val('ct-ren'), indice: U.val('ct-idx'), reajuste_mes: U.val('ct-reaj'),
+          forma_pagamento: U.val('ct-forma') || null,
           dia_vencimento: parseInt(U.val('ct-dia-venc'), 10) || null,
           prazo_dias: parseInt(U.val('ct-prazo'), 10) || null,
           dia_entrega_nf: parseInt(U.val('ct-dia-nf'), 10) || null,
@@ -916,6 +1084,15 @@ ERP.contratos = (function () {
     });
     box.querySelectorAll('[data-ct-ger]').forEach(function (b) {
       b.addEventListener('click', function (e) { e.stopPropagation(); oferecerGeracao(this.dataset.ctGer, true); });
+    });
+    box.querySelectorAll('[data-ct-anexar]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); anexar(this.dataset.ctAnexar); });
+    });
+    box.querySelectorAll('[data-ct-ver]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); verAnexo(this.dataset.ctVer); });
+    });
+    box.querySelectorAll('[data-ct-del]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); removerAnexo(this.dataset.ctDel); });
     });
   }
 

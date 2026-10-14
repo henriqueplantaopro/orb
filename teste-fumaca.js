@@ -9715,9 +9715,25 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     (cab.match(/>Valor</g) || []).length === 1,
     (cab.match(/>Valor</g) || []).length + ' coluna(s) Valor no cabeçalho');
   /* Escrito à mão, o colspan envelhece a cada coluna que entra ou
-     sai: estava em 9 numa tabela de doze. */
+     sai: estava em 9 numa tabela de doze.
+
+     ESTE TESTE TAMBÉM ERA FRÁGIL DO MESMO JEITO que o que ele
+     protege: conferia que estava escrito `= 10 +`. Qualquer coluna
+     nova — como a de marcação da v118 — quebrava o teste sem que
+     nada estivesse errado, e o reflexo seria trocar o 10 por 11 no
+     teste em vez de conferir a tabela. Agora ele CONTA os `<th>`
+     do cabeçalho e compara com o número escrito: se os dois
+     andarem juntos, passa; se alguém acrescentar coluna e esquecer
+     do colspan, falha. */
+  const cabTodo = (av.match(/<th class="col-marca"[\s\S]{0,1200}?<\/tr>/) || [''])[0];
+  const thNoCab = (cabTodo.match(/<th/g) || []).length;
+  const thCondicional = (cabTodo.match(/temPatrimonio \?/g) || []).length;
+  const colunasEscritas = parseInt((av.match(/const colunas = (\d+) \+/) || [])[1], 10);
   verificar('v110 — o colspan da lista vazia é contado, não escrito',
-    /colspan="' \+ colunas \+ '"/.test(av) && /const colunas = 10 \+/.test(av), '');
+    /colspan="' \+ colunas \+ '"/.test(av) &&
+    colunasEscritas === thNoCab - thCondicional,
+    'cabeçalho tem ' + thNoCab + ' colunas (' + thCondicional +
+      ' condicional) e o colspan parte de ' + colunasEscritas);
   verificar('v110 — a coluna de patrimônio só aparece se alguém tiver um',
     /const temPatrimonio = lista\.some/.test(av) &&
     /temPatrimonio \? '<th>Patrimônio<\/th>' : ''/.test(av), '');
@@ -9965,6 +9981,113 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /from pg_policies[\s\S]{0,120}tablename = 'cargos'/.test(sql56), '');
   verificar('v116 — o número da conferência sai no formato da casa',
     /translate\(to_char\(coalesce\(c\.salario_piso, 0\), 'FM999,999,990\.00'\),\s*',\.', '\.,'\)/.test(sql56), '');
+})();
+
+// ── v118: visor, etiqueta, lote e anexos de contrato ────────
+(function () {
+  const ler = f => require('fs').readFileSync(__dirname + '/' + f, 'utf8');
+  const app = ler('js/app.js'), hab = ler('js/ui-habilitacao.js');
+  const av = ler('js/ui-ativos.js'), ct = ler('js/ui-contratos.js');
+  const css = ler('css/erp.css'), per = ler('js/persistencia.js'), sto = ler('js/store.js');
+
+  /* O VISOR MORA EM UM LUGAR SÓ. Duas cópias do mesmo visor é o par
+     que se desencontra na primeira correção — foi assim que a
+     prévia da etiqueta e a impressão passaram a mostrar campos
+     diferentes. */
+  verificar('v118 — o visor de documento vive em app.js, e não dentro de um módulo',
+    /async function verDocumento\(cfg\)/.test(app) && /verDocumento: verDocumento/.test(app), '');
+  verificar('v118 — a Documentação chama o visor comum, sem ter o seu',
+    /ERP\.app\.verDocumento\(\{\s*bucket: 'habilitacao'/.test(hab) &&
+    !/window\.open\(r\.data\.signedUrl/.test(hab), '');
+  /* A janela precisa nascer ANTES do link assinado: é o que tira o
+     bloqueador de pop-up do caminho. */
+  verificar('v118 — a janela abre antes de pedir o link assinado',
+    app.indexOf("corpo: '<div class=\"visor\" id=\"visor-doc\"") <
+    app.indexOf('createSignedUrl'), '');
+  verificar('v118 — o botão de baixar pede o cabeçalho que BAIXA',
+    /'download=' \+ encodeURIComponent\(nome\)/.test(app), '');
+  verificar('v118 — formato que o navegador não desenha vira aviso com download',
+    /Este formato o navegador não desenha/.test(app), '');
+  /* Fechar a janela antes do link chegar não pode derrubar a tela. */
+  verificar('v118 — o visor desiste em silêncio se a janela foi fechada',
+    /const onde = alvo\(\);\s*\n\s*if \(!onde\) return;/.test(app), '');
+
+  /* O crachá que não tem documento não finge que abre. */
+  verificar('v118 — só o crachá com documento ganha clique e teclado',
+    /docId \? ' data-hb-abrir="' \+ U\.esc\(docId\) \+ '" role="button" tabindex="0"' : ''/.test(hab), '');
+  verificar('v118 — o vencido abre como os outros',
+    /const abre = d\.arquivo_path \? d\.id : null;/.test(hab) &&
+    /'venceu em ' \+ U\.fData\(d\.validade_efetiva\) \+ porOutro, abre\)/.test(hab), '');
+  verificar('v118 — o crachá responde ao Enter e ao espaço',
+    /e\.key === 'Enter' \|\| e\.key === ' '/.test(hab), '');
+
+  /* ETIQUETA: a medida é em milímetro, e a prévia é o mesmo molde
+     da impressão. */
+  verificar('v118 — a etiqueta mede 8,5 × 5,5 cm, em milímetros',
+    /const ET_MM = \{ largura: 85, altura: 55 \}/.test(av) &&
+    /@page\{size:' \+ ET_MM\.largura \+ 'mm ' \+ ET_MM\.altura \+ 'mm;margin:0\}/.test(av), '');
+  verificar('v118 — prévia e impressão saem do MESMO molde',
+    /function etiquetaCorpo\(a\)/.test(av) &&
+    (av.match(/etiquetaCorpo\(a\)/g) || []).length >= 3, '');
+  verificar('v118 — a prévia na tela também está em milímetros',
+    /\.etiqueta-previa \.et\{width:85mm;height:55mm/.test(css), '');
+  verificar('v118 — o lote sai em A4, com guia de corte e sem quebrar etiqueta ao meio',
+    /@page\{size:A4;margin:8mm\}/.test(av) &&
+    /break-inside:avoid;page-break-inside:avoid/.test(av) &&
+    /border:0\.2mm dashed/.test(av), '');
+  verificar('v118 — a frase do chamado quebra linha em vez de ser cortada',
+    /\.et-chamado\{margin-top:\.8mm;color:#666;white-space:normal/.test(av), '');
+
+  /* LOTE: cada item passa pela mesma porta do movimento individual,
+     e o que foi recusado é dito, não engolido. */
+  verificar('v118 — o lote usa a mesma porta do movimento individual',
+    /S\.movimentarAtivo\(Object\.assign\(\{ ativo: a\.id \}, base\)\)/.test(av), '');
+  verificar('v118 — "já estava assim" não é contado como recusa',
+    /msg\.indexOf\('já está assim'\) > -1\) iguais\.push/.test(av), '');
+  verificar('v118 — o que falhou continua marcado para repetir',
+    /recusados\.forEach\(function \(x\) \{[\s\S]{0,160}marcados\.add\(a\.id\)/.test(av), '');
+  verificar('v118 — a barra de seleção só existe quando há seleção',
+    /marcados\.size\s*\n?\s*\? '<div class="pr-confere sel-barra">/.test(av), '');
+  verificar('v118 — a busca do inventário filtra enquanto se digita',
+    /busca\.addEventListener\('input', function \(\)/.test(av) &&
+    !/\['av-busca', 'av-status'/.test(av), '');
+
+  /* CONTRATO: forma de pagamento e anexos. */
+  verificar('v118 — a forma de pagamento é campo do contrato',
+    /<select id="ct-forma">/.test(ct) && /forma_pagamento: U\.val\('ct-forma'\)/.test(ct), '');
+  verificar('v118 — e o store aceita gravá-la',
+    /'forma_pagamento'\]\.forEach\(function \(k\)/.test(sto), '');
+  verificar('v118 — e a persistência leva as duas colunas novas',
+    /'forma_pagamento', 'anexos'\] \}/.test(per), '');
+  verificar('v118 — anexar e remover passam pelo store, com trilha',
+    /function anexarAoContrato\(id, anexo\)/.test(sto) &&
+    /function removerAnexoDoContrato\(id, anexoId\)/.test(sto) &&
+    /logar\('contrato', c\.id, 'anexou arquivo ao contrato'/.test(sto), '');
+  verificar('v118 — o anexo abre pelo visor comum, no balde dos contratos',
+    /ERP\.app\.verDocumento\(\{ bucket: 'contratos'/.test(ct), '');
+  verificar('v118 — o nome do arquivo é limpo antes de virar caminho no balde',
+    /file\.name\.replace\(\/\[\^\\w\.\\-\]\+\/g, '_'\)/.test(ct), '');
+
+  /* O SQL da etapa 61. */
+  const sql61 = ler('supabase/61-ATUALIZAR-v118.sql');
+  verificar('v118 — o SQL cria as duas colunas do contrato',
+    /add column if not exists forma_pagamento text/.test(sql61) &&
+    /add column if not exists anexos jsonb/.test(sql61), '');
+  verificar('v118 — o balde dos anexos nasce PRIVADO',
+    /values \('contratos', 'contratos', false\)/.test(sql61) &&
+    /on conflict \(id\) do update set public = false/.test(sql61), '');
+  verificar('v118 — e as quatro políticas saem da mesma matriz da tela',
+    (sql61.match(/tem_nivel\('contratos'/g) || []).length === 4, '');
+  verificar('v118 — a conferência do SQL sai numa saída só',
+    /select o_que, resultado from diag order by ordem, o_que;/.test(sql61), '');
+
+  /* A mensagem da função de criar acesso. */
+  verificar('v118 — a mensagem de criar acesso diz o banco e o ambiente',
+    /function naoPublicada\(\)/.test(per) &&
+    /Este site é o ambiente ' \+ amb \+/.test(per) &&
+    !/NAO_PUBLICADA/.test(per), '');
+  verificar('v118 — e separa "não publicada" de "nome diferente"',
+    /se a lista estiver vazia/.test(per) && /se for diferente/.test(per), '');
 })();
 
 concluir();

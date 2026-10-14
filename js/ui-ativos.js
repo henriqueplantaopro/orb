@@ -19,6 +19,11 @@ ERP.ativos = (function () {
 
   let aba = 'inventario';
   let f = { busca: '', status: '', projeto: '', categoria: '' };
+  /* Seleção do inventário. Vive FORA do render porque a tela se
+     redesenha a cada filtro, e perder a marcação ao filtrar seria o
+     mesmo que não ter marcação: quem separa cinquenta camas usa o
+     filtro justamente para achá-las. */
+  const marcados = new Set();
 
   function montar() {
     document.querySelectorAll('#av-nav button').forEach(function (b) {
@@ -106,6 +111,19 @@ ERP.ativos = (function () {
         '<span>Parados <b class="' + (S.ociosidadeAtivos().length ? 'erro' : '') + '">' +
           S.ociosidadeAtivos().length + '</b></span>' +
       '</div>' +
+      /* ── barra da seleção ─────────────────────────────
+         Só existe quando há algo marcado. Barra de ações
+         permanentemente na tela ocupa espaço o tempo todo para
+         servir numa fração do tempo — e ensina o olho a ignorá-la. */
+      (marcados.size
+        ? '<div class="pr-confere sel-barra">' +
+            '<span><b>' + marcados.size + '</b> selecionado(s)</span>' +
+            (S.pode('estoque')
+              ? '<button class="btn-sm btn-aprovar" id="av-mov-lote">Movimentar em lote</button>' : '') +
+            '<button class="btn-sm" id="av-etq-lote">Imprimir etiquetas</button>' +
+            '<button class="btn-sm" id="av-sel-limpar">Limpar seleção</button>' +
+          '</div>'
+        : '') +
       /* A coluna de PATRIMÔNIO só aparece se alguém tiver um.
          Ela guarda a etiqueta que o equipamento já trazia de antes
          do ERP, e a maioria dos itens não tem nenhuma — uma coluna
@@ -116,14 +134,32 @@ ERP.ativos = (function () {
         /* O colspan do aviso de lista vazia é CONTADO, não escrito:
            escrito, ele envelhece a cada coluna que entra ou sai — e
            estava em 9 numa tabela de doze. */
+        /* DEZ colunas sem o patrimônio: marcação, tag, equipamento,
+           categoria, valor, situação, contratante, onde está,
+           locação e os botões. O número estava em 11 por um engano
+           antigo — o cabeçalho tinha nove colunas fixas e o colspan
+           dizia dez, uma a mais. Passava despercebido porque
+           colspan maior que a tabela apenas estica até o fim. A
+           coluna de marcação da v118 fez o dez virar verdade. */
         const colunas = 10 + (temPatrimonio ? 1 : 0);
+        /* "Todos" é todos os que ESTÃO NO FILTRO. Marcar o que não
+           está na tela é o jeito mais fácil de movimentar o que não
+           se queria. */
+        const todosNaTela = lista.length > 0 &&
+          lista.every(function (a) { return marcados.has(a.id); });
         return '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-ativos"><thead><tr>' +
+        '<th class="col-marca"><input type="checkbox" id="av-marca-todos"' +
+          (todosNaTela ? ' checked' : '') + ' aria-label="Marcar todos da tela"></th>' +
         '<th>Tag</th>' + (temPatrimonio ? '<th>Patrimônio</th>' : '') +
         '<th>Equipamento</th><th>Categoria</th><th class="num">Valor</th>' +
         '<th>Situação</th><th class="col-contratante">Contratante</th><th>Onde está</th>' +
         '<th class="col-locacao">Locação</th><th></th></tr></thead><tbody>' +
         (lista.length ? lista.map(function (a) {
-          return '<tr><td class="mono">' + U.esc(a.tag) + '</td>' +
+          return '<tr' + (marcados.has(a.id) ? ' class="sel"' : '') + '>' +
+            '<td class="col-marca"><input type="checkbox" data-av-marca="' + U.esc(a.id) + '"' +
+              (marcados.has(a.id) ? ' checked' : '') +
+              ' aria-label="Marcar ' + U.esc(a.tag) + '"></td>' +
+            '<td class="mono">' + U.esc(a.tag) + '</td>' +
             /* Número de patrimônio é a etiqueta que já existe no
                equipamento, diferente da tag do sistema. */
             (temPatrimonio ? '<td class="mono sub">' + U.esc(a.patrimonio || '—') + '</td>' : '') +
@@ -389,6 +425,135 @@ ERP.ativos = (function () {
     });
   }
 
+  /* ── movimentar em lote ──────────────────────────────────
+     Cinquenta camas saindo para um projeto, ou voltando para a
+     sede, são UM acontecimento — mas cinquenta eventos no
+     histórico, porque é o evento por equipamento que prova onde
+     cada um estava. O que muda aqui é só quantas vezes a pessoa
+     digita o destino: uma.
+
+     Cada item passa pela MESMA porta do movimento individual
+     (`S.movimentarAtivo`), com as mesmas recusas. Um atalho que
+     pulasse as validações em nome da rapidez deixaria o histórico
+     com buracos justamente nas operações grandes, que são as que
+     mais importam. */
+  function movimentarLote(ids) {
+    const lista = ids.map(function (i) { return S.ativo(i); })
+      .filter(function (a) { return a && !a.desmembrado; });
+    if (!lista.length) return ERP.app.aviso('Nenhum equipamento válido na seleção.', 'erro');
+
+    const projetos = D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo; })
+      .sort(function (x, y) { return String(x.curto).localeCompare(String(y.curto), 'pt-BR'); });
+
+    /* Quando todos partem da mesma situação, dá para sugerir. Com
+       situações misturadas, sugerir seria chutar por todos. */
+    const sits = lista.map(function (a) { return S.situacaoAtiva(a).status; })
+      .filter(function (s, i, arr) { return arr.indexOf(s) === i; });
+    const locais = lista.map(function (a) { return S.situacaoAtiva(a).local || '—'; })
+      .filter(function (s, i, arr) { return arr.indexOf(s) === i; });
+    const deOnde = locais.length === 1 ? locais[0] : locais.length + ' lugares diferentes';
+
+    const amostra = lista.slice(0, 8).map(function (a) { return a.tag; }).join(', ') +
+      (lista.length > 8 ? ' e mais ' + (lista.length - 8) : '');
+
+    ERP.app.modal({
+      titulo: 'Movimentar ' + lista.length + ' equipamentos',
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="resumo-linha"><span>Equipamentos</span><span class="v">' +
+          lista.length + '</span></div>' +
+        '<div class="resumo-linha"><span>São eles</span><span class="v mono">' +
+          U.esc(amostra) + '</span></div>' +
+        '<div class="resumo-linha"><span>Saem de</span><span class="v">' + U.esc(deOnde) + '</span></div>' +
+        '<div class="row2">' +
+          '<div><label>Nova situação *</label><select id="mv-status">' +
+            D.STATUS_ATIVO.map(function (s) {
+              return '<option value="' + s.id + '"' +
+                (sits.length === 1 && s.id === sits[0] ? ' selected' : '') + '>' +
+                U.esc(s.nome) + '</option>'; }).join('') + '</select></div>' +
+          '<div><label>Data</label><input type="date" id="mv-data" value="' + U.hoje() + '"></div>' +
+        '</div>' +
+        '<div class="row2">' +
+          '<div><label>Para onde *</label><input id="mv-destino" placeholder="ex.: Hospital Moacyr do Carmo — CTI"></div>' +
+          '<div><label>Projeto</label><select id="mv-projeto"><option value="">— nenhum —</option>' +
+            projetos.map(function (c) {
+              return '<option value="' + c.id + '">' + U.esc(c.curto) + '</option>'; }).join('') +
+          '</select></div>' +
+        '</div>' +
+        '<div class="row2">' +
+          '<div><label>Custodiante</label><input id="mv-cust" placeholder="quem responde pelos equipamentos"></div>' +
+          '<div><label>Documento de remessa</label><input id="mv-doc" placeholder="nº da remessa, e-mail, termo"></div>' +
+        '</div>' +
+        '<div class="row2">' +
+          '<div><label>Telefone do custodiante</label><input id="mv-cust-fone" placeholder="opcional"></div>' +
+          '<div><label>E-mail do custodiante</label><input id="mv-cust-email" type="email" placeholder="opcional"></div>' +
+        '</div>' +
+        '<label>Observação</label><input id="mv-obs">' +
+        '<div class="ajuda">O mesmo destino vale para todos os marcados, e cada equipamento ganha o ' +
+          'seu próprio evento no histórico — é ele que prova a entrega e a devolução. ' +
+          'Equipamento que já estivesse exatamente assim é deixado como está, e no fim a tela diz ' +
+          'quantos foram, quantos já estavam e quais foram recusados.</div>',
+      acoes: [{ txt: 'Registrar em lote', cls: 'btn-aprovar', fn: function () {
+        const base = { status: U.val('mv-status'), data: U.val('mv-data'),
+          destino: U.val('mv-destino'), projeto: U.val('mv-projeto') || null,
+          custodiante: U.val('mv-cust'),
+          custodiante_telefone: U.val('mv-cust-fone'),
+          custodiante_email: U.val('mv-cust-email'),
+          documento: U.val('mv-doc'), observacao: U.val('mv-obs') };
+
+        const feitos = [], iguais = [], recusados = [];
+        lista.forEach(function (a) {
+          const r = S.movimentarAtivo(Object.assign({ ativo: a.id }, base));
+          if (r && r.ok) return feitos.push(a.tag);
+          const msg = (r && r.erro) || 'recusado sem motivo informado';
+          /* "Já está assim" não é falha: é o item que já estava no
+             destino. Misturá-lo com as recusas de verdade faria a
+             lista de problemas crescer com coisa que não é
+             problema — e lista assim não se lê. */
+          if (msg.indexOf('já está assim') > -1) iguais.push(a.tag);
+          else recusados.push({ tag: a.tag, erro: msg });
+        });
+
+        /* Sobra marcado só o que FALHOU: é o que ainda precisa de
+           ação, e deixar tudo marcado obrigaria a refazer a
+           seleção à mão para tentar de novo. */
+        marcados.clear();
+        recusados.forEach(function (x) {
+          const a = lista.find(function (y) { return y.tag === x.tag; });
+          if (a) marcados.add(a.id);
+        });
+
+        ERP.app.fecharModal();
+        render();
+
+        if (!recusados.length) {
+          ERP.app.aviso(feitos.length + ' movimentado(s)' +
+            (iguais.length ? ', ' + iguais.length + ' já estava(m) assim' : '') + '.', 'ok');
+          return;
+        }
+        ERP.app.modal({
+          titulo: 'Movimentação em lote — ' + recusados.length + ' não passou(ram)',
+          fecharTxt: 'Entendi',
+          corpo:
+            '<div class="resumo-linha"><span>Movimentados</span><span class="v">' +
+              feitos.length + '</span></div>' +
+            (iguais.length
+              ? '<div class="resumo-linha"><span>Já estavam assim</span><span class="v">' +
+                iguais.length + '</span></div>' : '') +
+            '<div class="resumo-linha"><span>Recusados</span><span class="v erro">' +
+              recusados.length + '</span></div>' +
+            '<table class="tab"><thead><tr><th>Equipamento</th><th>Por quê</th></tr></thead><tbody>' +
+            recusados.map(function (x) {
+              return '<tr><td class="mono">' + U.esc(x.tag) + '</td>' +
+                '<td class="desc">' + U.esc(x.erro) + '</td></tr>';
+            }).join('') + '</tbody></table>' +
+            '<div class="ajuda">Os recusados continuam marcados no inventário: resolva o motivo e ' +
+              'repita a movimentação só deles.</div>'
+        });
+      } }]
+    });
+  }
+
   function editarAtivo(id) {
     const a = id ? S.ativo(id) : null;
     const cats = S.ativos({}).map(function (x) { return x.categoria; })
@@ -575,13 +740,26 @@ ERP.ativos = (function () {
     });
   }
 
-  /* Etiqueta com QR Code: é o que faz o inventário andar no hospital.
-     O QR aponta para a página de chamado do equipamento, que abre sem
-     login — quem está com o aparelho na mão fotografa e descreve o
-     problema. */
-  function etiqueta(id) {
-    const a = S.ativo(id);
-    const at = S.situacaoAtiva(a);
+  /* ══════════════════════════════════════════════════════════
+     ETIQUETA DE PATRIMÔNIO · 8,5 × 5,5 cm
+
+     É o que faz o inventário andar no hospital: o QR aponta para a
+     página pública de chamado, que abre sem login — quem está com
+     o aparelho na mão fotografa e descreve o problema.
+
+     O TAMANHO É FIXO E DECLARADO EM MILÍMETROS, não em pixels.
+     Pixel na impressora depende de resolução e de escala do
+     navegador; milímetro não. `@page{size:85mm 55mm}` faz a
+     impressora usar a mídia certa, e a caixa tem exatamente a
+     medida pedida.
+
+     UMA ETIQUETA, UM MOLDE. O que aparece na tela e o que sai na
+     impressora saem da MESMA função. Antes eram dois trechos de
+     HTML parecidos, e parecido é o que se desencontra: a prévia
+     mostrava série e local, a impressão só a série.  */
+  const ET_MM = { largura: 85, altura: 55 };
+
+  function urlDoChamado(a) {
     /* O padrão aponta para a página PÚBLICA de chamado, que fica
        num endereço separado do sistema: quem lê uma etiqueta não
        precisa descobrir onde está o ERP. O parâmetro
@@ -589,43 +767,129 @@ ERP.ativos = (function () {
        próprio. */
     const base = (S.st.parametros && S.st.parametros.url_chamado) ||
       'https://orb-chamado.vercel.app';
-    const url = base + '?ativo=' + a.id + '&tag=' + encodeURIComponent(a.tag || '');
-    let qr = '';
-    try { qr = ERP.qrcode.svg(url, { tamanho: 150 }); }
-    catch (e) { qr = '<div class="ajuda erro">' + U.esc(e.message) + '</div>'; }
+    return base + '?ativo=' + a.id + '&tag=' + encodeURIComponent(a.tag || '');
+  }
+
+  function qrDe(url) {
+    /* O tamanho vem do CSS, em milímetros; o SVG tem viewBox e se
+       estica sem perder nitidez. O número aqui é só o de partida. */
+    try { return ERP.qrcode.svg(url, { tamanho: 160 }); }
+    catch (e) { return '<div class="et-erro">' + U.esc(e.message) + '</div>'; }
+  }
+
+  /* O corpo de UMA etiqueta. Serve a prévia e a impressão. */
+  function etiquetaCorpo(a) {
+    const at = S.situacaoAtiva(a);
+    return '<div class="et-qr">' + qrDe(urlDoChamado(a)) + '</div>' +
+      '<div class="et-dados">' +
+        '<div class="et-empresa">' + U.esc((D.empresa || {}).nome || '') + '</div>' +
+        '<div class="et-tag">' + U.esc(a.tag) + '</div>' +
+        '<div class="et-desc">' + U.esc(a.descricao) + '</div>' +
+        (a.serie ? '<div class="et-sub">série ' + U.esc(a.serie) + '</div>' : '') +
+        (at.local ? '<div class="et-sub">' + U.esc(at.local) + '</div>' : '') +
+        '<div class="et-sub et-chamado">Problema com este equipamento? Aponte a câmera.</div>' +
+      '</div>';
+  }
+
+  /* O estilo da impressão. `folha` decide a mídia: uma etiqueta sai
+     na mídia de 8,5 × 5,5; um lote sai em A4 com as etiquetas lado a
+     lado e guias de corte.
+
+     Dois por linha, cinco por página: 2 × 85 = 170 mm e 5 × 55 =
+     275 mm cabem na área imprimível de um A4 com 8 mm de margem
+     (194 × 281 mm). Com três colunas não caberia, e a etiqueta
+     seria cortada pela impressora — erro que só aparece depois de
+     gastar a folha. */
+  function etiquetaEstilo(folha) {
+    return (folha
+        ? '@page{size:A4;margin:8mm}'
+        : '@page{size:' + ET_MM.largura + 'mm ' + ET_MM.altura + 'mm;margin:0}') +
+      'html,body{margin:0;padding:0;background:#fff;' +
+        'font-family:system-ui,-apple-system,Segoe UI,Arial,sans-serif;color:#000}' +
+      (folha ? '.folha{display:grid;grid-template-columns:' +
+        ET_MM.largura + 'mm ' + ET_MM.largura + 'mm;}' : '') +
+      '.et{width:' + ET_MM.largura + 'mm;height:' + ET_MM.altura + 'mm;box-sizing:border-box;' +
+        'padding:3.5mm;display:flex;gap:3.5mm;align-items:center;overflow:hidden;' +
+        'break-inside:avoid;page-break-inside:avoid;' +
+        (folha ? 'border:0.2mm dashed #bbb;' : '') + '}' +
+      /* O QR ocupa a altura útil da etiqueta. Abaixo de uns 30 mm a
+         câmera de telefone antigo começa a falhar com etiqueta
+         suja, que é a condição real de um equipamento em uso. Em
+         30 mm ele lê bem e sobra largura para o texto, que na
+         primeira medição estava espremido em 45 mm. */
+      '.et-qr{width:30mm;height:30mm;flex:0 0 30mm}' +
+      '.et-qr svg{width:100%;height:100%;display:block}' +
+      '.et-dados{min-width:0;flex:1;text-align:left}' +
+      '.et-empresa{font-size:2.4mm;text-transform:uppercase;letter-spacing:.2mm;color:#555}' +
+      '.et-tag{font:700 7mm/1.05 ui-monospace,Consolas,monospace;margin:.3mm 0}' +
+      /* Descrição longa não pode empurrar o resto para fora da
+         etiqueta: duas linhas e corta. */
+      '.et-desc{font-size:3.1mm;line-height:1.15;display:-webkit-box;-webkit-line-clamp:2;' +
+        '-webkit-box-orient:vertical;overflow:hidden}' +
+      '.et-sub{font-size:2.4mm;color:#444;line-height:1.2;overflow:hidden;' +
+        'text-overflow:ellipsis;white-space:nowrap}' +
+      /* A frase que ensina o uso da etiqueta não pode ser cortada
+         com reticências: cortada, ela deixa de ensinar. Quebra em
+         duas linhas e cabe. */
+      '.et-chamado{margin-top:.8mm;color:#666;white-space:normal;line-height:1.1}' +
+      '.et-erro{font-size:2.4mm;color:#b00020}';
+  }
+
+  /* Abre a janela de impressão com o HTML pronto. Devolve `false`
+     quando o navegador bloqueou — aqui o `window.open` é síncrono
+     dentro do clique, então o bloqueio é raro, mas acontece com
+     bloqueador agressivo e sem isto a pessoa não saberia por quê. */
+  function imprimir(titulo, corpo, folha) {
+    const w = window.open('', '_blank');
+    if (!w) {
+      ERP.app.aviso('O navegador bloqueou a janela de impressão. Libere o pop-up deste site.', 'erro');
+      return false;
+    }
+    w.document.write('<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">' +
+      '<title>' + U.esc(titulo) + '</title><style>' + etiquetaEstilo(folha) + '</style></head>' +
+      '<body>' + corpo + '</body></html>');
+    w.document.close();
+    /* O SVG do QR já está no HTML, mas a janela precisa de um
+       instante para montar a página antes de imprimir. */
+    setTimeout(function () { w.print(); }, 300);
+    return true;
+  }
+
+  function etiqueta(id) {
+    const a = S.ativo(id);
+    const url = urlDoChamado(a);
     ERP.app.modal({
       titulo: 'Etiqueta · ' + a.tag,
       fecharTxt: 'Fechar',
       corpo:
-        '<div class="etiqueta-patrimonio" id="etiqueta-print">' +
-          '<div class="et-qr">' + qr + '</div>' +
-          '<div class="et-dados">' +
-            '<div class="et-empresa">' + U.esc((D.empresa || {}).nome || '') + '</div>' +
-            '<div class="et-tag">' + U.esc(a.tag) + '</div>' +
-            '<div class="et-desc">' + U.esc(a.descricao) + '</div>' +
-            (a.serie ? '<div class="et-sub">série ' + U.esc(a.serie) + '</div>' : '') +
-            (at.local ? '<div class="et-sub">' + U.esc(at.local) + '</div>' : '') +
-            '<div class="et-sub">Problema com este equipamento? Aponte a câmera.</div>' +
-          '</div>' +
-        '</div>' +
-        '<div class="ajuda">O código leva para <span class="mono">' + U.esc(url) + '</span>. ' +
+        '<div class="etiqueta-previa"><div class="et" id="etiqueta-print">' +
+          etiquetaCorpo(a) + '</div></div>' +
+        '<div class="ajuda">A prévia acima está no tamanho real: <b>8,5 × 5,5 cm</b>. ' +
+          'A impressão sai nessa medida, então escolha a mídia desse tamanho na impressora — ' +
+          'ou, para várias de uma vez, marque os equipamentos no inventário e use ' +
+          '<b>Etiquetas</b>, que arruma duas por linha numa folha A4 com guia de corte.<br>' +
+          'O código leva para <span class="mono">' + U.esc(url) + '</span>. ' +
           'A página de chamado abre sem login e já vem com o equipamento identificado.</div>',
       acoes: [{ txt: 'Imprimir etiqueta', cls: 'btn-aprovar', fn: function () {
-        const w = window.open('', '_blank', 'width=420,height=320');
-        w.document.write('<html><head><title>' + U.esc(a.tag) + '</title><style>' +
-          'body{font-family:system-ui,sans-serif;margin:0;padding:10px}' +
-          '.et{display:flex;gap:10px;align-items:center;border:1px solid #000;padding:8px;width:340px}' +
-          '.t{font:700 20px/1.1 monospace}.d{font-size:12px}.s{font-size:10px;color:#444}' +
-          '</style></head><body><div class="et"><div>' + qr + '</div><div>' +
-          '<div class="s">' + U.esc((D.empresa || {}).nome || '') + '</div>' +
-          '<div class="t">' + U.esc(a.tag) + '</div>' +
-          '<div class="d">' + U.esc(a.descricao) + '</div>' +
-          (a.serie ? '<div class="s">série ' + U.esc(a.serie) + '</div>' : '') +
-          '</div></div></body></html>');
-        w.document.close();
-        setTimeout(function () { w.print(); }, 250);
+        imprimir(a.tag, '<div class="et">' + etiquetaCorpo(a) + '</div>', false);
       } }]
     });
+  }
+
+  /* ── etiquetas em lote ───────────────────────────────────
+     Cinquenta camas chegando num projeto são cinquenta etiquetas.
+     Uma por vez são cinquenta janelas de impressão — e é assim que
+     um inventário deixa de ser mantido. */
+  function etiquetasEmLote(ids) {
+    const lista = ids.map(function (i) { return S.ativo(i); })
+      .filter(function (a) { return a && !a.desmembrado; });
+    if (!lista.length) return ERP.app.aviso('Nenhum equipamento válido na seleção.', 'erro');
+    const corpo = '<div class="folha">' + lista.map(function (a) {
+      return '<div class="et">' + etiquetaCorpo(a) + '</div>';
+    }).join('') + '</div>';
+    if (imprimir('Etiquetas · ' + lista.length + ' equipamentos', corpo, true)) {
+      ERP.app.aviso(lista.length + ' etiqueta(s) enviada(s) para impressão.', 'ok');
+    }
   }
 
   /* Painel de manutenção: MTTR, MTBF e SLA saem das datas que a OS já
@@ -1132,6 +1396,26 @@ ERP.ativos = (function () {
   }
 
   function ligar() {
+    /* ── seleção do inventário ───────────────────────── */
+    const liga = function (id, ev, fn) { const e = U.el(id); if (e) e.addEventListener(ev, fn); };
+    document.querySelectorAll('[data-av-marca]').forEach(function (c) {
+      c.addEventListener('change', function () {
+        if (this.checked) marcados.add(this.dataset.avMarca);
+        else marcados.delete(this.dataset.avMarca);
+        render();
+      });
+    });
+    liga('av-marca-todos', 'change', function () {
+      const visiveis = Array.from(document.querySelectorAll('[data-av-marca]'))
+        .map(function (c) { return c.dataset.avMarca; });
+      if (this.checked) visiveis.forEach(function (i) { marcados.add(i); });
+      else visiveis.forEach(function (i) { marcados.delete(i); });
+      render();
+    });
+    liga('av-sel-limpar', 'click', function () { marcados.clear(); render(); });
+    liga('av-mov-lote', 'click', function () { movimentarLote(Array.from(marcados)); });
+    liga('av-etq-lote', 'click', function () { etiquetasEmLote(Array.from(marcados)); });
+
     /* Chamado vira ORDEM DE SERVIÇO: é a OS que registra o conserto,
        com custo, técnico e data. O chamado sozinho é só o pedido. */
     document.querySelectorAll('[data-ch-os]').forEach(function (b2) {
@@ -1181,15 +1465,31 @@ ERP.ativos = (function () {
     });
 
     const box = U.el('av-saida');
-    ['av-busca', 'av-status', 'av-projeto', 'av-cat'].forEach(function (id) {
+    const relerFiltros = function () {
+      f = { busca: U.val('av-busca'), status: U.val('av-status'),
+        projeto: U.val('av-projeto'), categoria: U.val('av-cat') };
+      render();
+    };
+    ['av-status', 'av-projeto', 'av-cat'].forEach(function (id) {
       const el = U.el(id);
-      if (!el) return;
-      el.addEventListener('change', function () {
-        f = { busca: U.val('av-busca'), status: U.val('av-status'),
-          projeto: U.val('av-projeto'), categoria: U.val('av-cat') };
-        render();
-      });
+      if (el) el.addEventListener('change', relerFiltros);
     });
+    /* A BUSCA FILTRA ENQUANTO SE DIGITA, como a da Documentação.
+       Estava em `change`: a lista só mudava ao sair do campo, e
+       quem digitava "CAMA" via a tela inteira parada — o jeito mais
+       fácil de concluir que a busca não funciona.
+
+       Redesenhar recria o campo e o foco volta para o começo da
+       página; sem devolvê-lo, digitar o segundo caractere seria
+       impossível. */
+    const busca = U.el('av-busca');
+    if (busca) {
+      busca.addEventListener('input', function () {
+        relerFiltros();
+        const e = U.el('av-busca');
+        if (e) { e.focus(); e.setSelectionRange(e.value.length, e.value.length); }
+      });
+    }
     if (U.el('av-novo')) U.el('av-novo').addEventListener('click', function () { editarAtivo(null); });
     if (U.el('av-nova-os')) U.el('av-nova-os').addEventListener('click', function () { novaOS(null); });
     if (U.el('av-novo-plano')) U.el('av-novo-plano').addEventListener('click', novoPlano);

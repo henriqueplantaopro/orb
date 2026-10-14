@@ -99,7 +99,7 @@ ERP.persistencia = (function () {
        fornecedor e a natureza da despesa entre eles, que são o que
        o contas a pagar precisa para nascer. Viraram colunas na
        etapa 41. */
-    contratos: { tabela: 'contratos', colunas: ['id', 'parte', 'numero', 'tipo', 'cliente', 'fornecedor', 'conta', 'objeto', 'processo', 'vigencia_ini', 'vigencia_fim', 'renovacao', 'indice', 'reajuste_mes', 'itens', 'aditivos', 'valor_mensal', 'encerrado', 'atualizado_em', 'dia_vencimento', 'prazo_dias', 'dia_entrega_nf', 'multa_atraso_pct', 'juros_mes_pct', 'correcao_atraso', 'regra_reajuste', 'regra_renovacao', 'aviso_rescisao_dias', 'garantia', 'contato_cobranca', 'observacao', 'exemplo', 'pagamentos_variaveis', 'parcelas_previstas', 'total_previsto', 'previsoes_geradas_em', 'parcelas_quitadas_fora'] },
+    contratos: { tabela: 'contratos', colunas: ['id', 'parte', 'numero', 'tipo', 'cliente', 'fornecedor', 'conta', 'objeto', 'processo', 'vigencia_ini', 'vigencia_fim', 'renovacao', 'indice', 'reajuste_mes', 'itens', 'aditivos', 'valor_mensal', 'encerrado', 'atualizado_em', 'dia_vencimento', 'prazo_dias', 'dia_entrega_nf', 'multa_atraso_pct', 'juros_mes_pct', 'correcao_atraso', 'regra_reajuste', 'regra_renovacao', 'aviso_rescisao_dias', 'garantia', 'contato_cobranca', 'observacao', 'exemplo', 'pagamentos_variaveis', 'parcelas_previstas', 'total_previsto', 'previsoes_geradas_em', 'parcelas_quitadas_fora', 'forma_pagamento', 'anexos'] },
     retencoesRegistradas: { tabela: 'retencoes_registradas', colunas: ['id', 'titulo_id', 'tributo', 'valor', 'competencia', 'conta', 'municipio', 'guia_id', 'cancelada'] },
     guiasRetencao: { tabela: 'guias_retencao', colunas: ['id', 'tributo', 'competencia', 'municipio', 'conta', 'por_conta', 'titulo_id', 'total', 'criado_em'] },
     transferenciasBanco: { tabela: 'transferencias_banco', colunas: ['id', 'origem', 'destino', 'data', 'valor', 'obs', 'mutuo', 'cancelada', 'motivo_cancelamento', 'criado_em'] },
@@ -230,13 +230,35 @@ ERP.persistencia = (function () {
   /* Cria (ou redefine) a credencial de acesso de alguém. A chave de
      administração vive no servidor, nunca aqui — este código só
      pede, com a sessão de quem está pedindo. */
-  const NAO_PUBLICADA = 'Não encontrei a função de criar acesso no Supabase. Duas causas ' +
-    'possíveis: ela ainda não foi publicada, ou foi publicada com OUTRO endereço. No painel, ' +
-    'em Edge Functions, veja a coluna URL: o trecho depois de /functions/v1/ precisa ser igual ' +
-    'a "' + ((ERP.config && ERP.config.funcaoCriarLogin) || 'criar-login') + '". Se for ' +
-    'diferente (o painel às vezes gera nomes como "dynamic-responder"), ajuste o campo ' +
-    'funcaoCriarLogin no js/config.js. Enquanto isso, o caminho pelo painel continua valendo: ' +
-    'Authentication › Users › Add user, com "Auto Confirm User" marcado.';
+  /* A MENSAGEM PRECISA DIZER ONDE ELE DEVE OLHAR.
+     A versão anterior mandava conferir o nome configurado contra
+     ele mesmo — "precisa ser igual a X; se for diferente, o painel
+     às vezes gera nomes como X" — e não dizia em QUAL banco a
+     função estava sendo procurada. Num sistema com dois ambientes,
+     é exatamente essa a informação que falta: a função publicada
+     no projeto real não existe no de testes, e o sintoma é
+     idêntico ao de nome errado.
+
+     Então a mensagem é montada na hora, com o projeto e o nome que
+     ESTE site está usando, e separa as duas causas em vez de
+     misturá-las. */
+  function naoPublicada() {
+    const nome = (ERP.config && ERP.config.funcaoCriarLogin) || 'criar-login';
+    const url = (ERP.config && ERP.config.url) || '';
+    const projeto = (url.match(/https:\/\/([a-z0-9]+)\.supabase\.co/) || [])[1] || '(desconhecido)';
+    const amb = (ERP.config && ERP.config.ambiente) === 'teste' ? 'de TESTES' : 'REAL';
+    return 'Não consegui falar com a função que cria acesso. Este site é o ambiente ' + amb +
+      ' e procura a função "' + nome + '" no projeto ' + projeto + '.\n\n' +
+      'Abra o painel do Supabase DESSE projeto, em Edge Functions:\n' +
+      '• se a lista estiver vazia, a função nunca foi publicada aqui — publique-a ' +
+        '(o arquivo é supabase/funcoes/criar-login/index.ts, e nenhuma chave precisa ser colada);\n' +
+      '• se houver uma função, compare o trecho depois de /functions/v1/ na coluna URL com "' +
+        nome + '" — se for diferente, é o campo funcaoCriarLogin do js/config.js deste ramo que ' +
+        'precisa acompanhar;\n' +
+      '• se os dois baterem, veja a opção "Verify JWT" da função: ligada, ela barra o pedido do ' +
+        'navegador antes de chegar no código.\n\n' +
+      'Enquanto isso, dá para criar e trocar senha pelo painel: Authentication › Users.';
+  }
 
   async function criarLogin(email, senha) {
     const c = cliente();
@@ -257,7 +279,7 @@ ERP.persistencia = (function () {
         body: JSON.stringify({ email: email, senha: senha })
       });
       if (resp.status === 404) {
-        return { erro: NAO_PUBLICADA };
+        return { erro: naoPublicada() };
       }
       const r = await resp.json().catch(function () { return {}; });
       return resp.ok ? r : { erro: r.erro || ('falha ' + resp.status) };
@@ -267,7 +289,7 @@ ERP.persistencia = (function () {
          responde sem os cabeçalhos que o navegador exige e o erro
          vira este — então a mensagem crua não ajuda ninguém. */
       if (/failed to fetch|networkerror|load failed/i.test(e.message || '')) {
-        return { erro: NAO_PUBLICADA };
+        return { erro: naoPublicada() };
       }
       return { erro: e.message };
     }
