@@ -4,15 +4,35 @@ window.ERP = window.ERP || {};
 
 ERP.util = (function () {
   const brl = v => 'R$ ' + Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const num = v => Number(v || 0).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  /* Duas casas é o padrão da casa para VALOR. Contagem — unidades,
+     peças, parcelas — pede zero, e por isso o segundo argumento. */
+  const num = (v, casas) => Number(v || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: casas === undefined ? 2 : casas,
+    maximumFractionDigits: casas === undefined ? 2 : casas });
 
   // "1.234,56" | "1234.56" | 1234.56  ->  1234.56
+  /* O separador decimal é o ÚLTIMO que aparece.
+
+     "1,234.56" — copiado de planilha americana — virava 1,23: o
+     código via a vírgula, tratava o ponto como milhar e cortava
+     tudo depois dela. Mil vezes menos, calado, num campo de
+     dinheiro.
+
+     A regra que resolve é a mesma que uma pessoa usa ao ler: entre
+     os dois separadores, o que está mais à direita é o decimal, e o
+     outro é milhar. "1.234,56" e "1,234.56" passam a dar o mesmo
+     número, cada um na sua convenção. */
   function parseValor(s) {
     if (typeof s === 'number') return s;
     s = String(s || '').trim().replace(/[R$\s]/g, '');
     if (!s) return 0;
-    if (s.indexOf(',') > -1) {
-      s = s.replace(/\./g, '').replace(',', '.');
+    const ultVirg = s.lastIndexOf(',');
+    const ultPonto = s.lastIndexOf('.');
+    if (ultVirg > -1 && ultPonto > -1) {
+      if (ultPonto > ultVirg) s = s.replace(/,/g, '');          // 1,234.56
+      else s = s.replace(/\./g, '').replace(',', '.');          // 1.234,56
+    } else if (ultVirg > -1) {
+      s = s.replace(',', '.');
     } else if (/^-?\d{1,3}(\.\d{3})+$/.test(s)) {
       /* "23.000" digitado no Brasil é vinte e três mil, não 23 reais e
          zero centavos: ponto seguido de exatamente 3 dígitos (e sem
@@ -22,6 +42,24 @@ ERP.util = (function () {
     }
     const n = parseFloat(s);
     return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+  }
+
+  /* VALOR ESCRITO É NÚMERO? — pergunta diferente de "quanto vale".
+
+     `parseValor` devolve 0 para texto que não entende, e 0 é um
+     número legítimo em muitos campos: quem chama não distingue
+     "zero" de "não consegui ler". Em campo de dinheiro essa
+     diferença é a que separa recusar o lançamento de gravar o
+     número errado.
+
+     Também fecha a porta para o que o `parseFloat` aceita e
+     ninguém digita a sério num campo de reais: "1e3" virava mil,
+     "12abc" virava doze. */
+  function valorValido(s) {
+    if (typeof s === 'number') return isFinite(s);
+    const txt = String(s === undefined || s === null ? '' : s).trim().replace(/[R$\s]/g, '');
+    if (!txt) return true;            // vazio é "não informado", não é erro de digitação
+    return /^-?\d{1,3}(\.\d{3})*(,\d+)?$|^-?\d{1,3}(,\d{3})*(\.\d+)?$|^-?\d+([.,]\d+)?$/.test(txt);
   }
 
   /* Data local, não UTC. `toISOString()` sempre devolve o horário de
@@ -294,6 +332,46 @@ ERP.util = (function () {
     });
   }
 
+  /* ── TABELA QUE NÃO EMPURRA A PÁGINA ───────────────────
+     Regra da casa: nenhuma tela rola para o lado. Mas a largura de
+     uma tabela depende do CONTEÚDO, e o conteúdo só existe no
+     banco de verdade: com os dados de demonstração tudo cabe, e
+     com "Hospital Nilópolis — Santa Casa de Misericórdia" na
+     coluna de local, não. Foi assim que onze telas passaram a
+     estourar sem ninguém ver.
+
+     Consertar tabela por tabela não resolve a próxima que alguém
+     escrever. Então a contenção é automática: toda tabela que não
+     estiver dentro de uma caixa que rola ganha uma. Quem rola
+     passa a ser a TABELA, dentro do seu cartão — a página fica
+     parada, e o cabeçalho com ela.
+
+     Marca a tabela já tratada: sem isso, embrulhar dispara o
+     observador que chamou esta função, e ela se chamaria para
+     sempre. */
+  function encaixarTabelas(raiz) {
+    const base = raiz || document.getElementById('app') || document.body;
+    if (!base || !base.querySelectorAll) return 0;
+    let n = 0;
+    base.querySelectorAll('table').forEach(function (t2) {
+      if (t2.dataset.encaixada === '1') return;
+      t2.dataset.encaixada = '1';
+      let p = t2.parentElement, dentro = false;
+      while (p && p !== document.body) {
+        const ov = (window.getComputedStyle ? window.getComputedStyle(p).overflowX : '');
+        if (ov === 'auto' || ov === 'scroll') { dentro = true; break; }
+        p = p.parentElement;
+      }
+      if (dentro) return;
+      const cx = document.createElement('div');
+      cx.className = 'tabela-cabe';
+      t2.parentNode.insertBefore(cx, t2);
+      cx.appendChild(t2);
+      n++;
+    });
+    return n;
+  }
+
   /* ── COLUNAS QUE CABEM NA TELA ─────────────────────────
      As colunas de número têm largura fixa e igual entre si — é o que
      permite comparar mês a mês sem o olho se perder. Com doze meses
@@ -393,6 +471,6 @@ ERP.util = (function () {
     ajustarColunas: ajustarColunas,
     slug,
     mesesEntre,
-    diasUteis, brl, num, parseValor, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
+    diasUteis, brl, num, parseValor, valorValido, encaixarTabelas, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
     cnpjValido, cpfValido, documentoNormalizado };
 })();

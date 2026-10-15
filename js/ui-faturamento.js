@@ -291,7 +291,18 @@ ERP.faturamento = (function () {
         '<input type="month" id="rps-comp" value="' + rpsComp + '"></div>' +
         (rpsComp ? '<button class="btn-sm" id="rps-todas" style="align-self:flex-end">Todas as liberadas</button>' : '') +
         '<button class="btn-linha" id="rps-gerar" style="align-self:flex-end"' +
-          (prontos.length ? '' : ' disabled') + '>Gerar arquivo (' + prontos.length + ' RPS)</button></div>' +
+          (prontos.length ? '' : ' disabled title="Nenhuma cobrança está pronta — veja a coluna Situação"') +
+          '>Gerar arquivo (' + prontos.length + ' RPS)</button></div>' +
+        /* BOTÃO DESLIGADO TEM DE DIZER POR QUÊ. Clicar e não
+           acontecer nada deixa a pessoa procurando defeito onde não
+           há: o motivo está na coluna Situação, logo abaixo, mas
+           ninguém liga uma coisa à outra sozinho. */
+        (prontos.length ? '' :
+          '<div class="ajuda">Nenhuma cobrança está pronta para virar RPS' +
+          (pend.length ? ', e por isso o botão está desligado. O motivo de cada uma está na coluna ' +
+            '<b>Situação</b> da tabela abaixo — em geral falta dado no cadastro do tomador.'
+            : '. Libere uma cobrança no faturamento para que ela apareça aqui.') +
+          '</div>') +
       '<div class="pr-confere">' +
         '<span>Liberados para faturar <b>' + itens.length + '</b></span>' +
         '<span>Prontos <b>' + prontos.length + '</b></span>' +

@@ -10090,4 +10090,102 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /se a lista estiver vazia/.test(per) && /se for diferente/.test(per), '');
 })();
 
+// ── v119: o que a varredura de QA encontrou ─────────────────
+(function () {
+  const ler = f => require('fs').readFileSync(__dirname + '/' + f, 'utf8');
+  const utl = ler('js/util.js'), lan = ler('js/ui-lancamento.js');
+  const per = ler('js/persistencia.js'), app = ler('js/app.js');
+  const css = ler('css/erp.css'), html = ler('index.html');
+  const rel = ler('js/ui-relatorios.js'), adm = ler('js/ui-administracao.js');
+
+  /* VALOR: o separador decimal é o último que aparece. */
+  const U = sandbox.window.ERP.util;
+  verificar('v119 — 1,234.56 (planilha americana) vale mil duzentos e trinta e quatro',
+    U.parseValor('1,234.56') === 1234.56, 'deu ' + U.parseValor('1,234.56'));
+  verificar('v119 — e 1.234,56 continua valendo o mesmo',
+    U.parseValor('1.234,56') === 1234.56, 'deu ' + U.parseValor('1.234,56'));
+  verificar('v119 — 1.234.567,89 e 1,234,567.89 dão o mesmo número',
+    U.parseValor('1.234.567,89') === 1234567.89 && U.parseValor('1,234,567.89') === 1234567.89, '');
+  /* E "quanto vale" deixou de ser a mesma pergunta que "deu para ler". */
+  verificar('v119 — texto que não é número é RECUSADO, não vira zero',
+    U.valorValido('abc') === false && U.valorValido('12abc') === false &&
+    U.valorValido('1e3') === false, '');
+  verificar('v119 — e número de verdade passa, em qualquer das duas convenções',
+    U.valorValido('1.234,56') && U.valorValido('1,234.56') && U.valorValido('-50') &&
+    U.valorValido('') && U.valorValido(0), '');
+  /* O lançamento refaz as parcelas antes de gravar: era por elas
+     que o valor anterior entrava quando o campo mudava sem perder
+     o foco. */
+  verificar('v119 — o lançamento refaz as parcelas antes de gravar',
+    /function salvar\(\) \{[\s\S]{0,900}?regerar\(\);/.test(lan), '');
+  verificar('v119 — e recusa campo de dinheiro com texto dentro',
+    /U\.valorValido\(U\.val\(c\[0\]\)\)/.test(lan) &&
+    /não é um número\. Use 00\.000,00/.test(lan), '');
+
+  /* PERDA DE REGISTRO: a foto guarda o que foi ENVIADO. */
+  verificar('v119 — a foto da sincronização guarda o que foi enviado',
+    /function tirarFotoDe\(nome, foto, sumiram\)/.test(per) &&
+    /Object\.keys\(foto\)\.forEach/.test(per), '');
+  /* A foto geral CONTINUA valendo em dois lugares legítimos: na
+     carga inicial e na coleção que desistiu depois do limite de
+     tentativas. O que não pode voltar é a do caminho de SUCESSO,
+     logo antes de limpar a pendência — era ela que apagava da
+     diferença o que tinha sido cadastrado durante a gravação. */
+  verificar('v119 — e o ciclo de sucesso não refotografa tudo da memória',
+    !/tirarFoto\(\);\s*\n\s*limparPendencia\(\);/.test(per) &&
+    /limparPendencia\(\);/.test(per), '');
+  verificar('v119 — o que mudou carrega o texto comparado',
+    /criados: criados, sumiram: sumiram, foto: foto/.test(per), '');
+
+  /* LARGURA: nenhuma tela rola para o lado. */
+  verificar('v119 — toda tabela solta ganha caixa que a contém',
+    /function encaixarTabelas\(raiz\)/.test(utl) &&
+    /encaixarTabelas/.test(app), '');
+  verificar('v119 — e o observador vigia a área real das telas, não um id que não existe',
+    /document\.querySelector\('\.wrap'\) \|\| document\.body/.test(app) &&
+    !/getElementById\('app'\)[\s\S]{0,80}MutationObserver/.test(app), '');
+  verificar('v119 — a grade de cadastros deixa a coluna encolher',
+    /grid-template-columns: 214px minmax\(0, 1fr\)/.test(css), '');
+  verificar('v119 — texto de apoio dentro de célula quebra linha',
+    /td \.sub\{white-space:normal;\}/.test(css), '');
+
+  /* AMBIENTE: a cor certa desde o primeiro pixel. */
+  verificar('v119 — o endereço do banco carrega no cabeçalho da página',
+    html.indexOf('<script src="js/config.js"></script>') < html.indexOf('</head>'), '');
+  verificar('v119 — e o ambiente de teste é pintado antes do primeiro pixel',
+    /documentElement\.classList\.add\('ambiente-teste'\)/.test(html), '');
+  verificar('v119 — o seletor da cor vale para <html> e para <body>',
+    /^\.ambiente-teste header \{/m.test(css), '');
+
+  /* VERSÃO: à vista, e aba velha avisada. */
+  verificar('v119 — a versão aparece na tela',
+    /id="tag-versao"/.test(html) && /tag-versao'\)/.test(app), '');
+  verificar('v119 — e a aba velha é avisada de versão nova',
+    /function vigiarVersao\(\)/.test(app) &&
+    /faixa-versao/.test(html) && /cache: 'no-store'/.test(app), '');
+
+  /* DRE gerencial: o cabeçalho imprime o período do PRÓPRIO filtro. */
+  verificar('v119 — o DRE gerencial imprime o período que está valendo',
+    /if \(atual === 'gerencial'\)[\s\S]{0,200}primeiroDiaDe\(ger\.de\)/.test(rel), '');
+  verificar('v119 — e o último dia do mês sai do calendário, não de uma tabela',
+    /new Date\(Number\(p\[0\]\), Number\(p\[1\]\), 0\)/.test(rel), '');
+
+  /* Senha provisória sorteada. */
+  verificar('v119 — a senha provisória é sorteada, uma por acesso',
+    /function senhaSorteada\(\)/.test(adm) &&
+    /crypto\.getRandomValues/.test(adm) &&
+    !/DomPedro' \+ new Date\(\)\.getFullYear\(\)/.test(adm), '');
+
+  /* Miudezas que o QA listou. */
+  verificar('v119 — lista vazia de funcionários diz que está vazia',
+    /Nenhum funcionário ativo/.test(ler('js/ui-dp.js')), '');
+  verificar('v119 — o botão desligado de RPS diz por quê',
+    /Nenhuma cobrança está pronta para virar RPS/.test(ler('js/ui-faturamento.js')), '');
+  verificar('v119 — contagem exporta sem centavos',
+    /coluna\.tipo === 'inteiro'/.test(ler('js/exportar.js')) &&
+    /titulo: 'Unidades', largura: 9, tipo: 'inteiro'/.test(ler('js/ui-ativos.js')), '');
+  verificar('v119 — identificador interno não aparece como nome de empresa',
+    /carregando…/.test(ler('js/ui-habilitacao.js')), '');
+})();
+
 concluir();

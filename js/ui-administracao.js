@@ -34,6 +34,29 @@ ERP.administracao = (function () {
 
   function montar() { /* menu desenhado no render */ }
 
+  /* Sem alfabeto confuso: 0/O e 1/l/I viram erro de digitação na
+     hora de passar a senha por telefone. */
+  function senhaSorteada() {
+    const letras = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz';
+    const numeros = '23456789';
+    const sinais = '!@#$%&*';
+    const todos = letras + numeros + sinais;
+    const sorteia = function (de) {
+      /* `crypto` quando houver: senha de acesso não se tira de um
+         gerador previsível. */
+      if (window.crypto && window.crypto.getRandomValues) {
+        const a = new Uint32Array(1);
+        window.crypto.getRandomValues(a);
+        return de[a[0] % de.length];
+      }
+      return de[Math.floor(Math.random() * de.length)];
+    };
+    /* Garante um de cada classe, e completa até doze. */
+    let s = sorteia(letras) + sorteia(numeros) + sorteia(sinais);
+    while (s.length < 12) s += sorteia(todos);
+    return s;
+  }
+
   function menu() {
     U.el('ad-nav').innerHTML = GRUPOS.map(function (g) {
       return '<div class="grupo">' + U.esc(g.titulo) + '</div>' +
@@ -285,12 +308,22 @@ ERP.administracao = (function () {
       titulo: 'Criar acesso de ' + email,
       fecharTxt: 'Cancelar',
       corpo:
+        /* SENHA SORTEADA, UMA POR ACESSO.
+
+           O campo vinha preenchido com DomPedro<ano>! — a mesma
+           senha para todo mundo, e com 13 caracteres, o que fazia a
+           validação de 8 nunca disparar. Um clique distraído em
+           "Criar acesso" bastava para criar o acesso com a senha
+           que qualquer pessoa da casa adivinha, e ela vale até o
+           primeiro login. Sorteada, o descuido custa no máximo um
+           acesso que ninguém consegue usar. */
         '<label for="cl-senha">Senha provisória *</label>' +
-        '<input type="text" id="cl-senha" value="DomPedro' + new Date().getFullYear() + '!" ' +
+        '<input type="text" id="cl-senha" value="' + U.esc(senhaSorteada()) + '" ' +
           'autocomplete="off">' +
-        '<div class="ajuda">Pelo menos 8 caracteres. Anote e passe à pessoa — ela será obrigada ' +
-        'a escolher a dela no primeiro acesso, e a partir daí ninguém mais conhece a senha ' +
-        'dela. Se já existir acesso para este e-mail, a senha é redefinida.</div>' +
+        '<div class="ajuda">Sorteada agora, diferente a cada acesso — pode trocar se quiser, com ' +
+        'pelo menos 8 caracteres. Anote e passe à pessoa: ela será obrigada a escolher a dela no ' +
+        'primeiro acesso, e a partir daí ninguém mais conhece a senha dela. Se já existir acesso ' +
+        'para este e-mail, a senha é redefinida.</div>' +
         '<div id="cl-msg"></div>',
       acoes: [{ txt: 'Criar acesso', cls: 'btn-aprovar', fn: function () {
         const senha = U.val('cl-senha');

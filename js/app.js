@@ -543,8 +543,10 @@ ERP.app = (function () {
        título da aba. Quem tem os dois abertos precisa distinguir
        sem pensar. */
     if (ERP.config && ERP.config.ambiente === 'teste') {
+      /* A cor já foi aplicada no <html> pelo cabeçalho do index,
+         antes do primeiro pixel. Aqui sobra o selo, que precisa do
+         cabeçalho montado. O título não se prefixa de novo. */
       document.body.classList.add('ambiente-teste');
-      document.title = '[TESTE] ' + document.title;
       const cab = document.querySelector('header .marca');
       if (cab && !document.querySelector('.selo-teste')) {
         const selo = document.createElement('span');
@@ -554,6 +556,31 @@ ERP.app = (function () {
         cab.insertAdjacentElement('afterend', selo);
       }
     }
+    /* NENHUMA TELA ROLA PARA O LADO — vigiado, não combinado.
+       Cada módulo desenha a sua tabela do seu jeito, e não há um
+       ponto só por onde todas passem depois de desenhadas. O
+       observador cobre todas de uma vez, inclusive as que ainda
+       não foram escritas. */
+    /* O alvo é o CORPO da página, não um `#app` — que não existe
+       neste HTML. Era o defeito da primeira tentativa: o
+       observador vigiava um elemento que não é ancestral de tela
+       nenhuma, e por isso nunca via tabela aparecer. */
+    const appEl = document.querySelector('.wrap') || document.body;
+    if (appEl && typeof MutationObserver === 'function') {
+      U.encaixarTabelas(appEl);
+      let rodando = false;
+      new MutationObserver(function () {
+        if (rodando) return;
+        rodando = true;
+        try { U.encaixarTabelas(appEl); } finally { rodando = false; }
+      }).observe(appEl, { childList: true, subtree: true });
+    }
+
+    /* A versão à vista, e a vigia de versão nova. */
+    const tagV = U.el('tag-versao');
+    if (tagV) tagV.textContent = (ERP.config && ERP.config.versao) || '';
+    vigiarVersao();
+
     if (iniciado) return;   // DOMContentLoaded pode disparar duas vezes
     iniciado = true;
     U.el('empresa-nome').textContent = D.empresa.nome;
@@ -611,6 +638,55 @@ ERP.app = (function () {
     renderHome();
     atualizarContadores();
     if (moduloAberto && moduloAberto !== 'home') abrirModulo(moduloAberto);
+  }
+
+  /* ── A ABA ESTÁ RODANDO A VERSÃO QUE ESTÁ NO AR? ───────
+     Uma aba aberta desde antes de uma publicação continua servindo
+     o JavaScript antigo — o navegador não recarrega sozinho. O
+     sintoma é cruel: a novidade da versão simplesmente "não
+     existe", e quem procura conclui que não foi entregue.
+
+     A conferência é barata: `js/versao.js` tem duas linhas, e é
+     pedido sem cache. Roda meio minuto depois de abrir, a cada dez
+     minutos, e quando a aba volta a receber foco — que é quando a
+     pessoa volta do café e recomeça a trabalhar. */
+  function vigiarVersao() {
+    const minha = (ERP.config && ERP.config.versao) || '';
+    if (!minha || typeof fetch !== 'function') return;
+    let avisado = false;
+
+    const mostrar = function (nova) {
+      const faixa = U.el('faixa-versao');
+      const txt = U.el('faixa-versao-txt');
+      const bt = U.el('faixa-versao-btn');
+      if (!faixa || !txt) return;
+      txt.textContent = 'Foi publicada a versão ' + nova + ' — esta aba ainda está na ' +
+        minha + '. Recarregue para usar a nova.';
+      faixa.style.display = 'flex';
+      if (bt) bt.onclick = function () { window.location.reload(); };
+    };
+
+    const conferir = function () {
+      if (avisado || document.hidden) return;
+      fetch('js/versao.js?conferencia=' + Date.now(), { cache: 'no-store' })
+        .then(function (r) { return r.ok ? r.text() : null; })
+        .then(function (txt) {
+          if (!txt) return;
+          const m = txt.match(/ERP\.config\.versao\s*=\s*'([^']*)'/);
+          if (!m || !m[1] || m[1] === minha) return;
+          avisado = true;
+          mostrar(m[1]);
+        })
+        /* Sem rede, ou rodando de arquivo local: não é assunto
+           desta função, e não há nada a dizer à pessoa. */
+        .catch(function () {});
+    };
+
+    setTimeout(conferir, 30000);
+    setInterval(conferir, 10 * 60 * 1000);
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('focus', conferir);
+    }
   }
 
   /* ── ver um arquivo guardado, na própria tela ───────────

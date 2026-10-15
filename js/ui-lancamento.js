@@ -701,6 +701,30 @@ ERP.lancamento = (function () {
 
   /* ── gravar ─────────────────────────────────────────────*/
   function salvar() {
+    /* O VALOR GRAVADO SAI DAS PARCELAS, e as parcelas só se refazem
+       quando o campo de valor perde o foco. Digitando e clicando
+       como uma pessoa isso acontece sozinho — o clique no botão já
+       tira o foco do campo. Mas qualquer caminho que mude o campo
+       SEM tirar o foco (preenchimento automático do navegador,
+       gerenciador de senhas, automação) deixava as parcelas com o
+       número anterior, e o lançamento nascia com ele.
+       Refazer aqui custa uma linha e fecha a porta inteira. */
+    regerar();
+    /* E texto que não é número não pode virar zero em silêncio: em
+       campo de dinheiro, "quanto vale" e "consegui ler" são
+       perguntas diferentes. */
+    const camposDinheiro = [['l-valor', 'Valor total']]
+      .concat(U.el('l-reten-tem') && U.el('l-reten-tem').checked
+        ? ['ISS', 'IRRF', 'PIS', 'COFINS', 'CSLL', 'INSS'].map(function (x) {
+            return ['l-reten-' + x, 'Retenção de ' + x]; })
+        : []);
+    const ruim = camposDinheiro.find(function (c) { return !U.valorValido(U.val(c[0])); });
+    if (ruim) {
+      ERP.app.erroCampo(ruim[0], ruim[1] + ': "' + U.val(ruim[0]) +
+        '" não é um número. Use 00.000,00.');
+      return;
+    }
+
     const credorTxt = U.val('l-credor');
     const doXml = nfAtual && nfAtual.emitente ? nfAtual.emitente.documento : '';
     const achado = idCredorPorNome(credorTxt) || (credorPorDoc(doXml) || {}).id;

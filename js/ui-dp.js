@@ -94,7 +94,14 @@ ERP.dp = (function () {
       '</div>' +
       '<table class="parcelas"><thead><tr><th>Matrícula</th><th>Nome</th><th>Cargo</th><th>Centro de custo</th>' +
         '<th>Salário base</th><th>Admissão</th><th></th></tr></thead><tbody>' +
-        ativos.map(linha).join('') +
+        /* Lista vazia DIZ que está vazia. Só o cabeçalho e nada
+           embaixo é indistinguível de tela que não carregou — e as
+           outras telas da casa (Ativos, Documentação) já explicam. */
+        (ativos.length
+          ? ativos.map(linha).join('')
+          : '<tr><td colspan="7" class="vazio"><strong>Nenhum funcionário ativo.</strong>' +
+            (podeDP() ? 'Use "+ Admitir funcionário" para cadastrar o primeiro.' : '') +
+            '</td></tr>') +
       '</tbody></table>' +
       (desligados.length ?
         '<h2 style="margin-top:18px">Desligados</h2><table class="parcelas"><tbody>' +
