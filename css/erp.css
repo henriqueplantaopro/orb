@@ -181,6 +181,16 @@ button:focus-visible{outline:2px solid var(--brand);outline-offset:1px;}
 .barra-lote .conta{font-weight:650;color:var(--brand);}
 
 .tabela-rolagem{overflow-x:auto;margin:0 -14px -14px;}
+/* A caixa que o sistema põe sozinho em volta de tabela solta. Sem
+   as margens negativas da `.tabela-rolagem`, que são do desenho do
+   cartão de Ativos e não servem a qualquer lugar. */
+.tabela-cabe{overflow-x:auto;max-width:100%;}
+/* Texto de apoio DENTRO de célula quebra linha. A regra geral de
+   `td` é não quebrar — certa para número, data e tag, que ficam
+   feios partidos ao meio. Mas a linha de situação do RPS em lote é
+   uma frase de 673px, e numa célula que não quebra ela esticava a
+   tabela inteira para 1579px. */
+td .sub{white-space:normal;}
 table{width:100%;border-collapse:collapse;font-size:12.5px;}
 th{text-align:left;font-size:10.5px;color:var(--ink3);padding:5px 8px;border-bottom:1px solid var(--line);
   border-top:1px solid var(--line);font-weight:600;white-space:nowrap;background:#f7f8f9;}
@@ -354,7 +364,20 @@ table.rel tr.total td{font-weight:700;border-top:1px solid var(--ink3);backgroun
 
 
 /* ── Cadastros: menu agrupado, tudo visível ─────────────── */
-.cad-layout { display: grid; grid-template-columns: 214px 1fr; gap: 18px; align-items: start; }
+/* `minmax(0, 1fr)`, e não `1fr`.
+
+   Esta é a causa de metade das telas que passavam da janela. Um
+   item de grade tem `min-width: auto` por padrão: ele cresce até
+   caber o conteúdo, ignorando a largura da coluna. Com uma tabela
+   de 1.481px dentro, a coluna de 1fr virava 1.481px, empurrava a
+   grade e o corpo da página — que tem `overflow-x: hidden` e, em
+   vez de rolar, CORTAVA as últimas colunas na borda.
+
+   `minmax(0, …)` devolve o mínimo a zero: a coluna obedece a
+   largura disponível, e quem rola passa a ser a tabela dentro da
+   sua própria caixa. */
+.cad-layout { display: grid; grid-template-columns: 214px minmax(0, 1fr); gap: 18px; align-items: start; }
+.cad-layout > * { min-width: 0; }
 .cad-menu { position: sticky; top: 8px; }
 .cad-menu .grupo { font-size: 10.5px; font-weight: 700; letter-spacing: .04em;
   text-transform: uppercase; color: var(--muted); margin: 14px 0 5px 2px; }
@@ -769,6 +792,21 @@ table.compacta th, table.compacta td { padding: 3px 8px; font-size: 12px; }
 /* Faixa de "não foi gravado". Fica no topo até a gravação
    funcionar: um aviso que some em cinco segundos não serve para
    dizer que o lançamento não está salvo. */
+/* A versão que ESTA ABA está rodando. Discreta: serve para
+   conferir, não para ler o dia inteiro. */
+.tag-versao { opacity: .62; font-variant-numeric: tabular-nums; }
+
+/* Versão nova publicada enquanto a aba estava aberta. Mesma
+   gramática da faixa de "não salvo", em outra cor: aquilo é perda,
+   isto é desatualização. */
+#faixa-versao {
+  position: sticky; top: 0; z-index: 9001;
+  background: #1f3a4d; color: #fff;
+  padding: 9px 16px; font-size: 13px;
+  display: flex; align-items: center; gap: 12px; justify-content: center;
+}
+#faixa-versao button { flex: 0 0 auto; }
+
 #faixa-nao-salvo {
   display: none;
   position: sticky;
@@ -909,10 +947,10 @@ label:has(> input[type="radio"]) {
    A cor é o aviso que funciona sem ninguém ler nada — e no
    financeiro, lançar no lugar errado só aparece no fechamento,
    quando já virou retrabalho de dias. */
-body.ambiente-teste header {
+.ambiente-teste header {
   background: linear-gradient(100deg, #8a4a00 0%, #b35c00 46%, #c76a0a 100%);
 }
-body.ambiente-teste .barra-modulo {
+.ambiente-teste .barra-modulo {
   box-shadow: inset 0 2px 0 -1px #ff9800;
 }
 .selo-teste {

@@ -832,11 +832,40 @@ ERP.persistencia = (function () {
      lançamento ESTAVA no banco e o sistema dizia que não.
 
      Agora cada coleção registra o próprio sucesso. */
-  function tirarFotoDe(nome) {
+  /* A FOTO GUARDA O QUE FOI ENVIADO, NÃO O QUE ESTÁ NA MEMÓRIA.
+
+     Aqui morava uma perda silenciosa de registro. A sequência:
+
+       1. a pessoa cadastra A; a gravação começa;
+       2. enquanto o HTTP está no ar, ela cadastra B — a
+          sincronização vê `salvando` e só marca `pendente`;
+       3. a resposta de A chega bem, e a foto era tirada DA MEMÓRIA
+          DE AGORA, que já tem B: a sombra passava a dizer que B
+          estava gravado;
+       4. o ciclo pendente roda, compara, não vê diferença — e B
+          nunca é enviado.
+
+     B ficava na tela e na trilha de auditoria (que tem controle
+     próprio de envio) e sumia no primeiro F5, sem evento de
+     exclusão. Exatamente o relato: o do meio de uma sequência
+     rápida.
+
+     A correção é registrar apenas os itens que participaram deste
+     ciclo, com o texto que foi comparado — e não um retrato novo
+     que pode ter ganhado coisa no caminho. */
+  function tirarFotoDe(nome, foto, sumiram) {
     const st = ERP.store.st;
-    const m = {};
-    (st[nome] || []).forEach(function (it) { if (it && it.id) m[it.id] = JSON.stringify(it); });
-    sombra[nome] = m;
+    if (!foto) {
+      /* Sem lista: retrato completo. Continua servindo à carga
+         inicial e a quem desiste de uma coleção inteira. */
+      const m = {};
+      (st[nome] || []).forEach(function (it) { if (it && it.id) m[it.id] = JSON.stringify(it); });
+      sombra[nome] = m;
+      return;
+    }
+    const atual = sombra[nome] || (sombra[nome] = {});
+    Object.keys(foto).forEach(function (id) { atual[id] = foto[id]; });
+    (sumiram || []).forEach(function (id) { delete atual[id]; });
   }
 
   function tirarFoto() {
@@ -871,12 +900,17 @@ ERP.persistencia = (function () {
       const agora = {};
       const novos = [];
       const criados = [];
+      /* O TEXTO DE CADA ITEM, como estava na hora da comparação.
+         É ele que entra na sombra quando a gravação der certo — o
+         objeto em si é vivo e pode mudar no meio do caminho. */
+      const foto = {};
       (st[nome] || []).forEach(function (it) {
         if (!it || !it.id) return;
         const s = JSON.stringify(it);
         agora[it.id] = s;
         if (antes[it.id] !== s) {
           novos.push(it);
+          foto[it.id] = s;
           /* Separa CRIADO de ALTERADO: quem não administra cadastro
              pode criar o material que precisa para o próprio
              lançamento, mas não alterar o cadastro dos outros — e
@@ -888,7 +922,7 @@ ERP.persistencia = (function () {
       const sumiram = Object.keys(antes).filter(function (id) { return !(id in agora); });
       if (novos.length || sumiram.length) {
         mudou.push({ nome: nome, def: MAPA[nome], novos: novos,
-          criados: criados, sumiram: sumiram });
+          criados: criados, sumiram: sumiram, foto: foto });
       }
     });
     return mudou;
@@ -1127,7 +1161,7 @@ ERP.persistencia = (function () {
         if (error && /duplicate key|23505/i.test(error.message || '')) {
           /* Idem: já está no banco. Com upsert isto é raro, mas
              acontece quando a tabela tem outra chave única. */
-          tirarFotoDe(m.nome);
+          tirarFotoDe(m.nome, m.foto, m.sumiram);
         } else if (error) {
           falhas.push(m.def.tabela + ': ' + error.message +
             await culpadas(c, m.def.tabela, linhas, m.novos, error.message));
@@ -1142,7 +1176,7 @@ ERP.persistencia = (function () {
       }
       /* Esta coleção foi: guarda o estado dela. O que falhou em
          outra coleção não faz esta ser reenviada. */
-      if (falhas.length === falhasAntes) tirarFotoDe(m.nome);
+      if (falhas.length === falhasAntes) tirarFotoDe(m.nome, m.foto, m.sumiram);
     }
     const ff = await gravarFuncionarios();
     if (ff) falhas.push(ff);
@@ -1216,7 +1250,23 @@ ERP.persistencia = (function () {
     }
     tentativas = 0;
 
-    tirarFoto();
+    /* AQUI MORAVA A PERDA DE REGISTRO.
+
+       Era `tirarFoto()` — retrato de TODAS as coleções, da memória
+       de AGORA. Mas "agora" é o instante em que a resposta do banco
+       voltou, e nesse intervalo a pessoa continuou trabalhando: o
+       que ela cadastrou DURANTE a gravação entrava no retrato como
+       se já estivesse gravado, e nunca era enviado.
+
+       O registro ficava na tela e na trilha de auditoria — que tem
+       controle de envio próprio — e sumia no primeiro F5, sem
+       evento de exclusão. Numa gravação lenta, com cadastros em
+       sequência, some tudo menos o primeiro.
+
+       Cada coleção já registrou o próprio sucesso acima, com o
+       texto que REALMENTE foi enviado. Não há o que refotografar
+       aqui: o que mudou durante o ciclo tem de continuar contando
+       como diferença, para ir no ciclo seguinte. */
     limparPendencia();
 
     /* O que foi gravado SEM a referência precisa ser dito. Um

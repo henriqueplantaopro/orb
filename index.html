@@ -8,6 +8,31 @@
      depender de arquivo externo que às vezes não sobe. -->
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 150 150'%3E%3Ccircle cx='75' cy='75' r='45' fill='none' stroke='%231F3A4D' stroke-width='16'/%3E%3Cpath d='M16 75 a59 27 0 0 0 118 0' fill='none' stroke='%2300B4FF' stroke-width='11' stroke-linecap='round' transform='rotate(-40 75 75)'/%3E%3Ccircle cx='119' cy='34' r='13' fill='%2300B4FF'/%3E%3C/svg%3E">
 <link rel="stylesheet" href="css/erp.css">
+
+<!-- O ENDEREÇO DO BANCO E A VERSÃO CARREGAM AQUI, NO CABEÇALHO, e
+     não no fim do corpo como o resto.
+
+     O motivo é o aviso de ambiente. Carregando no fim, o topo era
+     pintado de azul — a cor do sistema REAL — durante todo o
+     carregamento, e só virava laranja quando o app montava. Quem
+     dá F5 e olha o topo via o sinal errado justamente no instante
+     em que está conferindo onde está.
+
+     São dois arquivos minúsculos, sem dependência de nada: podem
+     vir antes sem atrasar a página. -->
+<script src="js/config.js"></script>
+<script src="js/versao.js"></script>
+<script>
+  /* A classe vai no <html>, que já existe: o <body> ainda não foi
+     criado neste ponto. O CSS aceita os dois. */
+  (function () {
+    var c = window.ERP && window.ERP.config;
+    if (c && c.ambiente === 'teste') {
+      document.documentElement.classList.add('ambiente-teste');
+      document.title = '[TESTE] ' + document.title;
+    }
+  })();
+</script>
 </head>
 <body>
 
@@ -31,11 +56,22 @@
      carga. -->
   <span class="tag" id="empresa-nome">HJM DOM PEDRO GESTÃO E SERVIÇOS EM SAÚDE LTDA</span>
   <span class="tag" id="tag-modo"></span>
+  <!-- A VERSÃO FICA À VISTA. Sem ela não havia como responder "esta
+       aba está rodando o quê?" — e uma aba aberta desde antes de uma
+       publicação continua servindo o código velho, calada. -->
+  <span class="tag tag-versao" id="tag-versao" title="Versão publicada que esta aba está rodando"></span>
   <div class="sessao">
     <span>Você está como</span>
     <select id="sessao-usuario" aria-label="Trocar de usuário"></select>
   </div>
 </header>
+
+<!-- Aba velha rodando código velho: o sintoma é a novidade da
+     versão "não existir". A faixa fica até a pessoa recarregar. -->
+<div id="faixa-versao" style="display:none">
+  <span id="faixa-versao-txt"></span>
+  <button class="btn-sm" id="faixa-versao-btn">Recarregar agora</button>
+</div>
 
 <div class="barra-modulo" id="barra-modulo" style="display:none">
   <button class="btn-voltar" id="btn-home">← Módulos</button>
@@ -736,8 +772,7 @@
      por exemplo), `ERP.auth.configurado()` devolve falso e o sistema
      segue no modo local, sem login. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
-<script src="js/config.js"></script>
-<script src="js/versao.js"></script>
+<!-- config.js e versao.js ja carregaram no <head>. -->
 <script src="js/auth.js"></script>
 <script src="js/dados-remoto.js"></script>
 <script src="js/persistencia.js"></script>

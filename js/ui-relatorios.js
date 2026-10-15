@@ -119,6 +119,17 @@ ERP.relatorios = (function () {
   /* No relatório de faturamento o recorte pode ser por competência —
      mostrar "Período: 01/10 a 31/10" ali confundiria com o filtro
      geral, que não é o que está valendo. */
+  /* A competência é "aaaa-mm"; o cabeçalho fala em dia. O último
+     dia do mês sai do próprio calendário (dia 0 do mês seguinte), e
+     não de uma tabela de 28/30/31 que esquece fevereiro bissexto. */
+  const primeiroDiaDe = comp => String(comp || U.mesAtual()) + '-01';
+  const ultimoDiaDe = function (comp) {
+    const p = String(comp || U.mesAtual()).split('-');
+    const d = new Date(Number(p[0]), Number(p[1]), 0);
+    return d.getFullYear() + '-' +
+      String(d.getMonth() + 1).padStart(2, '0') + '-' +
+      String(d.getDate()).padStart(2, '0');
+  };
   const periodoTexto = () => {
     if (atual === 'fluxoCompleto') {
       if (!fcPer.de && !fcPer.ate) return 'Período: tudo — realizado inteiro e previsto à frente';
@@ -130,6 +141,18 @@ ERP.relatorios = (function () {
     if (atual === 'comparativoProd') {
       return 'Comparando ' + U.fComp(compA) + ' com ' + U.fComp(compB) +
         ' · alerta acima de ' + U.num(limAlerta) + ' ponto(s)';
+    }
+    /* O DRE GERENCIAL TEM RECORTE PRÓPRIO, por competência, e era o
+       único com filtro próprio sem ramo aqui: a tabela obedecia o
+       De/Até escolhido e o cabeçalho continuava imprimindo o
+       período do filtro geral do módulo. Num relatório que sai para
+       contador e para órgão, o cabeçalho mentindo sobre o período
+       é pior do que não ter cabeçalho. */
+    if (atual === 'gerencial') {
+      const ini = primeiroDiaDe(ger.de);
+      const fim = ultimoDiaDe(ger.ate);
+      return 'Período: ' + U.fData(ini) + ' a ' + U.fData(fim) +
+        ' · regime de ' + (ger.regime === 'caixa' ? 'caixa' : 'competência');
     }
     return 'Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate);
   };

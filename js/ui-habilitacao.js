@@ -198,7 +198,14 @@ ERP.habilitacao = (function () {
     (D.empresas || []).filter(function (e) { return e.ativo !== false; });
   function nomeEmpresa(id) {
     const e = (D.empresas || []).find(function (x) { return x.id === id; });
-    return e ? (e.apelido || e.nome) : (id || '—');
+    if (e) return e.apelido || e.nome;
+    /* IDENTIFICADOR INTERNO NÃO É NOME DE EMPRESA. Enquanto o
+       cadastro não chega do banco, a pendência da tela inicial
+       aparecia como "emp1 · CND Federal" — que não quer dizer nada
+       para quem lê e parece defeito. Sem o nome, é melhor dizer
+       que ele ainda não chegou. */
+    if (!id) return '—';
+    return (D.empresas || []).length ? id : 'carregando…';
   }
 
   /* ── semáforo ────────────────────────────────────────────
@@ -664,7 +671,7 @@ ERP.habilitacao = (function () {
               '</tbody>';
           }).join('') + '</table></div>'
         : '<div class="vazio"><strong>Nenhum documento neste filtro.</strong>' +
-          (podeMexer() ? 'Use "+ Subir documento" para guardar o primeiro.' : '') + '</div>') +
+          (podeMexer() ? 'Use "+ Subir documentos" para guardar o primeiro.' : '') + '</div>') +
       '<div class="ajuda">Marque o título de um bloco para levar a categoria inteira, ou linhas ' +
       'soltas para escolher a dedo — <b>Baixar em lote</b> leva exatamente o que estiver marcado. ' +
       'O arquivo fica num endereço privado e abre por link temporário de cinco ' +

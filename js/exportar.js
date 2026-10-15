@@ -33,6 +33,14 @@ ERP.exportar = (function () {
   function valorDe(coluna, linha, paraTexto) {
     const v = typeof coluna.valor === 'function' ? coluna.valor(linha) : linha[coluna.campo];
     if (v === null || v === undefined) return paraTexto ? '' : '';
+    /* CONTAGEM NÃO TEM CENTAVOS. "Unidades 1,00" não é dinheiro
+       nem medida: é quantas peças existem, e duas casas decimais
+       ali só fazem quem lê conferir se perdeu alguma coisa. */
+    if (coluna.tipo === 'inteiro') {
+      const n = Number(v);
+      if (!isFinite(n)) return v;
+      return paraTexto ? U().num(n, 0) : n;
+    }
     if (coluna.tipo === 'numero' && paraTexto) {
       return typeof v === 'number' ? U().num(v) : v;
     }
@@ -235,8 +243,9 @@ ERP.exportar = (function () {
 
     colunas.forEach(function (c, i) {
       const col = ws.getColumn(i + 1);
-      if (c.tipo === 'numero' || c.tipo === 'data') {
-        const fmt = c.tipo === 'numero' ? '#,##0.00' : 'dd/mm/yyyy';
+      if (c.tipo === 'numero' || c.tipo === 'data' || c.tipo === 'inteiro') {
+        const fmt = c.tipo === 'inteiro' ? '#,##0'
+          : (c.tipo === 'numero' ? '#,##0.00' : 'dd/mm/yyyy');
         col.eachCell({ includeEmpty: false }, function (cell, n) { if (n > linhaTitulos) cell.numFmt = fmt; });
       }
     });
@@ -270,7 +279,7 @@ ERP.exportar = (function () {
       orientacao: colunas.length > 6 ? 'paisagem' : 'retrato',
       colunas: escolhidas.map(function (c) {
         return { titulo: c.titulo, largura: c.largura || 18,
-          alinhar: c.tipo === 'numero' ? 'direita' : null,
+          alinhar: (c.tipo === 'numero' || c.tipo === 'inteiro') ? 'direita' : null,
           valor: function (l) { return valorDe(c, l, true); } };
       }),
       linhas: linhas,
