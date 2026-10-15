@@ -27,10 +27,31 @@
      criado neste ponto. O CSS aceita os dois. */
   (function () {
     var c = window.ERP && window.ERP.config;
-    if (c && c.ambiente === 'teste') {
+    var teste = !!(c && c.ambiente === 'teste');
+    if (teste) {
       document.documentElement.classList.add('ambiente-teste');
       document.title = '[TESTE] ' + document.title;
     }
+
+    /* ── INSTALAR COMO APP ────────────────────────────────
+       DOIS APPS, NÃO UM. O manifesto é escolhido pelo ambiente:
+       o real instala como "ORB", janela azul; o de testes como
+       "ORB · TESTE", janela laranja. São a mesma proteção do topo
+       colorido, levada para a barra de tarefas — com os dois
+       instalados, não há como confundir qual está aberto.
+
+       A escolha é feita AQUI porque o `config.js` carrega logo
+       acima, e o navegador lê o manifesto junto com o resto do
+       cabeçalho: mais tarde seria tarde. */
+    var man = document.createElement('link');
+    man.rel = 'manifest';
+    man.href = teste ? 'manifest-teste.json' : 'manifest.json';
+    document.head.appendChild(man);
+
+    var cor = document.createElement('meta');
+    cor.name = 'theme-color';
+    cor.content = teste ? '#8a4a00' : '#1F3A4D';
+    document.head.appendChild(cor);
   })();
 </script>
 </head>
@@ -773,6 +794,20 @@
      segue no modo local, sem login. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <!-- config.js e versao.js ja carregaram no <head>. -->
+<script>
+  /* O service worker existe para o Chrome oferecer "Instalar", e
+     NÃO guarda arquivo nenhum — ver o comentário em sw.js. Sem
+     ele, não há opção de instalar; com a receita comum dele, o app
+     instalado passaria a servir a versão antiga para sempre.
+
+     Registrado por último, e com try: em `file://` isso não
+     existe, e a bateria de testes roda assim. */
+  if ('serviceWorker' in navigator && location.protocol.indexOf('http') === 0) {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
+</script>
 <script src="js/auth.js"></script>
 <script src="js/dados-remoto.js"></script>
 <script src="js/persistencia.js"></script>

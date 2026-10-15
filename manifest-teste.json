@@ -1,0 +1,19 @@
+{
+  "name": "ORB · TESTE",
+  "short_name": "ORB TESTE",
+  "description": "Ambiente de TESTE do ORB. Banco separado — nada aqui afeta o sistema real.",
+  "id": "/?app=orb-teste",
+  "start_url": "./?app=orb-teste",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#8a4a00",
+  "theme_color": "#8a4a00",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "icons": [
+    { "src": "img/orb-teste-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/orb-teste-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "img/orb-teste-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}

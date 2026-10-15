@@ -10188,4 +10188,59 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /carregando…/.test(ler('js/ui-habilitacao.js')), '');
 })();
 
+// ── v120: o ORB instalável como app ─────────────────────────
+(function () {
+  const ler = f => require('fs').readFileSync(__dirname + '/' + f, 'utf8');
+  const fsE = require('fs');
+  const html = ler('index.html'), sw = ler('sw.js');
+  const man = JSON.parse(ler('manifest.json'));
+  const manT = JSON.parse(ler('manifest-teste.json'));
+
+  /* O SERVICE WORKER NÃO GUARDA NADA. É a trava mais importante
+     desta versão: cache aqui faria o app instalado servir a versão
+     antiga para sempre, e app instalado não tem Ctrl+Shift+R. */
+  verificar('v120 — o service worker não tem como guardar arquivo',
+    !/caches\.open|cache\.put|cache\.addAll/.test(sw), '');
+  verificar('v120 — e o fetch dele vai direto para a rede',
+    /respondWith\(fetch\(e\.request\)\)/.test(sw), '');
+  verificar('v120 — ele ainda apaga cache que uma versão anterior tenha criado',
+    /caches\.keys\(\)[\s\S]{0,160}caches\.delete/.test(sw), '');
+  verificar('v120 — e assume na hora, sem esperar o app ser fechado',
+    /skipWaiting\(\)/.test(sw) && /clients\.claim\(\)/.test(sw), '');
+
+  /* DOIS APPS, escolhidos pelo ambiente. */
+  verificar('v120 — o manifesto é escolhido pelo ambiente',
+    /man\.href = teste \? 'manifest-teste\.json' : 'manifest\.json'/.test(html), '');
+  verificar('v120 — e a escolha acontece no cabeçalho, onde o navegador lê',
+    html.indexOf("man.rel = 'manifest'") < html.indexOf('</head>'), '');
+  verificar('v120 — o app real se chama ORB e é azul',
+    man.short_name === 'ORB' && man.theme_color === '#1F3A4D' &&
+    man.display === 'standalone', '');
+  verificar('v120 — o de testes se chama ORB · TESTE e é laranja',
+    manT.name === 'ORB · TESTE' && manT.theme_color === '#8a4a00', '');
+  verificar('v120 — e cada um tem o SEU ícone, para não confundir na barra de tarefas',
+    man.icons[0].src.indexOf('orb-app-') > -1 &&
+    manT.icons[0].src.indexOf('orb-teste-') > -1, '');
+  verificar('v120 — os dois têm id e start_url próprios, senão o Chrome trata como o mesmo app',
+    man.id !== manT.id && man.start_url !== manT.start_url, '');
+  verificar('v120 — com ícone de 192, de 512 e um recortável',
+    [man, manT].every(m =>
+      m.icons.some(i => i.sizes === '192x192') &&
+      m.icons.some(i => i.sizes === '512x512') &&
+      m.icons.some(i => i.purpose === 'maskable')), '');
+  /* Os arquivos de ícone existem mesmo — manifesto apontando para
+     arquivo ausente é app que instala sem cara. */
+  verificar('v120 — os quatro arquivos de ícone existem no pacote',
+    ['img/orb-app-192.png', 'img/orb-app-512.png',
+     'img/orb-teste-192.png', 'img/orb-teste-512.png']
+      .every(f => fsE.existsSync(__dirname + '/' + f)), '');
+
+  verificar('v120 — o service worker é registrado pela página',
+    /navigator\.serviceWorker\.register\('sw\.js'\)/.test(html), '');
+  /* Em `file://` não existe service worker, e a demonstração roda
+     assim: registrar sem conferir derrubaria a tela com erro. */
+  verificar('v120 — e o registro não quebra quando roda de arquivo local',
+    /location\.protocol\.indexOf\('http'\) === 0/.test(html), '');
+})();
+
 concluir();

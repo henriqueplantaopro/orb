@@ -1,0 +1,19 @@
+{
+  "name": "ORB · Sistema de Gestão Integrada",
+  "short_name": "ORB",
+  "description": "Gestão integrada da Dom Pedro Saúde — financeiro, faturamento, contratos, ativos, estoque e pessoal.",
+  "id": "/?app=orb",
+  "start_url": "./?app=orb",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#1F3A4D",
+  "theme_color": "#1F3A4D",
+  "lang": "pt-BR",
+  "dir": "ltr",
+  "icons": [
+    { "src": "img/orb-app-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "img/orb-app-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "img/orb-app-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
