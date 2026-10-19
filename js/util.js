@@ -466,9 +466,58 @@ ERP.util = (function () {
     });
   }
 
+  /* ── PRAZO E ANDAMENTO DA CARGA ──────────────────────────
+     Moram aqui porque QUEM CARREGA são dois módulos — o de
+     cadastros e o de movimento — e duas cópias da mesma conta de
+     tempo é a receita para elas divergirem na primeira correção.
+
+     POR QUE UM PRAZO. Uma chamada HTTP não tem prazo próprio: se o
+     servidor aceita a conexão e depois emudece, a promessa fica
+     pendurada para sempre, e quem espera por ela espera para
+     sempre. Foi isso que produziu a tela de cabeçalho vazio com
+     console limpo — não havia erro a mostrar, havia espera sem
+     fim.
+
+     Vinte segundos é folgado de propósito: a carga inteira leva
+     uns dois segundos em dia normal, então o que passa de vinte
+     não está devagar, está pendurado. */
+  const PRAZO_CARGA = 20000;
+
+  function comPrazo(promessa, oQue, ms) {
+    let relogio;
+    /* `ERP.config.prazoCarga` permite encurtar o prazo sem tocar no
+       código — é o que deixa a prova medir o estouro em menos de um
+       segundo em vez de esperar vinte, e serve de regulagem caso
+       algum dia um ambiente precise de mais folga. */
+    const limite = ms || (window.ERP && ERP.config && ERP.config.prazoCarga) || PRAZO_CARGA;
+    const alarme = new Promise(function (_, falhar) {
+      relogio = setTimeout(function () {
+        falhar(new Error('o banco não respondeu em ' + Math.round(limite / 1000) +
+          ' segundos (' + oQue + ')'));
+      }, limite);
+    });
+    /* O relógio é desarmado nos DOIS desfechos. Sem isso cada carga
+       deixaria dezenas de temporizadores vivos até estourarem, e o
+       navegador segura a aba acordada por causa deles. */
+    return Promise.race([promessa, alarme]).then(
+      function (v) { clearTimeout(relogio); return v; },
+      function (e) { clearTimeout(relogio); throw e; });
+  }
+
+  /* Um assinante só: a tela de entrada. Evento seria cerimônia
+     para um ouvinte. */
+  let ouvinteCarga = null;
+  function avisarCarga(fn) { ouvinteCarga = typeof fn === 'function' ? fn : null; }
+  function andamento(texto, feitos, total) {
+    if (!ouvinteCarga) return;
+    try { ouvinteCarga(texto, feitos, total); } catch (e) {}
+  }
+
   return {
     ligarData: ligarData,
     ajustarColunas: ajustarColunas,
+    PRAZO_CARGA: PRAZO_CARGA,
+    comPrazo: comPrazo, avisarCarga: avisarCarga, andamento: andamento,
     slug,
     mesesEntre,
     diasUteis, brl, num, parseValor, valorValido, encaixarTabelas, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,

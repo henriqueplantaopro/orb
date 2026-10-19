@@ -461,7 +461,7 @@ ERP.habilitacao = (function () {
        sentido. */
     const tipos = (dados.tipos || []).filter(function (t) { return t.id !== 'outro'; });
 
-    let faltam = 0, vencidos = 0, vencendo = 0, extras = 0, semData = 0;
+    let faltam = 0, vencidos = 0, extras = 0, semData = 0;
 
     /* ── o checklist, agora por CATEGORIA ─────────────────
        Uma lista corrida de trinta crachás não se lê: não há como
@@ -515,7 +515,6 @@ ERP.habilitacao = (function () {
               'venceu em ' + U.fData(d.validade_efetiva) + porOutro, abre);
           }
           if (st.id === 'critico') {
-            vencendo++;
             return chip(t.nome + ' · ' + d.dias_para_vencer + 'd', 'b-pendente',
               'vence em ' + U.fData(d.validade_efetiva) + porOutro, abre);
           }
@@ -538,7 +537,8 @@ ERP.habilitacao = (function () {
         '</div>' + (blocos || '<div class="sub">Nenhum tipo exigido desta empresa.</div>') + '</div>';
     }).join('');
 
-    return indicadores(vencidos, vencendo, faltam, extras, semData) +
+    return indicadores(vencidos, faltam, extras, semData) +
+      blocoProximos(proximosAVencer(v, emp)) +
       (dados.tarefas.length ? tarefas() : '') +
       '<h3 class="hb-titulo">Checklist por empresa — o que falta ou está vencido</h3>' +
       '<div class="hb-cartoes">' + cartoes + '</div>' +
@@ -568,14 +568,101 @@ ERP.habilitacao = (function () {
     (docId ? ' data-hb-abrir="' + U.esc(docId) + '" role="button" tabindex="0"' : '') +
     '>' + U.esc(txt) + '</span>';
 
-  function indicadores(vencidos, vencendo, faltam, extras, semData) {
+  /* ── PRÓXIMOS A VENCER ─────────────────────────────────
+     Isto substituiu o cartão "Vencem em 7 dias".
+
+     O cartão dizia QUANTOS e não dizia QUAIS. Quem o lia descobria
+     que havia três documentos para renovar e em seguida tinha de
+     varrer o checklist inteiro atrás deles — o aviso criava
+     trabalho em vez de poupar. A lista responde a pergunta que a
+     pessoa faz de verdade na frente da tela: o que eu renovo
+     primeiro, e tenho quanto tempo.
+
+     CINCO LINHAS, OU MAIS QUANDO A SEMANA É RUIM. O corte fixo em
+     cinco esconderia justamente o pior momento: se oito documentos
+     vencem nos próximos dez dias, mostrar cinco e calar os três
+     restantes é omitir onde o aperto está. Então a janela de dez
+     dias manda sobre o número — a lista cresce para caber todos
+     eles.
+
+     O que já venceu NÃO entra: tem cartão próprio, e misturar
+     passado com futuro numa lista ordenada por "faltam N dias"
+     obrigaria a inventar número negativo. O sem data também fica
+     de fora, pelo mesmo motivo de sempre: não é prazo curto, é
+     informação que falta. */
+  const PROX_PADRAO = 5;
+  const PROX_JANELA = 10;
+
+  function textoDias(n) {
+    if (n === 0) return 'vence hoje';
+    if (n === 1) return 'falta 1 dia';
+    return 'faltam ' + n + ' dias';
+  }
+
+  function proximosAVencer(v, emp) {
+    const ativas = {};
+    emp.forEach(function (e) { ativas[e.id] = true; });
+
+    const lista = [];
+    v.forEach(function (d) {
+      if (d.tipo_sem_validade) return;
+      const n = d.dias_para_vencer;
+      if (n === null || n === undefined) return;
+      if (n < 0) return;
+      /* Documento de empresa inativa não entra: ela saiu do painel
+         e renovar certidão dela não é tarefa de ninguém. */
+      const cobre = empresasCobertas(d).filter(function (id) { return ativas[id]; });
+      if (!cobre.length) return;
+      lista.push({ d: d, dias: n, empresas: cobre });
+    });
+
+    /* Empate de dias desempata pelo nome, para a ordem não dançar
+       entre dois carregamentos e dar impressão de mudança. */
+    lista.sort(function (a, b) {
+      if (a.dias !== b.dias) return a.dias - b.dias;
+      return String(tipoDe(a.d.tipo).nome || a.d.tipo)
+        .localeCompare(String(tipoDe(b.d.tipo).nome || b.d.tipo));
+    });
+
+    const curtos = lista.filter(function (x) { return x.dias < PROX_JANELA; }).length;
+    return lista.slice(0, Math.max(PROX_PADRAO, curtos));
+  }
+
+  function blocoProximos(lista) {
+    const rot = '<div class="hb-prox-rot">Próximos documentos a vencer</div>';
+    if (!lista.length) {
+      return '<div class="hb-proximos">' + rot +
+        '<div class="sub">Nenhum documento com validade à frente. ' +
+        'O que já venceu e o que está sem data aparecem nos quadros acima.</div></div>';
+    }
+    const linhas = lista.map(function (x) {
+      const d = x.d;
+      const abre = d.arquivo_path ? d.id : null;
+      const nomes = x.empresas.map(nomeEmpresa).join(' e ');
+      const titulo = 'vence em ' + U.fData(d.validade_efetiva) +
+        (x.empresas.length > 1 ? ' · vale para as duas empresas' : '') +
+        (abre ? ' · clique para ver' : ' · sem arquivo guardado');
+      return '<div class="hb-prox-linha' + (abre ? ' hb-chip-abre' : '') + '"' +
+        (abre ? ' data-hb-abrir="' + U.esc(d.id) + '" role="button" tabindex="0"' : '') +
+        ' title="' + U.esc(titulo) + '">' +
+        '<span class="hb-prox-dias' + (x.dias <= DIAS_AMARELO ? ' curto' : '') + '">' +
+          U.esc(textoDias(x.dias)) + '</span>' +
+        '<span class="hb-prox-doc">' + U.esc(tipoDe(d.tipo).nome || d.tipo) + '</span>' +
+        '<span class="hb-prox-emp">' + U.esc(nomes) + '</span>' +
+        '<span class="hb-prox-data">' + U.fData(d.validade_efetiva) + '</span>' +
+        '</div>';
+    }).join('');
+    return '<div class="hb-proximos">' + rot +
+      '<div class="hb-prox-lista">' + linhas + '</div></div>';
+  }
+
+  function indicadores(vencidos, faltam, extras, semData) {
     const cartao = (rot, val, det, vermelho) =>
       '<div class="ind-card"><div class="rot">' + rot + '</div>' +
       '<div class="valor"' + (vermelho && val !== '0' ? ' style="color:var(--red)"' : '') + '>' +
       val + '</div><div class="det">' + det + '</div></div>';
     return '<div class="ind-grade">' +
       cartao('Vencidos', String(vencidos), 'inabilitam hoje', true) +
-      cartao('Vencem em 7 dias', String(vencendo), 'renovar nesta semana') +
       cartao('Faltam no cofre', String(faltam), 'nunca foram guardados', true) +
       (semData ? cartao('Sem data', String(semData), 'o alerta não alcança') : '') +
       (extras ? cartao('Extras guardados', String(extras), 'não entram na conta') : '') +

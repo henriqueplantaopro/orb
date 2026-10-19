@@ -762,6 +762,48 @@ tr.puxa-hospital td { background: var(--amber-bg); }
   text-align: center;
 }
 
+/* A TELA DA ESPERA, entre o login aceito e o sistema montado.
+
+   Cobre tudo (`inset:0`) de propósito: o que havia antes era o
+   cabeçalho sozinho sobre o cinza, e cabeçalho sem nada embaixo é
+   lido como sistema quebrado, não como sistema carregando. */
+/* Acima do login (9999) de propósito. No caminho normal o login já
+   saiu quando esta tela entra, mas "normalmente não se encontram"
+   não é garantia: se um dia se encontrarem, quem tem de aparecer é
+   a espera — a outra é uma tela de pedir senha que já foi dada. */
+#tela-carregando {
+  position: fixed; inset: 0; z-index: 10000;
+  background: var(--fundo, #f4f6f7);
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+#tela-carregando .carregando-caixa {
+  background: #fff; border: 1px solid var(--line, #dfe4e7); border-radius: 10px;
+  padding: 28px 26px; width: 100%; max-width: 360px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, .07);
+}
+#tela-carregando .login-marca {
+  font-size: 12px; letter-spacing: .04em; text-transform: uppercase;
+  color: var(--suave, #6b7a85); margin-bottom: 6px;
+}
+#tela-carregando h1 { font-size: 19px; margin: 0 0 12px; }
+#tela-carregando .carregando-txt { font-size: 13px; color: var(--ink2); margin: 10px 0 10px; }
+#tela-carregando .sub { font-size: 12px; color: var(--ink3); margin: 10px 0 0; }
+#tela-carregando .login-erro {
+  background: #fdeaea; border: 1px solid #f0c2c2; color: #8a2b2b;
+  border-radius: 6px; padding: 8px 10px; font-size: 13px; margin: 0 0 4px;
+}
+#tela-carregando button { width: 100%; margin-top: 12px; }
+/* A fita anda com a contagem real de tabelas lidas. Barra que se
+   move sozinha sem medir nada é decoração, e decoração que finge
+   progresso ensina a não acreditar na próxima. */
+#tela-carregando .carregando-barra {
+  height: 4px; background: var(--line2, #e5e9ec); border-radius: 999px; overflow: hidden;
+}
+#tela-carregando .carregando-barra i {
+  display: block; height: 100%; width: 0; background: var(--brand, #1f3a4d);
+  border-radius: 999px; transition: width .18s linear;
+}
+
 /* Nome da pessoa no topo: é um botão, abre "Meus dados". */
 .btn-usuario {
   background: none;
@@ -1023,6 +1065,48 @@ label:has(> input[type="radio"]) {
 
 /* Chips do checklist de Documentação: quebram a linha em vez de
    empurrar a tela, e dois cartões viram um quando não cabem. */
+/* Com o cartão "Vencem em 7 dias" fora, sobraram dois quadros numa
+   fileira que os faz crescer até preencher a linha — e um "0" de
+   22px no meio de meia tela de branco parece erro de montagem. Aqui
+   dentro eles param de esticar; nos outros módulos, que têm quatro
+   ou cinco, a régua de sempre continua valendo. */
+#hb-saida .ind-card { flex: 0 1 216px; }
+
+/* A LISTA DO QUE VENCE PRIMEIRO.
+
+   A coluna dos dias tem LARGURA FIXA, e é o motivo de ela existir
+   separada do nome: com largura própria, "faltam 3 dias" e "faltam
+   28 dias" começam na mesma vertical e o olho desce a coluna em vez
+   de caçar o número dentro de cada frase.
+
+   A grade usa `minmax(0, …)` nas colunas de texto e corta com
+   reticências. Nome de empresa é comprido — "HJM DOM PEDRO GESTÃO E
+   SERVIÇOS EM SAÚDE LTDA" — e sem o piso zero a linha empurraria a
+   tela para o lado. */
+.hb-proximos { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;
+  background: var(--surface); margin: 0 0 12px; }
+.hb-prox-rot { font-size: 10px; font-weight: 700; color: var(--ink3);
+  text-transform: uppercase; letter-spacing: .6px; margin-bottom: 8px; }
+.hb-prox-lista { display: grid; gap: 2px; }
+.hb-prox-linha { display: grid; align-items: baseline; gap: 10px; padding: 5px 6px;
+  border-radius: 6px; font-size: 12px;
+  grid-template-columns: 104px minmax(0, 1.4fr) minmax(0, 1fr) 84px; }
+.hb-prox-linha:nth-child(odd) { background: var(--brand-soft); }
+.hb-prox-linha > span { min-width: 0; overflow: hidden; text-overflow: ellipsis;
+  white-space: nowrap; }
+.hb-prox-dias { font-variant-numeric: tabular-nums; font-weight: 650; color: var(--ink2); }
+.hb-prox-dias.curto { color: var(--red); }
+.hb-prox-doc { font-weight: 550; }
+.hb-prox-emp { color: var(--ink3); }
+.hb-prox-data { font-variant-numeric: tabular-nums; color: var(--ink3); text-align: right; }
+/* Abaixo de uns 560px as quatro colunas não cabem sem apertar o
+   nome do documento até virar reticência. Viram duas linhas: prazo
+   e documento em cima, empresa e data embaixo. */
+@media (max-width: 560px) {
+  .hb-prox-linha { grid-template-columns: 104px minmax(0, 1fr); row-gap: 2px; }
+  .hb-prox-emp { grid-column: 2; }
+  .hb-prox-data { grid-column: 1; grid-row: 2; text-align: left; }
+}
 .hb-cartoes { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: 10px; margin-bottom: 4px; }
 .hb-cartao { border: 1px solid var(--line); border-radius: 8px; padding: 12px 14px;

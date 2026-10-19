@@ -726,6 +726,27 @@ ERP.persistencia = (function () {
     });
   }
 
+  /* ── PRAZO EM TODA LEITURA ───────────────────────────────
+     Uma chamada HTTP não tem prazo próprio: se o servidor aceita a
+     conexão e depois emudece, a promessa fica pendurada para
+     sempre. `Promise.all` só termina quando a última termina, e
+     uma só que nunca volta segura as outras trinta e duas.
+
+     Era isto que produzia a tela de cabeçalho vazio e console
+     limpo: não havia erro para mostrar, havia espera sem fim. E
+     sem erro, nada avisava — a pessoa ficava olhando o cinza sem
+     saber se o sistema tinha quebrado ou se era para esperar mais.
+
+     Vinte segundos é folgado de propósito. A carga inteira leva
+     uns dois segundos em dia normal; o que passa de vinte não está
+     devagar, está pendurado.
+
+     A conta do prazo mora em `util`, e não aqui, porque são DOIS
+     módulos que carregam — este e o de cadastros. Duas cópias da
+     mesma regra divergiriam na primeira correção. */
+  const comPrazo = (p, oQue) => ERP.util.comPrazo(p, oQue);
+  const diz = (txt, f, t) => ERP.util.andamento(txt, f, t);
+
   async function carregar() {
     const c = cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
@@ -742,11 +763,16 @@ ERP.persistencia = (function () {
        bem mais em internet ruim. Em paralelo é o tempo da mais
        lenta. */
     const nomes = Object.keys(MAPA);
+    let feitos = 0;
+    diz('carregando os cadastros', 0, nomes.length);
     const respostas = await Promise.all(nomes.map(function (nome) {
       const fonte = fonteDeLeitura(nome, MAPA[nome].tabela);
-      return c.from(fonte).select('*').then(function (r) {
+      const conta = function () { diz('carregando os cadastros', ++feitos, nomes.length); };
+      return comPrazo(c.from(fonte).select('*'), fonte).then(function (r) {
+        conta();
         return { nome: nome, fonte: fonte, data: r.data, error: r.error };
       }, function (e) {
+        conta();
         return { nome: nome, fonte: fonte, data: null, error: { message: e.message } };
       });
     }));
@@ -763,18 +789,37 @@ ERP.persistencia = (function () {
 
     /* O que já está na trilha não é reenviado. Lê só os ids, que é
        o suficiente e não traz a trilha inteira para a memória. */
-    eventosEnviados = {};
-    const { data: evs } = await c.from('eventos').select('app_id').not('app_id', 'is', null);
-    (evs || []).forEach(function (e) { if (e.app_id) eventosEnviados[e.app_id] = true; });
+    /* AS QUATRO LEITURAS QUE SOBRAM TAMBÉM DEGRADAM.
 
-    await lerIndexado(POSICOES);
-    await lerIndexado(MINIMOS);
+       Elas ficam fora do `Promise.all` e, até a v120, fora de
+       qualquer proteção: um erro aqui não virava `degradadas`,
+       virava promessa recusada — e quem chamou esta função não
+       tinha `catch`. O sistema parava de montar no meio, sem
+       mensagem. Agora cada uma falha sozinha, como as outras
+       trinta e três. */
+    const tentar = async function (nome, oQue, fn) {
+      try { await comPrazo(Promise.resolve(fn()), oQue); }
+      catch (e) { degradadas.push({ nome: nome, tabela: oQue, erro: e.message }); }
+    };
+
+    eventosEnviados = {};
+    diz('conferindo a trilha de auditoria', nomes.length, nomes.length + 4);
+    await tentar('eventos', 'eventos', async function () {
+      const { data: evs } = await c.from('eventos').select('app_id').not('app_id', 'is', null);
+      (evs || []).forEach(function (e) { if (e.app_id) eventosEnviados[e.app_id] = true; });
+    });
+
+    diz('carregando o estoque', nomes.length + 1, nomes.length + 4);
+    await tentar('posicoes', POSICOES.tabela, function () { return lerIndexado(POSICOES); });
+    await tentar('minimos', MINIMOS.tabela, function () { return lerIndexado(MINIMOS); });
 
     /* A sequência de ids vive no banco: dois navegadores gerando
        `p12` ao mesmo tempo criariam dois registros com a mesma
        chave. A partir daqui, o id vem de lá. */
-    await alinharSequencia();
+    diz('reservando a numeração', nomes.length + 3, nomes.length + 4);
+    await tentar('sequencia', 'reservar_ids', function () { return alinharSequencia(); });
 
+    diz('montando a tela', nomes.length + 4, nomes.length + 4);
     tirarFoto();
     ligado = true;
     /* Carregou o que deu. Quem não carregou vira aviso nomeado, não
