@@ -10243,4 +10243,101 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /location\.protocol\.indexOf\('http'\) === 0/.test(html), '');
 })();
 
+
+/* ══════════════════════════════════════════════════════════
+   v121 · a entrada não trava em silêncio, e a Documentação
+   diz QUAIS documentos vencem
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const util = fsE.readFileSync(__dirname + '/js/util.js', 'utf8');
+  const rem = fsE.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  const aut = fsE.readFileSync(__dirname + '/js/auth.js', 'utf8');
+  const per = fsE.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const hab = fsE.readFileSync(__dirname + '/js/ui-habilitacao.js', 'utf8');
+  const cssV = fsE.readFileSync(__dirname + '/css/erp.css', 'utf8');
+
+  /* ── o prazo ──────────────────────────────────────────
+     Sem ele, uma leitura pendurada segura a carga para sempre:
+     era a tela de cabeçalho vazio com console limpo. */
+  verificar('v121 — existe um prazo para toda leitura, e ele mora num lugar só',
+    /function comPrazo/.test(util) && /PRAZO_CARGA/.test(util), '');
+  verificar('v121 — o relógio do prazo é desarmado nos dois desfechos',
+    (util.match(/clearTimeout\(relogio\)/g) || []).length >= 2, '');
+  verificar('v121 — e o prazo pode ser encurtado por configuração, para a prova medir',
+    /ERP\.config && ERP\.config\.prazoCarga/.test(util), '');
+  verificar('v121 — quem carrega os cadastros usa o prazo',
+    /comPrazo\(c\.from\(item\.tabela\)/.test(rem), '');
+  verificar('v121 — e quem carrega o movimento também',
+    /comPrazo\(c\.from\(fonte\)\.select/.test(per), '');
+  verificar('v121 — a matriz de acesso e os parâmetros também têm prazo',
+    /comPrazo\(c\.from\('matriz_acesso'\)/.test(rem) &&
+    /comPrazo\(c\.from\('parametros'\)/.test(rem), '');
+
+  /* ── as leituras em paralelo ──────────────────────────
+     Mesmo número de viagens; o que muda é não esperar na porta
+     entre uma e outra. O laço antigo somava os tempos. */
+  verificar('v121 — os cadastros são lidos JUNTOS, não um esperando o outro',
+    /await Promise\.all\(MAPA\.map/.test(rem), '');
+  verificar('v121 — e o resultado é processado na ordem do mapa, não na de quem respondeu',
+    /for \(let i = 0; i < MAPA\.length; i\+\+\)/.test(rem), '');
+
+  /* ── a tela da espera ─────────────────────────────────
+     O defeito relatado foi "fica numa tela só com o cabeçalho".
+     O intervalo entre login e montagem precisa ter voz. */
+  verificar('v121 — existe tela de espera entre o login e a montagem',
+    /function telaEspera/.test(aut) && /tela-carregando/.test(aut), '');
+  verificar('v121 — ela mostra o andamento com contagem real',
+    /carregando-fita/.test(aut) && /feitos \/ total/.test(aut), '');
+  verificar('v121 — e some quando o sistema monta',
+    /function fecharEspera/.test(aut) && /fecharEspera\(\);/.test(aut), '');
+  verificar('v121 — a espera fica POR CIMA do login, não atrás',
+    /#tela-carregando \{[\s\S]{0,120}z-index: 10000/.test(cssV), '');
+
+  /* ── o fim ruim também é uma tela ─────────────────────── */
+  verificar('v121 — falha na carga vira mensagem com ação, não tela parada',
+    /function esperaFalhou/.test(aut) && /carregando-retentar/.test(aut), '');
+  verificar('v121 — e não devolve a pessoa ao login: a senha estava certa',
+    /Seu acesso está certo/.test(aut), '');
+  verificar('v121 — a espera da carga tem catch: recusa que estoura também é mostrada',
+    /try \{\s*\n\s*r = await ERP\.dadosRemoto\.carregar\(\);\s*\n\s*\} catch/.test(aut), '');
+  verificar('v121 — as quatro leituras fora do laço também degradam sozinhas',
+    /const tentar = async function/.test(per) &&
+    /tentar\('eventos'/.test(per) && /tentar\('sequencia'/.test(per), '');
+
+  /* ── Documentação: a lista do que vence ───────────────── */
+  /* O que tem de sumir é o CARTÃO — a chamada `cartao('Vencem em 7
+     dias', …)`. O filtro do cofre com o mesmo rótulo em minúsculas
+     continua existindo e é outra coisa: lá ele seleciona linhas,
+     aqui ele era um número solto no painel. Buscar o texto cru
+     derrubaria a verificação por causa do filtro, que está certo. */
+  verificar('v121 — o cartão "Vencem em 7 dias" deu lugar à lista',
+    !/cartao\('Vencem em 7 dias'/.test(hab) &&
+    /Próximos documentos a vencer/.test(hab), '');
+  verificar('v121 — e o filtro do cofre com esse rótulo continua lá, que é outra coisa',
+    /\['critico', 'vencem em 7 dias'\]/.test(hab), '');
+  verificar('v121 — cinco por padrão, e mais quando muitos vencem em dez dias',
+    /const PROX_PADRAO = 5;/.test(hab) && /const PROX_JANELA = 10;/.test(hab) &&
+    /Math\.max\(PROX_PADRAO, curtos\)/.test(hab), '');
+  verificar('v121 — vencido e sem data não entram: cada um tem quadro próprio',
+    /if \(n < 0\) return;/.test(hab) &&
+    /if \(n === null \|\| n === undefined\) return;/.test(hab), '');
+  verificar('v121 — o prazo sai em palavras, com singular e plural certos',
+    /return 'vence hoje'/.test(hab) && /return 'falta 1 dia'/.test(hab) &&
+    /'faltam ' \+ n \+ ' dias'/.test(hab), '');
+  verificar('v121 — a lista é ordenada por quem vence primeiro',
+    /if \(a\.dias !== b\.dias\) return a\.dias - b\.dias;/.test(hab), '');
+  verificar('v121 — cada linha abre o documento, como os crachás',
+    /data-hb-abrir="' \+ U\.esc\(d\.id\)/.test(hab), '');
+  /* A coluna dos dias tem largura própria: é o que alinha os
+     prazos na vertical em vez de escondê-los dentro da frase. */
+  verificar('v121 — a coluna dos dias tem largura fixa e números alinhados',
+    /\.hb-prox-linha \{[\s\S]{0,200}grid-template-columns: 104px/.test(cssV) &&
+    /\.hb-prox-dias \{[\s\S]{0,120}tabular-nums/.test(cssV), '');
+  verificar('v121 — e nada corre para o lado: as colunas de texto têm piso zero',
+    /minmax\(0, 1\.4fr\) minmax\(0, 1fr\)/.test(cssV), '');
+  verificar('v121 — com dois quadros só, eles param de esticar na Documentação',
+    /#hb-saida \.ind-card \{ flex: 0 1 216px; \}/.test(cssV), '');
+})();
+
 concluir();

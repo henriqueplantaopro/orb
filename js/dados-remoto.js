@@ -242,6 +242,11 @@ ERP.dadosRemoto = (function () {
     });
   }
 
+  /* Prazo e andamento vêm de `util`: a mesma conta serve este
+     módulo e o de movimento, e duas cópias divergiriam. */
+  const comPrazo = (p, oQue) => ERP.util.comPrazo(p, oQue);
+  const diz = (txt, f, t) => ERP.util.andamento(txt, f, t);
+
   async function carregar() {
     const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
@@ -270,8 +275,38 @@ ERP.dadosRemoto = (function () {
       });
     }
 
-    for (const item of MAPA) {
-      const { data, error } = await c.from(item.tabela).select('*').order(item.ordem);
+    /* AS LEITURAS VÃO JUNTAS, NÃO UMA ESPERANDO A OUTRA.
+
+       Este laço era `for...of` com `await` dentro: cada tabela só
+       começava quando a anterior terminasse, e o tempo da entrada
+       era a SOMA de todas. Medido na produção, o peso não está no
+       que trafega — 433 KB no total — e sim na ida e volta: tabela
+       vazia levava 700 ms. Em fila, isso multiplica; juntas, o
+       tempo é o da mais lenta.
+
+       O número de viagens é o mesmo. O que muda é não esperar na
+       porta entre uma e outra.
+
+       O resultado é processado NA ORDEM DO MAPA, e não na ordem em
+       que as respostas chegarem: a ordem do mapa é a das chaves
+       estrangeiras, e trocá-la por quem respondeu primeiro faria o
+       sistema montar diferente a cada entrada. */
+    diz('carregando os cadastros', 0, MAPA.length);
+    let prontas = 0;
+    const respostas = await Promise.all(MAPA.map(function (item) {
+      return comPrazo(c.from(item.tabela).select('*').order(item.ordem), item.tabela)
+        .then(function (r) {
+          diz('carregando os cadastros', ++prontas, MAPA.length);
+          return r;
+        }, function (e) {
+          diz('carregando os cadastros', ++prontas, MAPA.length);
+          return { data: null, error: { message: e.message } };
+        });
+    }));
+
+    for (let i = 0; i < MAPA.length; i++) {
+      const item = MAPA[i];
+      const { data, error } = respostas[i];
       if (error) {
         return { erro: 'Não foi possível ler ' + item.tabela + ': ' + error.message };
       }
@@ -336,7 +371,10 @@ ERP.dadosRemoto = (function () {
       }
     });
 
-    const { data: mz, error: errMz } = await c.from('matriz_acesso').select('*');
+    diz('aplicando as permissões', MAPA.length, MAPA.length + 2);
+    const { data: mz, error: errMz } =
+      await comPrazo(c.from('matriz_acesso').select('*'), 'matriz_acesso')
+        .catch(function (e) { return { data: null, error: { message: e.message } }; });
     if (errMz) return { erro: 'Não foi possível ler a matriz de acesso: ' + errMz.message };
     if (mz && mz.length) {
       const nova = montarMatriz(mz);
@@ -346,7 +384,10 @@ ERP.dadosRemoto = (function () {
 
     /* Parâmetros do DP (tabelas de INSS e IRRF, alíquotas): vivem em
        chave/valor porque mudam por lei, não por versão do sistema. */
-    const { data: par } = await c.from('parametros').select('chave, valor');
+    diz('aplicando as políticas', MAPA.length + 1, MAPA.length + 2);
+    const { data: par } =
+      await comPrazo(c.from('parametros').select('chave, valor'), 'parametros')
+        .catch(function () { return { data: null }; });
     (par || []).forEach(function (p) {
       if (p.chave === 'tabela_inss' && p.valor) Object.assign(D.tabelaINSS, p.valor);
       if (p.chave === 'tabela_irrf' && p.valor) Object.assign(D.tabelaIRRF, p.valor);

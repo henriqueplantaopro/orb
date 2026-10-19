@@ -262,15 +262,94 @@ ERP.auth = (function () {
      acabava de fazer login entrava sem carregar nada do banco, e o
      lançamento sumia ao recarregar. Um caminho só, para não haver
      o que esquecer de repetir. */
+  /* ── A TELA DA ESPERA ────────────────────────────────────
+     Entre o login aceito e o sistema montado há uma carga, e até a
+     v120 esse intervalo não tinha tela nenhuma: ficava o cabeçalho
+     sozinho sobre o cinza. Indistinguível de um sistema quebrado —
+     e, no dia em que o banco respondeu devagar, foi lido como
+     quebra pela empresa inteira.
+
+     Agora o intervalo tem voz: diz o que está buscando e quantas
+     de quantas já vieram. Quem espera sabendo o que espera, espera
+     melhor; e quem vê "12 de 33" sabe que não travou. */
+  function telaEspera() {
+    let d = document.getElementById('tela-carregando');
+    if (d) return d;
+    d = document.createElement('div');
+    d.id = 'tela-carregando';
+    d.innerHTML =
+      '<div class="carregando-caixa">' +
+        '<div class="login-marca">HJM Dom Pedro</div>' +
+        '<div class="carregando-txt" id="carregando-txt">entrando…</div>' +
+        '<div class="carregando-barra"><i id="carregando-fita"></i></div>' +
+      '</div>';
+    document.body.appendChild(d);
+    return d;
+  }
+
+  function fecharEspera() {
+    const d = document.getElementById('tela-carregando');
+    if (d) d.remove();
+  }
+
+  /* O FIM RUIM TAMBÉM É UMA TELA, e não um sumiço.
+
+     Antes, falha na carga jogava a pessoa de volta no login com
+     uma frase — o que é enganoso, porque a senha estava certa e o
+     login tinha funcionado. O problema é do banco, e a ação certa
+     não é digitar a senha de novo: é tentar de novo. */
+  function esperaFalhou(motivo, tentarDeNovo) {
+    const d = telaEspera();
+    d.innerHTML =
+      '<div class="carregando-caixa">' +
+        '<div class="login-marca">HJM Dom Pedro</div>' +
+        '<h1>Não consegui carregar os dados</h1>' +
+        '<div class="login-erro">' + ERP.util.esc(motivo) + '</div>' +
+        '<div class="sub">Seu acesso está certo — quem não respondeu foi o banco. ' +
+        'Isso costuma passar numa segunda tentativa.</div>' +
+        '<button class="btn-aprovar" id="carregando-retentar">Tentar de novo</button>' +
+        '<button class="btn-sm" id="carregando-sair">Sair</button>' +
+      '</div>';
+    const b = document.getElementById('carregando-retentar');
+    if (b) b.addEventListener('click', function () {
+      b.disabled = true; b.textContent = 'tentando…';
+      tentarDeNovo();
+    });
+    const x = document.getElementById('carregando-sair');
+    if (x) x.addEventListener('click', function () { sair(); });
+  }
+
   async function montarTudo(s) {
     /* 1. cadastros antes de montar: o sistema tem de subir com os
        centros e credores que existem de verdade. */
     if (ERP.dadosRemoto) {
-      const r = await ERP.dadosRemoto.carregar();
-      if (r && r.erro) {
-        telaLogin('Entrou, mas não foi possível carregar os cadastros: ' + r.erro);
+      telaEspera();
+      ERP.util.avisarCarga(function (txt, feitos, total) {
+        const t = document.getElementById('carregando-txt');
+        if (t) t.textContent = txt + (total ? ' — ' + feitos + ' de ' + total : '…');
+        const f = document.getElementById('carregando-fita');
+        if (f && total) f.style.width = Math.round((feitos / total) * 100) + '%';
+      });
+
+      /* O `try` é o ponto da correção. Sem ele, qualquer recusa
+         aqui dentro — rede caindo, prazo estourado — virava
+         promessa rejeitada sem dono: a montagem parava no meio,
+         nada era dito e a tela ficava como estava, para sempre. */
+      let r;
+      try {
+        r = await ERP.dadosRemoto.carregar();
+      } catch (e) {
+        ERP.util.avisarCarga(null);
+        esperaFalhou(e && e.message ? e.message : String(e),
+          function () { montarTudo(s); });
         return;
       }
+      ERP.util.avisarCarga(null);
+      if (r && r.erro) {
+        esperaFalhou(r.erro, function () { montarTudo(s); });
+        return;
+      }
+      fecharEspera();
       /* A partir daqui a tela se mantém atualizada sozinha: sem
          isso, a sessão trabalha para sempre com o retrato do
          momento em que entrou, e quem dá entrada de material não
@@ -471,5 +550,10 @@ ERP.auth = (function () {
   }
 
   return { iniciar: iniciar, entrar: entrar, sair: sair, configurado: configurado,
-           sessaoAtual: () => sessao, cliente: conectar };
+           sessaoAtual: () => sessao, cliente: conectar,
+           /* Gancho da bateria: deixa a prova entrar pelo mesmo
+              caminho que o login de verdade usa, sem ter de
+              digitar senha num banco falso. O sublinhado marca que
+              não é para ser chamado pela tela. */
+           _montarTudo: montarTudo };
 })();
