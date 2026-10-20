@@ -10340,4 +10340,67 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /#hb-saida \.ind-card \{ flex: 0 1 216px; \}/.test(cssV), '');
 })();
 
+
+/* ══════════════════════════════════════════════════════════
+   v122 · o perfil de acesso criado na tela vai ao banco
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const per = fsE.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const sto = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const adm = fsE.readFileSync(__dirname + '/js/ui-administracao.js', 'utf8');
+  const sql63 = fsE.readFileSync(__dirname + '/supabase/63-ATUALIZAR-v122.sql', 'utf8');
+
+  /* A FALTA QUE CUSTOU DOIS CADASTROS: `perfis` era lida na
+     entrada e nunca gravada — o mesmo que aconteceu com `cargos`
+     na v115. */
+  verificar('v122 — existe caminho de gravacao para o perfil',
+    /async function salvarPerfil\(p, matrizDoPerfil\)/.test(per) &&
+    /from\('perfis'\)\.upsert/.test(per), '');
+  verificar('v122 — e ele grava TAMBEM a matriz, que e quem decide o que o perfil ve',
+    /from\('matriz_acesso'\)\s*\n?\s*\.upsert\(linhas/.test(per), '');
+  verificar('v122 — perfil tambem some do banco quando excluido',
+    /async function apagarPerfil/.test(per) &&
+    /from\('perfis'\)\.delete\(\)/.test(per), '');
+  verificar('v122 — a persistencia expoe as duas funcoes',
+    /salvarPerfil: salvarPerfil, apagarPerfil: apagarPerfil/.test(per), '');
+
+  /* As caixas de modulo escreviam num campo que ninguem lia. */
+  verificar('v122 — as caixas de modulo escrevem na matriz, nao num campo morto',
+    /function aplicarModulosNaMatriz/.test(sto) &&
+    /aplicarModulosNaMatriz\(id, modulos\)/.test(sto), '');
+  verificar('v122 — marcar concede o VER sem rebaixar quem ja tem mais',
+    /if \(marcado\) \{ if \(atual\.indexOf\('V'\) < 0\) m\[perfilId\]\[mo\.id\] = 'V'; \}/.test(sto), '');
+  verificar('v122 — desmarcar limpa o modulo',
+    /else m\[perfilId\]\[mo\.id\] = '';/.test(sto), '');
+  verificar('v122 — salvarPerfil devolve o id, para a tela saber o que mandar ao banco',
+    /return \{ ok: true, id: d\.id \|\| criado \};/.test(sto), '');
+
+  /* A TELA SO PODE DIZER "SALVO" DEPOIS DO BANCO. */
+  verificar('v122 — a tela chama o banco ao salvar o perfil',
+    /ERP\.persistencia\.salvarPerfil\(perfilSalvo, matrizDele\)/.test(adm), '');
+  verificar('v122 — e so anuncia sucesso depois que o banco confirma',
+    /Perfil salvo no banco/.test(adm) && !/aviso\('Perfil salvo\. Quem usa/.test(adm), '');
+  verificar('v122 — banco recusando, o perfil fantasma sai da lista',
+    /if \(!id\) S\.excluirPerfil\(r\.id\);/.test(adm), '');
+  verificar('v122 — excluir perfil tambem apaga no banco',
+    /ERP\.persistencia\.apagarPerfil\(alvo\)/.test(adm), '');
+  verificar('v122 — sem banco, a tela diz que salvou SO na tela',
+    /Perfil salvo só nesta tela/.test(adm), '');
+
+  /* O SQL da etapa 63 garante a permissao de escrita. */
+  verificar('v122 — o SQL 63 concede escrita em perfis e na matriz',
+    /grant select, insert, update, delete on perfis to authenticated;/.test(sql63) &&
+    /grant select, insert, update, delete on matriz_acesso to authenticated;/.test(sql63), '');
+  verificar('v122 — e tem conferencia de saida unica',
+    /create temp table diag/.test(sql63) &&
+    /select o_que, resultado from diag order by ordem/.test(sql63), '');
+  verificar('v122 — a politica de escrita em perfis e so da Administracao',
+    /create policy mexer_perfis on perfis[\s\S]{0,160}tem_nivel\('administracao', 'M'\)/.test(sql63), '');
+
+  /* A varredura que fecha a CLASSE do defeito. */
+  verificar('v122 — existe varredura que cobra caminho de gravacao de toda tabela lida',
+    fsE.existsSync(__dirname + '/varredura-gravacao.js'), '');
+})();
+
 concluir();
