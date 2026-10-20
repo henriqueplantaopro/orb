@@ -5038,6 +5038,23 @@ ERP.store = (function () {
         valor: valorAdicionalProp, natureza: '4.02' });
     }
 
+    /* O adicional de cargo de confianca sai DESMEMBRADO do salario,
+       em linha propria, e nao somado dentro dele: e assim que a
+       pessoa confere o holerite, e e assim que ele precisa aparecer
+       para a contabilidade separar gratificacao de salario base.
+
+       Proporcional aos dias pagos, igual ao salario: quem foi
+       admitido no meio do mes, faltou ou esteve de ferias nao
+       exerceu o cargo o mes inteiro. */
+    const gratificacaoMes = gratificacaoDe(f);
+    const gratificacaoProp = Math.round(gratificacaoMes / diasMes * diasPagos * 100) / 100;
+    if (gratificacaoProp > 0.004) {
+      proventos.push({ codigo: '107',
+        descricao: 'Adicional de cargo de confiança' +
+          (diasPagos < diasMes ? ' (' + diasPagos + '/' + diasMes + ' dias)' : ''),
+        valor: gratificacaoProp, natureza: '4.01' });
+    }
+
     /* Divisor de hora: 220 é o de referência pra 44h semanais (o mais
        comum); outra jornada usa jornada*5, aproximação padrão de
        mercado. Hora noturna reduzida (52min30s) não entra nesta
@@ -5049,7 +5066,12 @@ ERP.store = (function () {
        a HE feita depois de admitir no meio do mês (por exemplo) tem
        que refletir o adicional que a pessoa de fato recebe naquele
        mês, não um valor cheio que ela não vai receber. */
-    const valorHora = Math.round((salarioMes + valorAdicionalMes) / divisorHora * 100) / 100;
+    /* A gratificacao entra na base da hora extra pelo mesmo motivo
+       da insalubridade e da periculosidade: adicional habitual
+       integra a remuneracao (Sumula 264 do TST). Deixar de fora
+       subestimaria a HE de todo gestor que faz hora extra. */
+    const valorHora = Math.round((salarioMes + valorAdicionalMes + gratificacaoMes) /
+      divisorHora * 100) / 100;
     let variaveis = 0;
 
     if (extras.he50_horas > 0) {
@@ -5306,8 +5328,24 @@ ERP.store = (function () {
        Sem isso, o custo por funcionário aparecia menor do que é. */
     const encargosSobreProvisao = (dp.aliquota_fgts + dp.aliquota_inss_patronal +
       dp.aliquota_rat_fap + dp.aliquota_terceiros) / 100;
-    const provisaoDecimoBase = Math.round(salarioMes / 12 * 100) / 100;
-    const provisaoFeriasBase = Math.round(salarioMes / 12 * (1 + dp.terco_constitucional_ferias) * 100) / 100;
+    /* A PROVISAO PROVISIONA O QUE VAI SER PAGO, e o que vai ser
+       pago nao e so o salario.
+
+       Ela usava `salarioMes` puro, enquanto o 13º e as ferias, na
+       hora de pagar de verdade, somam o adicional habitual
+       (`adicionalHabitual`: insalubridade ou periculosidade, e
+       agora tambem o adicional de cargo de confianca). Resultado:
+       todo mes provisionava-se menos do que a obrigacao que estava
+       nascendo, e a diferenca so aparecia em dezembro, como um 13º
+       maior que o provisionado.
+
+       Ja estava errado para quem tem insalubridade ou
+       periculosidade; o adicional de confianca so tornou a conta
+       maior e mais visivel. A base agora e a MESMA que o pagamento
+       usa — e e assim que provisao e pagamento param de divergir. */
+    const remuneracaoProvisao = salarioMes + adicionalHabitual(f, salarioMes);
+    const provisaoDecimoBase = Math.round(remuneracaoProvisao / 12 * 100) / 100;
+    const provisaoFeriasBase = Math.round(remuneracaoProvisao / 12 * (1 + dp.terco_constitucional_ferias) * 100) / 100;
     const provisaoDecimo = Math.round(provisaoDecimoBase * (1 + encargosSobreProvisao) * 100) / 100;
     const provisaoFerias = Math.round(provisaoFeriasBase * (1 + encargosSobreProvisao) * 100) / 100;
     const vrCusto = Math.round((vrGasto - vrDesconto) * 100) / 100;
@@ -6937,12 +6975,72 @@ ERP.store = (function () {
        sem registrar vigência é exatamente o que quebra a
        rastreabilidade que a estimativa de multa de FGTS depende.
        Reajuste passa por `registrarReajusteSalarial`. */
+    /* ── CORRIGIR A DATA DE ADMISSAO ────────────────────
+       Cadastro errado acontece, e sem poder corrigir a data a unica
+       saida seria apagar a pessoa e recriar — perdendo historico
+       salarial, ferias e tudo o mais. Entao editar pode.
+
+       O QUE NAO PODE e deixar o cadastro contar uma historia
+       impossivel. Duas travas:
+
+         1. Admissao DEPOIS de uma folha fechada em que a pessoa foi
+            paga. Seria dizer que ela recebeu salario antes de ser
+            contratada — e o holerite fechado, que e uma foto, ficaria
+            contradizendo o cadastro para sempre.
+         2. Admissao depois do desligamento.
+
+       Mudar a data NAO refaz folha fechada: o holerite dela esta
+       congelado, e e assim que tem de ser. O que muda sao os
+       calculos daqui para a frente — primeiro mes proporcional,
+       periodo aquisitivo de ferias, 13º proporcional e a estimativa
+       de multa de FGTS. Por isso a mudanca vai para a trilha. */
+    if (dados.admissao !== undefined && dados.admissao !== f.admissao) {
+      const nova = String(dados.admissao || '');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(nova)) {
+        return { erro: 'Data de admissão inválida.' };
+      }
+      if (f.desligamento && nova > f.desligamento) {
+        return { erro: 'A admissão (' + U.fData(nova) + ') ficaria depois do desligamento (' +
+          U.fData(f.desligamento) + ').' };
+      }
+      const pagas = (st.folhas || []).filter(function (fl) {
+        return !fl.cancelada &&
+          /* `funcionario` e a chave do holerite em todo o resto do
+             modulo. Aceitar um segundo nome "por seguranca" so
+             esconderia uma renomeacao: se o campo mudar, esta trava
+             tem de parar de achar e a prova tem de gritar. */
+          (fl.holerites || []).some(function (h) { return h.funcionario === id; });
+      }).map(function (fl) { return fl.competencia; }).sort();
+      const antesDaNova = pagas.filter(function (comp) { return comp < nova.slice(0, 7); });
+      if (antesDaNova.length) {
+        return { erro: 'Não dá para admitir em ' + U.fData(nova) + ': esta pessoa já tem folha FECHADA em ' +
+          antesDaNova.map(U.fComp).join(', ') + ', ou seja, foi paga antes dessa data. ' +
+          'Cancele essas folhas antes de mudar a admissão, ou escolha uma data que não as contradiga.' };
+      }
+      if (pagas.length) {
+        logar('funcionario', id, 'mudou a data de admissão com folha já fechada',
+          U.fData(f.admissao) + ' → ' + U.fData(nova) + ' · folhas fechadas: ' +
+          pagas.map(U.fComp).join(', ') + ' (os holerites fechados não mudam)');
+      }
+    }
+
     const campos = ['nome', 'pis', 'nascimento', 'cargo', 'jornada_semanal_horas',
       'dependentes_irrf', 'dependentes', 'pensao_alimenticia', 'credito_trabalhador',
       'centro', 'rateio', 'banco', 'agencia', 'conta_bancaria', 'pix',
       'vale_transporte', 'vt_dia', 'vt_modo', 'vt_desconto_modo', 'vt_desconto_valor',
       'vale_refeicao', 'vr_dia', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor',
-      'insalubridade_pct', 'periculosidade'];
+      'insalubridade_pct', 'periculosidade',
+      /* O adicional de cargo de confianca e campo de cadastro como
+         qualquer outro: quem assume ou deixa o cargo tem o valor
+         mudado aqui. */
+      'adicional_confianca',
+      /* A DATA DE ADMISSAO passa a ser editavel — ver a trava logo
+         acima, que e o que torna isso seguro. Ficava de fora porque
+         ela e a base de ferias, 13º, multa de FGTS e do primeiro mes
+         proporcional; mas cadastro errado acontece, e sem este campo
+         a unica saida era apagar a pessoa e recriar, perdendo o
+         historico inteiro. */
+      'admissao'];
     const mudou = [];
     campos.forEach(function (k) {
       if (dados[k] === undefined) return;
@@ -7049,12 +7147,40 @@ ERP.store = (function () {
     return Math.round((soma / meses) * 100) / 100;
   }
 
+  /* ADICIONAL DE CARGO DE CONFIANCA (gratificacao de funcao).
+
+     Valor fixo mensal, pago a quem exerce cargo de confianca. Nao
+     e adicional de risco: CUMULA com insalubridade e com
+     periculosidade — a regra de nao cumular da CLT art. 193 §2º e
+     entre esses dois, e so entre eles.
+
+     Sendo habitual, integra a remuneracao: entra na base de hora
+     extra (Sumula 264 do TST), no 13º, nas ferias e na rescisao, e
+     sofre INSS, IRRF e FGTS como salario. Por isso mora aqui
+     dentro de `adicionalHabitual`, que e a funcao que o 13º, as
+     ferias e a rescisao ja consultam — somar em um lugar so evita
+     que ele apareca na folha do mes e falte no 13º.
+
+     NAO E HISTORICIZADO, de proposito e com ressalva: diferente do
+     salario (que tem `historico_salarial`), mudar o valor hoje
+     muda o calculo de qualquer competencia AINDA ABERTA, inclusive
+     passada. Folha fechada nao se mexe — o holerite dela e uma
+     foto. E o mesmo comportamento que insalubridade e
+     periculosidade sempre tiveram; se um dia precisar de data de
+     vigencia, o lugar e o mesmo mecanismo do salario. */
+  function gratificacaoDe(f) {
+    const v = Number(f && f.adicional_confianca);
+    return v > 0 && isFinite(v) ? Math.round(v * 100) / 100 : 0;
+  }
+
   function adicionalHabitual(f, salarioMes) {
     const dp = D.parametrosDP;
     const valorInsal = f.insalubridade_pct > 0
       ? Math.round(dp.salario_minimo * f.insalubridade_pct / 100 * 100) / 100 : 0;
     const valorPericul = f.periculosidade ? Math.round(salarioMes * 0.3 * 100) / 100 : 0;
-    return Math.max(valorInsal, valorPericul);
+    /* Max entre os dois de risco (nao cumulam), MAIS a gratificacao
+       de funcao (que cumula com qualquer um dos dois). */
+    return Math.max(valorInsal, valorPericul) + gratificacaoDe(f);
   }
 
   /* Rateio por centro de um valor consolidado (guia de FGTS, INSS
