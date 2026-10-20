@@ -10403,4 +10403,30 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     fsE.existsSync(__dirname + '/varredura-gravacao.js'), '');
 })();
 
+
+/* ══════════════════════════════════════════════════════════
+   v123 · usuario novo vai ao banco COM ID
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const sto = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const adm = fsE.readFileSync(__dirname + '/js/ui-administracao.js', 'utf8');
+  const per = fsE.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* A tela adivinhava o id do usuario recem-criado e errava: o
+     `id` do formulario e nulo em usuario novo, e `r.usuario` nunca
+     existiu. O resultado era um registro vazio indo ao banco, e o
+     banco respondendo "null value in column id". */
+  verificar('v123 — salvarUsuario devolve o id de quem foi salvo',
+    /return \{ ok: true, id: d\.id \|\| novo \};/.test(sto), '');
+  verificar('v123 — e a tela usa esse id em vez de adivinhar',
+    /const u2 = D\.usuario\(r\.id\) \|\| \{\};/.test(adm) &&
+    !/D\.usuario\(r\.usuario \? r\.usuario\.id : id\)/.test(adm), '');
+  verificar('v123 — usuario novo nasce com a marca de senha provisoria',
+    /senha_provisoria: !!d\.senha_provisoria/.test(sto), '');
+  /* Segunda barreira: o banco nao deve ser quem explica o erro. */
+  verificar('v123 — registro sem id e recusado antes de chegar ao banco',
+    /não identificou qual usuário gravar/.test(per), '');
+})();
+
 concluir();

@@ -11438,6 +11438,7 @@ ERP.store = (function () {
     if (!d.perfil) return { erro: 'Informe o perfil.' };
     const alvo = d.id ? D.usuarios.find(function (u) { return u.id === d.id; }) : null;
     if (d.id && !alvo) return { erro: 'Usuário não encontrado.' };
+    let novo = null;
     if (alvo) {
       alvo.nome = d.nome; alvo.perfil = d.perfil; alvo.email = d.email || '';
       alvo.ativo = d.ativo !== false;
@@ -11450,11 +11451,27 @@ ERP.store = (function () {
         return { erro: 'Ficaria ninguém com perfil de administração — o perfil foi mantido.' };
       }
     } else {
-      D.usuarios.push({ id: novoId('u'), nome: d.nome, perfil: d.perfil,
-        email: d.email || '', ativo: true });
+      novo = novoId('u');
+      D.usuarios.push({ id: novo, nome: d.nome, perfil: d.perfil,
+        email: d.email || '', ativo: true,
+        senha_provisoria: !!d.senha_provisoria });
     }
     logar('usuario', d.id || 'novo', d.id ? 'editou usuário' : 'criou usuário', d.nome + ' · ' + d.perfil);
-    return { ok: true };
+    /* O ID VOLTA PARA QUEM CHAMOU.
+
+       Esta função devolvia só `{ok:true}`, e a tela — que precisa
+       do id para mandar o usuário ao banco — tentava adivinhar:
+       `D.usuario(r.usuario ? r.usuario.id : id)`. Em usuário NOVO
+       o `id` é nulo e `r.usuario` nunca existiu, então a busca
+       voltava vazia, virava `{}` e o sistema mandava um registro
+       sem nada ao banco:
+
+         null value in column "id" of relation "usuarios"
+         violates not-null constraint
+
+       O usuário ficava na tela e não existia no banco — o mesmo
+       final de `cargos` e de `perfis`, por um caminho diferente. */
+    return { ok: true, id: d.id || novo };
   }
 
   // trilha de eventos, com filtro — é a memória de quem fez o quê
