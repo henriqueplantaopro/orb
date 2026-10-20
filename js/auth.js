@@ -337,7 +337,7 @@ ERP.auth = (function () {
          nada era dito e a tela ficava como estava, para sempre. */
       let r;
       try {
-        r = await ERP.dadosRemoto.carregar();
+        r = await ERP.dadosRemoto.carregar(s.usuario && s.usuario.perfil);
       } catch (e) {
         ERP.util.avisarCarga(null);
         esperaFalhou(e && e.message ? e.message : String(e),
