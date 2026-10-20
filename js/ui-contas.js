@@ -89,6 +89,10 @@ ERP.contas = (function () {
   /* "Selecionar todos" marca tudo o que dá para marcar e ignora o resto —
      nunca fica desabilitado por causa de uma linha travada. */
   function podeSelecionar(p) {
+    /* Previsão de folha não é linha do banco: não existe id para
+       pagar, aprovar ou editar. Fora da seleção antes de qualquer
+       outra regra. */
+    if (p.previsao) return false;
     // título previsto é lembrete de caixa, não obrigação: não se paga
     if (p.status === 'previsto' || p.status === 'substituido') return false;
     /* Cadastro incompleto não impede mais selecionar nem aprovar: a
@@ -315,15 +319,42 @@ ERP.contas = (function () {
     if (!selecionadas.size) U.el('chk-todas').checked = false;
     const hoje = U.hoje();
 
-    const emAberto = lista.filter(p => p.status === 'aberto' || p.status === 'parcial');
-    const saldoAberto = emAberto.reduce((s, p) => s + S.saldoDe(p), 0);
-    const vencido = emAberto.filter(p => p.venc < hoje).reduce((s, p) => s + S.saldoDe(p), 0);
-    const pago = lista.reduce((s, p) => s + S.caixaDe(p.id), 0);
+    /* ── CONFIRMADO E PREVISTO NUNCA SOMAM JUNTOS ───────
+       A tela mistura, na mesma lista, obrigação assumida e
+       estimativa. É assim que ela serve para planejar — mas um
+       total único somando as duas seria um número em que não se
+       pode confiar nem para pagar nem para prever. Então são
+       caixas separadas, e a palavra "previsto" aparece na caixa,
+       não só na linha. */
+    const confirmadas = lista.filter(p => !p.previsao && p.status !== 'previsto' &&
+      p.status !== 'cancelado' && p.status !== 'substituido' && p.status !== 'pago');
+    const previstas = lista.filter(p => p.previsao || p.status === 'previsto');
+    const soma = l => l.reduce((t, p) => t + S.saldoDe(p), 0);
+    const vencido = soma(confirmadas.filter(p => p.venc < hoje));
+    const aVencer = soma(confirmadas.filter(p => p.venc >= hoje));
+    const previsto = soma(previstas);
+    const daFolha = previstas.filter(p => p.previsao).length;
     const pend = lista.filter(p => p.aprovacao === 'pendente' && p.status !== 'cancelado');
 
     /* Uma caixa, um número. O texto comprido com a conta do dia saiu:
        quem quer a projeção tem o fluxo de caixa diário nos relatórios. */
     const banco = S.saldoBancarioAtual ? S.saldoBancarioAtual() : null;
+    const caixa = function (rot, valor, det, classe) {
+      return '<div class="saldo-dia' + (classe ? ' ' + classe : '') + '">' +
+        '<div class="rot">' + rot + '</div>' +
+        '<div class="valor">' + U.brl(valor) + '</div>' +
+        '<div class="det">' + det + '</div></div>';
+    };
+    const extra = U.el('cp-totais');
+    if (extra) {
+      extra.innerHTML = abaContas === 'pagas' ? '' :
+        caixa('Vencido', vencido,
+          vencido > 0 ? 'confirmado e já no prazo' : 'nada vencido', 'cx-vencido') +
+        caixa('A vencer', aVencer, 'confirmado, ainda no prazo') +
+        caixa('Previsto', previsto,
+          daFolha ? daFolha + ' linha(s) de folha · sai no fechamento'
+                  : 'estimativa, não é obrigação', 'cx-previsto');
+    }
     U.el('cp-resumo').innerHTML =
       '<div class="rot">Saldo bancário do grupo</div>' +
       '<div class="valor">' + (banco && banco.valor !== null ? U.brl(banco.valor) : '—') + '</div>' +
@@ -437,7 +468,10 @@ ERP.contas = (function () {
       const centro = D.centro(p.centro) || {};
       const conta = D.conta(p.conta) || {};
       const podeAprovarLanc = p.aprovacao === 'pendente' && p.status !== 'cancelado' && S.pode('aprovar');
-      const trava = p.status === 'previsto'
+      const trava = p.previsao
+        ? ['previsão calculada da folha — vira título quando a folha de ' +
+           U.fComp(p.comp) + ' for fechada']
+        : p.status === 'previsto'
         ? ['previsão de despesa — lance o título quando a conta chegar']
         : p.status === 'substituido' ? [] : S.impedimentos(p);
       /* A caixa de seleção segue a mesma regra do botão Pagar: falta de
@@ -459,7 +493,8 @@ ERP.contas = (function () {
         (S.obsVisivel(p) ? ' · ' + S.obsVisivel(p) : '');
 
       return '<tr class="' + (selecionadas.has(p.id) ? 'sel ' : '') +
-        (dentroDeGrupo ? 'linha-filha ' : '') + (p.status === 'cancelado' ? 'cancelada' : '') + '">' +
+        (dentroDeGrupo ? 'linha-filha ' : '') + (p.previsao ? 'linha-previsao ' : '') +
+        (p.status === 'cancelado' ? 'cancelada' : '') + '">' +
         '<td>' + (podeSel
           ? '<input type="checkbox" style="width:auto" data-sel="' + p.id + '"' + (selecionadas.has(p.id) ? ' checked' : '') + '>'
           : '') + '</td>' +
@@ -490,11 +525,19 @@ ERP.contas = (function () {
            os botões para fora da tela. O detalhe do que falta foi para
            o title (aparece ao passar o mouse) e para a ficha do
            título; aqui fica só o selo. */
-        '<td class="col-situacao"><span class="badge b-' + p.status + '">' + rotStatus[p.status] + '</span>' +
-          (trava.length && p.status !== 'pago' && p.status !== 'cancelado'
-            ? '<div><span class="badge b-aguardando" title="' + U.esc(trava.join(' · ')) +
-              '">falta p/ remessa</span></div>'
-            : '') +
+        '<td class="col-situacao"><span class="badge b-' + p.status + '"' +
+          (p.previsao ? ' title="' + U.esc(trava.join(' · ')) + '"' : '') + '>' +
+          rotStatus[p.status] + '</span>' +
+          /* "falta p/ remessa" é sobre título que VAI para o banco e
+             está com cadastro incompleto. Previsão de folha não vai
+             para remessa nenhuma: o selo acusaria uma pendência que
+             não existe, e mandaria a pessoa procurar o que corrigir
+             num cadastro que está certo. A explicação fica no selo
+             "Previsto", ao passar o mouse. */
+          (p.previsao || !trava.length || p.status === 'pago' || p.status === 'cancelado'
+            ? ''
+            : '<div><span class="badge b-aguardando" title="' + U.esc(trava.join(' · ')) +
+              '">falta p/ remessa</span></div>') +
           /* O número da NF já aparece na coluna "Série / título": aqui
              repetir "NF 4471 (sem arquivo)" só alargava a coluna. Fica
              um selo curto, com o detalhe no title. */
@@ -550,6 +593,14 @@ ERP.contas = (function () {
   // ficam dentro do detalhe, para a tabela não precisar de rolagem lateral.
   function acoes(p, trava) {
     const b = [];
+    /* PREVISÃO DE FOLHA NÃO TEM BOTÃO, e é de propósito.
+       "Efetivar" e "Editar" trabalham sobre um título do banco, e
+       aqui não existe título: os dois dariam erro de parcela não
+       encontrada. E não é o caminho mesmo — esta linha sai sozinha
+       quando a folha do mês fecha, substituída pelos títulos de
+       verdade. Quem quiser mudar o número muda o cadastro do
+       funcionário, que é de onde ele vem. */
+    if (p.previsao) return '<span class="sub">sai no fechamento</span>';
     trava = trava || S.impedimentos(p);
     if (p.status !== 'cancelado') {
       if (p.status === 'aguardando') {

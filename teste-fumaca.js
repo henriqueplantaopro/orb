@@ -10619,6 +10619,42 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /extra[\s\S]{0,160}if \(o\[k\] !== undefined\) return;/.test(remE), '');
   verificar('v127 — o SQL nao sobrescreve coluna ja preenchida',
     /coalesce\(banco,\s*extra->>'banco'\)/.test(sqlE), '');
+
+  /* ── v128 · a previsao de folha no contas a pagar ────
+     A tela mais usada do dia a dia passa a mostrar, na mesma
+     lista, o que esta confirmado e o que esta previsto. O risco
+     da mudanca e um so: contar o mesmo mes duas vezes. */
+  const ctsU = fsE.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  const cssE = fsE.readFileSync(__dirname + '/css/erp.css', 'utf8');
+  verificar('v128 — a previsao entra na lista do contas a pagar',
+    /function previsaoFolhaComoParcelas/.test(sto) &&
+    /concat\(previsaoFolhaComoParcelas\(f\)\.filter\(passa\)\)/.test(sto), '');
+  verificar('v128 — e passa pelo MESMO filtro do titulo de verdade',
+    /const passa = p =>/.test(sto) &&
+    /st\.parcelas\.filter\(passa\)/.test(sto), '');
+  /* A TRAVA QUE MAIS IMPORTA NESTA VERSAO: competencia que ja tem
+     titulo de folha nao pode aparecer tambem como previsao. */
+  verificar('v128 — competencia com titulo de folha nao e prevista de novo',
+    /const jaTemTitulo = \{\}/.test(sto) &&
+    /p\.origem === 'folha' && p\.status !== 'cancelado'/.test(sto) &&
+    /return !jaTemTitulo\[pf\.competencia\]/.test(sto), '');
+  verificar('v128 — a previsao nao e titulo: marcada, sem aprovacao, com id proprio',
+    /previsao: true,/.test(sto) &&
+    /id: 'previsao-folha:'/.test(sto) &&
+    /aprovacao: '',/.test(sto), '');
+  verificar('v128 — e a tela nunca deixa selecionar uma previsao',
+    /if \(p\.previsao\) return false;/.test(ctsU), '');
+  verificar('v128 — nem oferece botao de acao sobre ela',
+    /if \(p\.previsao\) return '<span class="sub">sai no fechamento<\/span>';/.test(ctsU), '');
+  verificar('v128 — nem acusa pendencia que previsao nao tem',
+    /p\.previsao \|\| !trava\.length/.test(ctsU) &&
+    /nf_dispensada: false, sem_nf: false/.test(sto), '');
+  verificar('v128 — confirmado e previsto aparecem em caixas separadas',
+    /const confirmadas = lista\.filter/.test(ctsU) &&
+    /const previstas = lista\.filter/.test(ctsU) &&
+    /caixa\('Previsto', previsto/.test(ctsU), '');
+  verificar('v128 — com estilo proprio, para nao parecer titulo',
+    /tr\.linha-previsao\{/.test(cssE) && /\.cp-caixas \.cx-previsto/.test(cssE), '');
 })();
 
 concluir();

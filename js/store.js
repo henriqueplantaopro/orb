@@ -15778,7 +15778,14 @@ ERP.store = (function () {
   /* ── consultas ──────────────────────────────────────────*/
   function listar(f) {
     f = f || {};
-    return st.parcelas.filter(p =>
+    /* UM FILTRO, DUAS FONTES.
+
+       A lista do contas a pagar traz titulo de verdade (linha do
+       banco) e previsao de folha (calculada na hora, sem linha
+       nenhuma). O filtro tem de ser O MESMO para os dois: duas
+       copias da mesma regra divergem na primeira alteracao, e aí o
+       "Só previstos" passa a esconder uma coisa e mostrar outra. */
+    const passa = p =>
       /* Filtro por empresa do grupo: a parcela pertence à empresa que
          pagou (conta) ou, sem pagamento, à do projeto. */
       (!f.empresa || empresaDaParcela(p) === f.empresa) &&
@@ -15816,8 +15823,111 @@ ERP.store = (function () {
          o nome da pessoa. */
       (!f.busca   || (descricaoVisivel(p) + ' ' + (p.doc || '') + ' ' +
         nomeCredorVisivel(p, (D.credor(p.credor) || {}).nome || '')).toLowerCase()
-        .indexOf(f.busca.toLowerCase()) > -1)
-    ).sort((a, b) => (a.venc || '').localeCompare(b.venc || '') || a.num - b.num);
+        .indexOf(f.busca.toLowerCase()) > -1);
+
+    return st.parcelas.filter(passa)
+      .concat(previsaoFolhaComoParcelas(f).filter(passa))
+      .sort((a, b) => (a.venc || '').localeCompare(b.venc || '') || a.num - b.num);
+  }
+
+  /* ── A FOLHA QUE AINDA NAO ACONTECEU ────────────────────
+     Antes, a previsao de folha so existia na planilha de fluxo de
+     caixa dos relatorios. Quem abre o contas a pagar para ver o
+     que tem pela frente nao via nada — e o que esta pela frente,
+     numa empresa de servicos, e em boa parte folha.
+
+     Estas linhas NAO SAO TITULO. Nao existem no banco, nao se
+     pagam, nao se aprovam, nao se editam, e nao sobrevivem a um
+     recarregar: sao recalculadas a cada abertura, a partir de quem
+     esta cadastrado naquele instante. Admitiu alguem, sobem; houve
+     desligamento, descem. E por isso que nao ha o que limpar
+     depois, nem risco de ficar previsao orfa de gente que saiu.
+
+     A DUPLICIDADE E O RISCO DESTA TELA, e ela tem tres travas:
+
+       1. Competencia com folha FECHADA nao e prevista. O
+          fechamento ja criou os titulos de verdade; prever por
+          cima contaria o mes duas vezes. Esta trava mora em
+          `previsaoFolha`.
+       2. Titulo de folha JA LANCADO naquela competencia, por
+          qualquer caminho, tambem derruba a previsao do mes. E a
+          rede de seguranca da trava 1: se o fechamento rodou e o
+          registro da folha nao chegou a esta sessao, os titulos
+          chegaram — e sao eles que mandam.
+       3. O vale cuja operadora ja tem nota lancada no mes sai da
+          previsao. Mora em `previsaoFolha`.
+
+     Erra sempre para o lado de NAO duplicar: na duvida entre
+     mostrar duas vezes e nao mostrar, nao mostra — numero repetido
+     num total de contas a pagar e pior que numero faltando, porque
+     o faltando a pessoa estranha e o repetido ela acredita.
+
+     LIMITE CONHECIDO: a previsao nao tem EMPRESA nem CENTRO.
+     `previsaoFolha` soma todo mundo numa linha por natureza, e nao
+     ha de onde tirar o rateio. Entao, filtrando o contas a pagar
+     por empresa ou por centro de custo, a previsao de folha
+     desaparece da lista — o filtro a descarta junto com tudo o
+     mais que nao tem aquele campo.
+
+     Isso e correto (nao da para afirmar que a folha inteira e de
+     uma empresa so) mas e silencioso, e silencio aqui engana: a
+     pessoa filtra por empresa, ve a lista encolher e conclui que
+     aquela empresa nao tem folha prevista. Para resolver de
+     verdade, `previsaoFolha` precisa emitir uma linha por empresa,
+     saindo do centro de cada funcionario — mudanca maior, que
+     mexe tambem no fluxo de caixa exportado. */
+  function previsaoFolhaComoParcelas(f) {
+    /* NAO HA ATALHO POR FILTRO AQUI, e e de proposito.
+
+       A tentacao e sair cedo quando o filtro pede algo que
+       previsao nao tem — status 'pago', conta bancaria, NF — e
+       poupar o calculo. Mas o `passa` logo abaixo ja descarta
+       essas linhas sozinho: o atalho nao mudaria uma virgula da
+       lista, so adiantaria o descarte. Seria um segundo lugar
+       decidindo o que entra na tela, divergindo do primeiro na
+       primeira alteracao, e sem nenhum teste capaz de perceber a
+       divergencia — porque os dois dao o mesmo resultado hoje.
+
+       CUSTO MEDIDO: ~13 ms por chamada com dez funcionarios, e
+       `listar` roda a cada tecla digitada na busca. Cresce com a
+       folha. Quando incomodar, o conserto e nao recalcular a cada
+       chamada — o que ajuda TODAS as visoes, inclusive a de "A
+       pagar", que e a usada o dia inteiro e que atalho nenhum
+       aliviaria. */
+
+    /* TRAVA 2: competencia que ja tem titulo de folha no contas a
+       pagar nao e prevista de novo. */
+    const jaTemTitulo = {};
+    st.parcelas.forEach(function (p) {
+      if (p.origem === 'folha' && p.status !== 'cancelado') jaTemTitulo[p.comp] = true;
+    });
+
+    return previsaoFolha().filter(function (pf) {
+      return !jaTemTitulo[pf.competencia];
+    }).map(function (pf) {
+      return {
+        /* Id estavel e reconhecivel: estavel para a tela nao piscar
+           a cada render, e com prefixo para que qualquer coisa que
+           receba um id solto saiba na hora que nao e titulo. */
+        id: 'previsao-folha:' + pf.competencia + ':' + pf.natureza + ':' + (pf.credor || '-'),
+        previsao: true,
+        titulo_id: null, num: 1, total: 1,
+        descricao: pf.descricao, credor: pf.credor || '',
+        conta: pf.natureza, centro: '', rateio: [],
+        tipo_titulo: '', emissao: '',
+        comp: pf.competencia, venc: pf.data, valor: pf.valor,
+        status: 'previsto', valor_pago: 0, pago_em: null,
+        /* Nem 'pendente' nem 'aprovado': os dois abririam caixa de
+           selecao na tela. Previsao nao entra em lote de pagamento. */
+        aprovacao: '', aprovado_por: null, aprovado_em: null, motivo: '',
+        origem: 'folha-previsao', doc: '', obs: '',
+        /* Nota fiscal nao se aplica: a despesa ainda nao aconteceu.
+           Marcar "sem NF" acusaria uma pendencia inexistente na
+           linha, do lado de outras que sao pendencia de verdade —
+           e selo que grita sem motivo ensina a ignorar selo. */
+        nf_dispensada: false, sem_nf: false, anexos: []
+      };
+    });
   }
 
   // valor da parcela que pertence a um centro de custo, já rateado
