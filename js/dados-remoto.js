@@ -247,7 +247,12 @@ ERP.dadosRemoto = (function () {
   const comPrazo = (p, oQue) => ERP.util.comPrazo(p, oQue);
   const diz = (txt, f, t) => ERP.util.andamento(txt, f, t);
 
-  async function carregar() {
+  /* `perfilDeQuemEntrou` vem de quem chamou, e nao de uma consulta
+     indireta: na montagem o `sessaoAtual()` ainda pode nao estar
+     preenchido, e um diagnostico que depende de estado pela metade
+     erra justamente na hora em que alguem precisa dele. Quem chama
+     sabe o perfil; basta dizer. */
+  async function carregar(perfilDeQuemEntrou) {
     const c = ERP.auth && ERP.auth.cliente && ERP.auth.cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
     const D = ERP.dados;
@@ -334,12 +339,46 @@ ERP.dadosRemoto = (function () {
       });
     }
 
-    /* Tabela vazia é sinal de carga incompleta, não de cadastro
-       inexistente: o seed preenche todas. Parar aqui é melhor que
-       deixar o sistema subir sem centros de custo. */
+    /* CADASTRO ESSENCIAL VAZIO TEM DUAS CAUSAS, E ELAS PEDEM
+       PROVIDÊNCIAS OPOSTAS.
+
+       A mensagem antiga dizia uma só: "Rode o 03-seed.sql". Quando
+       a causa era a outra, ela mandava rodar o seed num banco de
+       produção cheio de dados — conselho ruim e perigoso, dado com
+       toda a confiança.
+
+       A outra causa é permissão. Estas tabelas são protegidas por
+       `tem_nivel('cadastros','V')`: para quem não tem o módulo
+       Cadastros, a leitura volta VAZIA em vez de dar erro, que é
+       como o RLS do Postgres funciona. O banco está cheio; é esta
+       pessoa que não enxerga.
+
+       Dá para separar as duas, e por isso a conta é feita: a
+       matriz de acesso é legível por qualquer um logado, então
+       basta perguntar a ela o que este perfil tem em Cadastros. */
     if (vazias.length) {
-      return { erro: 'Cadastro essencial faltando no banco: ' + vazias.join(', ') +
-        ' sem nenhuma linha. Rode o 03-seed.sql.' };
+      const sessao = (ERP.auth && ERP.auth.sessaoAtual && ERP.auth.sessaoAtual()) || {};
+      const perfilId = perfilDeQuemEntrou || (sessao.usuario && sessao.usuario.perfil) || '';
+      let semCadastros = false;
+      if (perfilId) {
+        const mx = await comPrazo(
+          c.from('matriz_acesso').select('niveis')
+            .eq('perfil', perfilId).eq('modulo', 'cadastros'),
+          'matriz_acesso'
+        ).catch(function () { return { data: null }; });
+        const linha = (mx.data || [])[0];
+        semCadastros = !linha || String(linha.niveis || '').indexOf('V') < 0;
+      }
+      if (semCadastros) {
+        return { erro: 'Este perfil (' + perfilId + ') não tem o módulo Cadastros, ' +
+          'e sem ele o sistema não consegue ler ' + vazias.join(', ') +
+          ' — que todo módulo precisa para montar a tela. ' +
+          'Os dados estão no banco; é a permissão que falta. ' +
+          'Marque Cadastros para este perfil em Administração › Perfis.' };
+      }
+      return { erro: 'Cadastro essencial sem nenhuma linha no banco: ' + vazias.join(', ') +
+        '. Se este banco é novo, falta rodar o 03-seed.sql. ' +
+        'Se não é, NÃO rode o seed — me avise, porque dado sumido é outra conversa.' };
     }
 
     /* Cada sala de centro cirúrgico é ligada a uma especialidade —

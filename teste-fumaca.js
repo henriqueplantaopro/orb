@@ -10299,8 +10299,13 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /function esperaFalhou/.test(aut) && /carregando-retentar/.test(aut), '');
   verificar('v121 — e não devolve a pessoa ao login: a senha estava certa',
     /Seu acesso está certo/.test(aut), '');
+  /* A verificacao olha o try/catch, e NAO os argumentos da
+     chamada: presa ao texto exato ela quebrou na v124, quando o
+     perfil passou a ser passado por parametro — e quebrou sem que
+     nada do que ela protege tivesse mudado. Verificacao que falha
+     por motivo errado ensina a ignora-la. */
   verificar('v121 — a espera da carga tem catch: recusa que estoura também é mostrada',
-    /try \{\s*\n\s*r = await ERP\.dadosRemoto\.carregar\(\);\s*\n\s*\} catch/.test(aut), '');
+    /try \{\s*\n\s*r = await ERP\.dadosRemoto\.carregar\([^)]*\);\s*\n\s*\} catch/.test(aut), '');
   verificar('v121 — as quatro leituras fora do laço também degradam sozinhas',
     /const tentar = async function/.test(per) &&
     /tentar\('eventos'/.test(per) && /tentar\('sequencia'/.test(per), '');
@@ -10427,6 +10432,50 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   /* Segunda barreira: o banco nao deve ser quem explica o erro. */
   verificar('v123 — registro sem id e recusado antes de chegar ao banco',
     /não identificou qual usuário gravar/.test(per), '');
+})();
+
+
+/* ══════════════════════════════════════════════════════════
+   v124 · os tres cadastros que todo perfil precisa enxergar
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const rem = fsE.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  const aut = fsE.readFileSync(__dirname + '/js/auth.js', 'utf8');
+  const sql64 = fsE.readFileSync(__dirname + '/supabase/64-ATUALIZAR-v124.sql', 'utf8');
+
+  /* A MENSAGEM NAO PODE MAIS MANDAR RODAR SEED EM BANCO CHEIO.
+     Tabela vazia tem duas causas opostas: banco novo (falta seed)
+     e falta de permissao (RLS devolve vazio, nao erro). */
+  verificar('v124 — a mensagem distingue permissao de banco vazio',
+    /não tem o módulo Cadastros/.test(rem) &&
+    /dados estão no banco/.test(rem), '');
+  verificar('v124 — e o conselho de rodar o seed vem com ressalva',
+    /NÃO rode o seed/.test(rem) &&
+    !/sem nenhuma linha\. Rode o 03-seed\.sql\.' \};/.test(rem), '');
+  verificar('v124 — o diagnostico pergunta a matriz qual e o nivel em Cadastros',
+    /from\('matriz_acesso'\)\.select\('niveis'\)/.test(rem) &&
+    /eq\('modulo', 'cadastros'\)/.test(rem), '');
+  /* O perfil vem de quem chama: na montagem o `sessaoAtual` ainda
+     pode estar pela metade, e diagnostico com estado incompleto
+     erra na hora em que alguem precisa dele. */
+  verificar('v124 — o perfil chega por parametro, nao por consulta indireta',
+    /async function carregar\(perfilDeQuemEntrou\)/.test(rem) &&
+    /carregar\(s\.usuario && s\.usuario\.perfil\)/.test(aut), '');
+
+  /* As tres sao a espinha: sem elas NENHUM modulo monta. */
+  verificar('v124 — o SQL 64 libera a LEITURA das tres para qualquer usuario ativo',
+    /create policy ver_empresas on empresas[\s\S]{0,120}app_usuario\(\) is not null/.test(sql64) &&
+    /create policy ver_centros on centros[\s\S]{0,120}app_usuario\(\) is not null/.test(sql64) &&
+    /create policy ver_plano_contas on plano_contas[\s\S]{0,120}app_usuario\(\) is not null/.test(sql64), '');
+  verificar('v124 — e mantem a ESCRITA restrita a quem movimenta Cadastros',
+    /create policy criar_empresas[\s\S]{0,140}tem_nivel\('cadastros', 'M'\)/.test(sql64) &&
+    /create policy editar_centros[\s\S]{0,180}tem_nivel\('cadastros', 'M'\)/.test(sql64), '');
+  verificar('v124 — clientes, credores e bancos ficam de fora de proposito',
+    /`clientes`, `credores` e `bancos` NÃO entram aqui/.test(sql64), '');
+  verificar('v124 — o SQL 64 tem conferencia de saida unica',
+    /create temp table diag/.test(sql64) &&
+    /select o_que, resultado from diag order by ordem/.test(sql64), '');
 })();
 
 concluir();
