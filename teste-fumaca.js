@@ -10655,6 +10655,51 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /caixa\('Previsto', previsto/.test(ctsU), '');
   verificar('v128 — com estilo proprio, para nao parecer titulo',
     /tr\.linha-previsao\{/.test(cssE) && /\.cp-caixas \.cx-previsto/.test(cssE), '');
+
+  /* ── v129 · adicional de cargo de confianca ──────────
+     Gratificacao de funcao: linha propria no holerite, salario
+     para INSS/IRRF/FGTS, e compoe 13º, ferias e rescisao. */
+  const dadE = fsE.readFileSync(__dirname + '/js/dados.js', 'utf8');
+  const sql66 = fsE.readFileSync(__dirname + '/supabase/66-ATUALIZAR-v129.sql', 'utf8');
+  verificar('v129 — o adicional sai em linha propria, codigo 107',
+    /codigo: '107'/.test(sto) &&
+    /'Adicional de cargo de confiança'/.test(sto), '');
+  verificar('v129 — e esta documentado na lista de rubricas',
+    /codigo: '107', nome: 'Adicional de cargo de confiança'/.test(dadE), '');
+  /* A TRAVA QUE MAIS IMPORTA: fora de `adicionalHabitual`, ele e
+     pago na folha do mes e esquecido no 13º, nas ferias e na
+     rescisao — erro que so aparece em dezembro. */
+  verificar('v129 — compoe 13º, ferias e rescisao (mora em adicionalHabitual)',
+    /return Math\.max\(valorInsal, valorPericul\) \+ gratificacaoDe\(f\);/.test(sto), '');
+  verificar('v129 — cumula com insalubridade e periculosidade',
+    /Math\.max\(valorInsal, valorPericul\) \+ gratificacaoDe/.test(sto) &&
+    !/Math\.max\(valorInsal, valorPericul, gratificacao/.test(sto), '');
+  verificar('v129 — entra na base da hora extra',
+    /salarioMes \+ valorAdicionalMes \+ gratificacaoMes/.test(sto), '');
+  verificar('v129 — e a provisao provisiona a mesma base que o pagamento usa',
+    /const remuneracaoProvisao = salarioMes \+ adicionalHabitual\(f, salarioMes\);/.test(sto) &&
+    /provisaoDecimoBase = Math\.round\(remuneracaoProvisao/.test(sto), '');
+  verificar('v129 — o campo existe no cadastro e vai ao banco',
+    /id="fn-adic-confianca"/.test(dpU) &&
+    /adicional_confianca: U\.parseValor/.test(dpU) &&
+    /'adicional_confianca'/.test(perE) &&
+    /add column if not exists adicional_confianca/.test(sql66), '');
+
+  /* ── v129 · corrigir a data de admissao ──────────── */
+  verificar('v129 — a admissao pode ser corrigida pela tela',
+    /'admissao'\];/.test(sto) &&
+    !/id="fn-admissao"[^>]*disabled/.test(dpU), '');
+  /* A TRAVA QUE MAIS IMPORTA AQUI: sem ela, o cadastro passa a
+     dizer que a pessoa foi paga antes de ser contratada. */
+  verificar('v129 — mas nao para depois de uma folha fechada e paga',
+    /const antesDaNova = pagas\.filter/.test(sto) &&
+    /já tem folha FECHADA em/.test(sto), '');
+  verificar('v129 — nem para depois do desligamento',
+    /ficaria depois do desligamento/.test(sto), '');
+  verificar('v129 — folha cancelada nao conta como paga',
+    /return !fl\.cancelada &&/.test(sto), '');
+  verificar('v129 — e a correcao com folha fechada vai para a trilha',
+    /mudou a data de admissão com folha já fechada/.test(sto), '');
 })();
 
 concluir();

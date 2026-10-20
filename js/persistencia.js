@@ -492,7 +492,8 @@ ERP.persistencia = (function () {
        O modo do vale e o pior dos nove: voltando a "por dia util",
        um vale de R$ 500 fixos vira R$ 500 x 21 na previsao. */
     'credito_trabalhador', 'banco', 'agencia', 'conta_bancaria', 'pix',
-    'vt_modo', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor'];
+    'vt_modo', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor',
+    'adicional_confianca'];
 
   let sombraFuncionarios = {};
 

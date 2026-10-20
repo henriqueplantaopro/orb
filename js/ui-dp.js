@@ -155,6 +155,12 @@ ERP.dp = (function () {
         linha('Dependentes (IRRF)', String(f.dependentes_irrf)) +
         linha('Centro de custo', U.esc((centro.unidade ? centro.unidade + ' · ' : '') + (centro.curto || f.centro))) +
         linha('Salário atual', '<b>' + U.brl(f.salario_base) + '</b>') +
+        /* Só aparece para quem tem. Linha com "R$ 0,00" em toda ficha
+           seria ruído em cadastro nenhum. */
+        (f.adicional_confianca > 0
+          ? linha('Adicional de cargo de confiança', '<b>' + U.brl(f.adicional_confianca) + '</b>' +
+              ' <span class="sub">por mês, separado do salário</span>')
+          : '') +
         (vp ? linha('Banco', U.esc(f.banco || '—') + (f.agencia ? ' · ag. ' + U.esc(f.agencia) : '') +
           (f.conta_bancaria ? ' · cc ' + U.esc(f.conta_bancaria) : '')) +
           linha('PIX', U.esc(f.pix || '—')) : '') +
@@ -309,7 +315,14 @@ ERP.dp = (function () {
         '<div><label>CPF *</label><input id="fn-cpf" value="' + U.esc(f ? f.cpf : '') + '"' + (f ? ' disabled' : '') + '></div></div>' +
         '<div class="row3"><div><label>PIS/NIS</label><input id="fn-pis" value="' + U.esc(f ? f.pis : '') + '"></div>' +
         '<div><label>Nascimento</label><input type="date" id="fn-nasc" value="' + U.esc(f ? f.nascimento : '') + '"></div>' +
-        '<div><label>Admissão *</label><input type="date" id="fn-admissao" value="' + U.esc(f ? f.admissao : U.hoje()) + '"' + (f ? ' disabled' : '') + '></div></div>' +
+        /* A ADMISSÃO FICA EDITÁVEL. Ficava travada porque é a base de
+           férias, 13º, multa de FGTS e do primeiro mês proporcional —
+           mas cadastro errado acontece, e travada a única saída era
+           apagar a pessoa e recriar, perdendo o histórico inteiro. O
+           store recusa a data que contradiga uma folha já fechada, e
+           registra a mudança na trilha. */
+        '<div><label>Admissão *' + (f ? ' <span class="sub">— corrigir refaz férias e 13º</span>' : '') +
+          '</label><input type="date" id="fn-admissao" value="' + U.esc(f ? f.admissao : U.hoje()) + '"></div></div>' +
         '<div class="row2"><div><label>Cargo *</label><div style="display:flex;gap:6px">' +
           '<select id="fn-cargo" style="flex:1">' + opcoesCargo(f ? f.cargo : '') + '</select>' +
           '<button type="button" class="btn-sm" id="fn-novo-cargo">+ cadastrar</button></div>' +
@@ -322,6 +335,13 @@ ERP.dp = (function () {
         '<div><label>Salário base *' + (f ? ' <span class="sub">— use "Reajustar" pra mudar, com histórico</span>' : '') +
           '</label><input class="num" id="fn-salario" inputmode="decimal" value="' + U.num(f ? f.salario_base : 0) + '"' +
           (f ? ' disabled' : '') + '></div></div>' +
+        '<div class="row3"><div><label>Adicional de cargo de confiança (R$/mês)' +
+          ' <span class="sub">sai separado do salário no holerite</span></label>' +
+          '<input class="num" id="fn-adic-confianca" inputmode="decimal" value="' +
+          U.num(f ? (f.adicional_confianca || 0) : 0) + '"></div>' +
+        '<div class="ajuda" style="grid-column:span 2">Valor fixo por mês, pago a quem exerce cargo de ' +
+          'confiança. Entra no holerite em linha própria, sofre INSS, IRRF e FGTS como salário, soma na base ' +
+          'da hora extra e compõe 13º, férias e rescisão. Deixe zero para quem não tem.</div></div>' +
         '<div class="row3"><div><label>Jornada semanal (h)</label><input class="num" id="fn-jornada" inputmode="decimal" value="' + (f ? f.jornada_semanal_horas : 44) + '"></div>' +
         '<div><label>Dependentes (IRRF) <span class="sub">contagem pra dedução</span></label><input class="num" id="fn-dependentes" inputmode="numeric" value="' + (f ? f.dependentes_irrf : 0) + '"></div>' +
         '<div></div></div>' +
@@ -403,6 +423,7 @@ ERP.dp = (function () {
           nome: U.val('fn-nome'), cpf: U.val('fn-cpf'), pis: U.val('fn-pis'),
           nascimento: U.val('fn-nasc'), admissao: U.val('fn-admissao'), cargo: U.val('fn-cargo'),
           salario_base: U.parseValor(U.val('fn-salario')), jornada_semanal_horas: U.parseValor(U.val('fn-jornada')),
+          adicional_confianca: U.parseValor(U.val('fn-adic-confianca')),
           dependentes_irrf: U.parseValor(U.val('fn-dependentes')), centro: centroEscolhido,
           rateio: rateioFinal,
           banco: U.val('fn-banco'), agencia: U.val('fn-agencia'), conta_bancaria: U.val('fn-conta'),

@@ -1392,6 +1392,10 @@ ERP.dados = (function () {
       inss: true, irrf: true, fgts: true, obs: '10/20/40% sobre o salário mínimo (não sobre o salário do funcionário).' },
     { codigo: '106', nome: 'Periculosidade', tipo: 'provento', natureza: '4.02',
       inss: true, irrf: true, fgts: true, obs: '30% sobre o salário base.' },
+    { codigo: '107', nome: 'Adicional de cargo de confiança', tipo: 'provento', natureza: '4.01',
+      inss: true, irrf: true, fgts: true,
+      obs: 'Valor fixo do cadastro, proporcional aos dias pagos. Cumula com insalubridade e periculosidade, ' +
+        'entra na base da hora extra e compõe 13º, férias e rescisão.' },
     { codigo: '19x', nome: 'Provento avulso', tipo: 'provento', natureza: '4.02',
       inss: true, irrf: true, fgts: true, obs: 'Lançado à mão na tela de Folha pra um mês específico (prêmio, ajuda de custo etc.).' },
     { codigo: '901', nome: 'INSS', tipo: 'desconto', natureza: '4.04',
