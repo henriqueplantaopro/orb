@@ -140,6 +140,22 @@ ERP.persistencia = (function () {
   async function salvarUsuario(u) {
     const c = cliente();
     if (!c) return { erro: 'Sem conexão com o banco.' };
+    /* REGISTRO SEM ID NÃO VAI AO BANCO.
+
+       A tela chegou a mandar um objeto vazio aqui, e o banco
+       respondeu o que tinha de responder:
+
+         null value in column "id" of relation "usuarios"
+         violates not-null constraint
+
+       A mensagem está correta e é ilegível para quem está
+       cadastrando gente. A causa foi corrigida na tela; esta
+       recusa fica como segunda barreira, dizendo em português o
+       que aconteceu em vez de deixar o banco falar sozinho. */
+    if (!u || !u.id) {
+      return { erro: 'o sistema não identificou qual usuário gravar — ' +
+        'nada foi enviado ao banco. Feche e abra a tela de usuários e tente de novo.' };
+    }
     const linha = { id: u.id, nome: u.nome, perfil: u.perfil,
       email: u.email || null, ativo: u.ativo !== false,
       senha_provisoria: !!u.senha_provisoria };

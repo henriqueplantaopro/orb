@@ -414,7 +414,11 @@ ERP.administracao = (function () {
         /* Usuário é cadastro: vai ao banco na hora, não pela
            sincronização do movimento. */
         if (ERP.persistencia && ERP.persistencia.ligado()) {
-          const u2 = D.usuario(r.usuario ? r.usuario.id : id) || {};
+          /* O id vem do RETORNO, não de adivinhação. Em usuário
+             novo o `id` do formulário é nulo e `r.usuario` nunca
+             existiu — a busca voltava vazia, virava `{}` e o
+             sistema mandava um registro sem id ao banco. */
+          const u2 = D.usuario(r.id) || {};
           ERP.persistencia.salvarUsuario(u2).then(function (x) {
             if (x && x.erro) {
               return ERP.app.aviso('Salvo na tela, mas não no banco: ' + x.erro, 'erro');
