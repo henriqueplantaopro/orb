@@ -676,10 +676,37 @@ ERP.administracao = (function () {
           if (e.checked) modulos.push(e.dataset.pfMod); });
         const r = S.salvarPerfil({ id: id, nome: U.val('pf-nome'), acoes: acoes, modulos: modulos });
         if (ERP.app.erroDoRetorno(r)) return;
-        ERP.app.fecharModal();
-        ERP.app.aviso('Perfil salvo. Quem usa este perfil já sente a mudança.', 'ok');
-        ERP.app.renderHome && ERP.app.renderHome();
-        render();
+
+        /* PERFIL É CADASTRO: vai ao banco na hora, como usuário e
+           cargo — não pela sincronização do movimento.
+
+           E a tela só diz "salvo" DEPOIS que o banco confirma. Antes
+           ela anunciava o sucesso na linha seguinte ao `push` em
+           memória, sem nunca ter falado com o banco: o perfil sumia
+           no F5 e o aviso verde tinha dito que estava tudo certo. */
+        if (!(ERP.persistencia && ERP.persistencia.ligado())) {
+          ERP.app.fecharModal();
+          ERP.app.aviso('Perfil salvo só nesta tela: não há conexão com o banco.', 'erro');
+          ERP.app.renderHome && ERP.app.renderHome();
+          return render();
+        }
+        const perfilSalvo = D.perfil(r.id);
+        const matrizDele = (S.matrizAcesso() || {})[r.id] || {};
+        ERP.persistencia.salvarPerfil(perfilSalvo, matrizDele).then(function (x) {
+          if (x && x.erro) {
+            /* O perfil fantasma sai da memória: deixá-lo na lista
+               depois de o banco recusar é repetir o defeito —
+               alguém apontaria um usuário para ele e perderia os
+               dois. */
+            if (!id) S.excluirPerfil(r.id);
+            render();
+            return ERP.app.aviso('O banco não aceitou o perfil: ' + x.erro, 'erro');
+          }
+          ERP.app.fecharModal();
+          ERP.app.aviso('Perfil salvo no banco. Quem usa este perfil já sente a mudança.', 'ok');
+          ERP.app.renderHome && ERP.app.renderHome();
+          render();
+        });
       } }]
     });
   }
@@ -1014,9 +1041,23 @@ ERP.administracao = (function () {
     });
     box.querySelectorAll('[data-perfil-x]').forEach(function (b) {
       b.addEventListener('click', function () {
-        const r = S.excluirPerfil(this.dataset.perfilX);
+        const alvo = this.dataset.perfilX;
+        const r = S.excluirPerfil(alvo);
         if (ERP.app.erroDoRetorno(r)) return;
-        ERP.app.aviso('Perfil excluído.', 'ok');
+        /* Some do banco também. Excluir só da memória fazia o perfil
+           voltar no F5 — e voltar calado, o que é pior que não
+           excluir. */
+        if (ERP.persistencia && ERP.persistencia.ligado()) {
+          ERP.persistencia.apagarPerfil(alvo).then(function (x) {
+            if (x && x.erro) {
+              return ERP.app.aviso('Saiu da tela, mas não do banco: ' + x.erro +
+                ' — ele volta no próximo carregamento.', 'erro');
+            }
+            ERP.app.aviso('Perfil excluído.', 'ok');
+          });
+        } else {
+          ERP.app.aviso('Perfil excluído só nesta tela: sem conexão com o banco.', 'erro');
+        }
         render();
       });
     });

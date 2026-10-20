@@ -408,21 +408,53 @@ ERP.store = (function () {
 
     const alvo = d.id ? D.perfil(d.id) : null;
     if (d.id && !alvo) return { erro: 'Perfil não encontrado.' };
+    let criado = null;
     if (alvo) {
       // não deixa a última administração sem acesso a nada
       if (alvo.id === 'admin' && acoes.indexOf('admin') < 0) {
         return { erro: 'O perfil de administração não pode perder a permissão de administrar.' };
       }
       alvo.nome = d.nome; alvo.acoes = acoes; alvo.modulos = modulos;
+      aplicarModulosNaMatriz(alvo.id, modulos);
     } else {
       const id = String(d.nome).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
         .replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 24) || ('p' + Date.now().toString(36));
       if (D.perfil(id)) return { erro: 'Já existe um perfil com esse nome.' };
       D.perfis.push({ id: id, nome: d.nome, acoes: acoes, modulos: modulos });
+      aplicarModulosNaMatriz(id, modulos);
+      criado = id;
     }
     logar('perfil', d.id || d.nome, d.id ? 'editou perfil' : 'criou perfil',
       d.nome + ' · ' + acoes.length + ' permissão(ões) · ' + modulos.length + ' módulo(s)');
-    return { ok: true };
+    /* O id volta para quem chamou: a tela precisa dele para mandar
+       ESTE perfil ao banco. Antes o retorno era só `{ok:true}` e a
+       tela não tinha como saber o que acabara de criar. */
+    return { ok: true, id: d.id || criado };
+  }
+
+  /* AS CAIXAS DE MÓDULO ESCREVEM NA MATRIZ, que é quem manda.
+
+     O formulário de perfil guardava os módulos marcados num campo
+     `perfil.modulos` que NADA no sistema lia: quem decide o que
+     aparece na tela é `matriz_acesso`. O efeito era um perfil novo
+     nascer sem linha nenhuma na matriz — e entrar vendo tela vazia,
+     com as caixas marcadas no cadastro dizendo o contrário.
+
+     Marcar concede o VER. Não rebaixa quem já tem mais: um perfil
+     com 'VMF' em Financeiro continua com 'VMF' — os níveis finos
+     são assunto da tela da matriz, e sobrescrevê-los daqui apagaria
+     em silêncio o ajuste que alguém fez lá. Desmarcar tira tudo,
+     porque movimentar sem ver não existe. */
+  function aplicarModulosNaMatriz(perfilId, modulos) {
+    if (!perfilId) return;
+    const m = matriz();
+    m[perfilId] = m[perfilId] || {};
+    D.MODULOS.forEach(function (mo) {
+      const marcado = (modulos || []).indexOf(mo.id) > -1;
+      const atual = String(m[perfilId][mo.id] || '');
+      if (marcado) { if (atual.indexOf('V') < 0) m[perfilId][mo.id] = 'V'; }
+      else m[perfilId][mo.id] = '';
+    });
   }
 
   function excluirPerfil(id) {

@@ -147,6 +147,60 @@ ERP.persistencia = (function () {
     return error ? { erro: error.message } : { ok: true };
   }
 
+  /* ── O PERFIL DE ACESSO VAI AO BANCO ─────────────────────
+     Esta função faltava, e a falta era do mesmo tipo da que
+     derrubou `cargos` na v115: a tabela `perfis` era LIDA na
+     entrada e nunca gravada. O perfil criado pela tela de
+     Administração vivia só na memória do navegador, a tela dizia
+     "Perfil salvo" e o primeiro F5 o apagava.
+
+     Pior: `usuarios.perfil` aponta para `perfis(id)`. O usuário
+     novo criado logo em seguida batia na chave estrangeira e
+     também não gravava — dois cadastros perdidos por uma função
+     que não existia.
+
+     DUAS TABELAS, UMA OPERAÇÃO. O perfil é a linha em `perfis`; o
+     que ele enxerga são as linhas em `matriz_acesso`. Gravar só a
+     primeira cria um perfil que entra vendo tela vazia, que é o
+     outro meio-defeito do mesmo formulário. Os módulos sem acesso
+     vão como string vazia em vez de ficarem de fora: é assim que
+     DESMARCAR um módulo chega ao banco. */
+  async function salvarPerfil(p, matrizDoPerfil) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    if (!p || !p.id) return { erro: 'Perfil sem identificador.' };
+
+    const linha = { id: p.id, nome: p.nome, sistema: !!p.sistema,
+      acoes: Array.isArray(p.acoes) ? p.acoes : [] };
+    const r1 = await c.from('perfis').upsert([linha], { onConflict: 'id' });
+    if (r1.error) return { erro: r1.error.message };
+
+    const m = matrizDoPerfil || {};
+    const linhas = Object.keys(m).map(function (modulo) {
+      return { perfil: p.id, modulo: modulo, niveis: String(m[modulo] || '') };
+    });
+    if (!linhas.length) return { ok: true, matriz: 0 };
+
+    const r2 = await c.from('matriz_acesso')
+      .upsert(linhas, { onConflict: 'perfil,modulo' });
+    /* O perfil JÁ ESTÁ no banco quando a matriz falha. Dizer
+       "não salvou" seria mentira na direção oposta, e levaria
+       alguém a cadastrar o mesmo perfil de novo. */
+    if (r2.error) {
+      return { erro: 'O perfil foi criado, mas os módulos não: ' + r2.error.message };
+    }
+    return { ok: true, matriz: linhas.length };
+  }
+
+  async function apagarPerfil(id) {
+    const c = cliente();
+    if (!c) return { erro: 'Sem conexão com o banco.' };
+    /* A matriz primeiro: ela aponta para o perfil. */
+    await c.from('matriz_acesso').delete().eq('perfil', id);
+    const { error } = await c.from('perfis').delete().eq('id', id);
+    return error ? { erro: error.message } : { ok: true };
+  }
+
   /* O saldo de estoque não é uma lista com id: é um objeto indexado
      por "produto|armazém". Vai separado porque a chave é composta —
      e porque ele é a posição ATUAL, não um histórico: cada linha é
@@ -1490,7 +1544,9 @@ ERP.persistencia = (function () {
            limparMovimentoLocal: limparMovimentoLocal,
            aindaNaoGravados: aindaNaoGravados, refotografar: refotografar,
            esquecerDaFoto: esquecerDaFoto, gravando: () => salvando,
-           salvarUsuario: salvarUsuario, vincularLogin: vincularLogin,
+           salvarUsuario: salvarUsuario,
+           salvarPerfil: salvarPerfil, apagarPerfil: apagarPerfil,
+           vincularLogin: vincularLogin,
            statusLogins: statusLogins, vincularPendentes: vincularPendentes,
            criarLogin: criarLogin,
            listarChamados: listarChamados, responderChamado: responderChamado,
