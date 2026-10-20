@@ -910,7 +910,14 @@ ERP.produtividade = (function () {
           '<td class="num">' + m.plantoes + '</td>' +
           '<td class="num">' + hhmm(m.minutos) + '</td>' +
           '<td class="num">' + U.brl(m.valor) + '</td>' +
-          '<td>' + (S.pode('produtividade') || S.pode('lancar')
+          /* `S.pode('produtividade')` NÃO EXISTE: não está na matriz
+             nem na lista de ações do perfil, então devolvia `false`
+             para todo mundo, inclusive para a diretoria. A trava de
+             pagamento só aparecia para quem tinha `lancar` — e quem
+             cuida de produtividade, que é quem precisa dela, ficava
+             sem. O certo é perguntar pelo nível de movimentação no
+             módulo, como o resto da tela faz. */
+          '<td>' + (S.podeMover('produtividade') || S.pode('lancar')
             ? '<label class="bloq-pg"><input type="checkbox" data-bloq="' + U.esc(chaveNome(m.medico)) +
               '"' + (bloqueiosPre[chaveNome(m.medico)] ? ' checked' : '') + '> bloquear</label>'
             : '') + '</td>' +

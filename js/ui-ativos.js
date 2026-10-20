@@ -14,6 +14,19 @@ ERP.ativos = (function () {
      mostrava tudo — nenhum dos 17 `S.pode(...)` do arquivo tratava de
      valor. */
   const veValor = () => S.veFinanceiro('ativos');
+  /* QUEM MANDA NESTA TELA E O MODULO ATIVOS, e nao o de Estoque.
+
+     Os dezessete botoes de acao deste arquivo perguntavam
+     `S.pode('estoque')`, que e o nivel M do modulo ESTOQUE. O
+     resultado: um perfil com Ativos marcado em Visualizacao,
+     Movimentacao e Financeiro abria o inventario e via apenas
+     "Ficha" e "Etiqueta". Nada de editar, movimentar, baixar ou
+     abrir OS. A matriz dizia uma coisa e a tela obedecia outra, e
+     quem ajustava a permissao nao tinha como desconfiar: a caixa
+     marcada nao mentia -- mentia a pergunta.
+
+     O engano tem explicacao: o inventario nasceu dentro do
+     Estoque e saiu de la depois. A pergunta ficou para tras. */
   /* Um ponto só: quem não tem acesso financeiro vê o traço. */
   const brlSeguro = v => veValor() ? U.brl(v) : '—';
 
@@ -101,7 +114,7 @@ ERP.ativos = (function () {
           '<option value="">Todas</option>' + cats.map(function (c) {
             return '<option value="' + U.esc(c) + '"' + (f.categoria === c ? ' selected' : '') + '>' +
               U.esc(c) + '</option>'; }).join('') + '</select></div>' +
-        (S.pode('estoque') ? '<button class="btn-sm btn-aprovar" id="av-novo" style="align-self:flex-end">+ Equipamento</button>' : '') +
+        (S.podeMover('ativos') ? '<button class="btn-sm btn-aprovar" id="av-novo" style="align-self:flex-end">+ Equipamento</button>' : '') +
         '<button class="btn-sm" id="av-exportar" style="align-self:flex-end">Exportar</button>' +
       '</div>' +
       '<div class="pr-confere">' +
@@ -118,7 +131,7 @@ ERP.ativos = (function () {
       (marcados.size
         ? '<div class="pr-confere sel-barra">' +
             '<span><b>' + marcados.size + '</b> selecionado(s)</span>' +
-            (S.pode('estoque')
+            (S.podeMover('ativos')
               ? '<button class="btn-sm btn-aprovar" id="av-mov-lote">Movimentar em lote</button>' : '') +
             '<button class="btn-sm" id="av-etq-lote">Imprimir etiquetas</button>' +
             '<button class="btn-sm" id="av-sel-limpar">Limpar seleção</button>' +
@@ -196,14 +209,14 @@ ERP.ativos = (function () {
             '<td class="acoes">' +
               '<button class="btn-sm" data-av-ficha="' + a.id + '">Ficha</button>' +
               ' <button class="btn-sm" data-av-etiqueta="' + a.id + '">Etiqueta</button>' +
-              (S.pode('estoque') ? ' <button class="btn-sm" data-av-editar="' + a.id + '">Editar</button>' : '') +
+              (S.podeMover('ativos') ? ' <button class="btn-sm" data-av-editar="' + a.id + '">Editar</button>' : '') +
               (S.pode('baixar_ativo') && a.status !== 'baixado'
                 ? ' <button class="btn-sm btn-cancelar" data-av-baixar="' + a.id + '">Baixar</button>' : '') +
-              (S.pode('estoque') && (a.qtd || 1) > 1
+              (S.podeMover('ativos') && (a.qtd || 1) > 1
                 ? ' <button class="btn-sm" data-av-desm="' + a.id + '">Desmembrar</button>' : '') +
-              (S.pode('estoque') || S.pode('faturar')
+              (S.podeMover('ativos') || S.pode('faturar')
                 ? ' <button class="btn-sm" data-av-loc="' + a.id + '">Locação</button>' : '') +
-              (S.pode('estoque') ? ' <button class="btn-sm btn-aprovar" data-av-mov="' + a.id + '">Movimentar</button>' : '') +
+              (S.podeMover('ativos') ? ' <button class="btn-sm btn-aprovar" data-av-mov="' + a.id + '">Movimentar</button>' : '') +
             '</td></tr>';
         }).join('')
           : '<tr><td colspan="' + colunas + '" class="vazio">' +
@@ -306,7 +319,7 @@ ERP.ativos = (function () {
                 '<td class="mono sub">' + U.esc(m.documento || '—') + '</td>' +
                 '<td class="acoes">' + (m.estornado
                   ? '<span class="sub">estornado: ' + U.esc((m.estorno || {}).motivo || '') + '</span>'
-                  : (S.pode('estoque') && !m.pela_baixa
+                  : (S.podeMover('ativos') && !m.pela_baixa
                       ? '<button class="btn-sm btn-cancelar" data-av-estorno="' + m.id + '">Estornar</button>' : '')) +
                 '</td></tr>';
             }).join('') + '</tbody></table>'
@@ -342,7 +355,7 @@ ERP.ativos = (function () {
           });
         });
       },
-      acoes: !S.pode('estoque') ? []
+      acoes: !S.podeMover('ativos') ? []
         : at.status === 'baixado'
           ? [{ txt: 'Reativar', cls: 'btn-aprovar', fn: function () {
               ERP.app.fecharModal();
@@ -927,7 +940,7 @@ ERP.ativos = (function () {
               '<td>' + (c.vencido
                 ? '<span class="badge b-vencido">vencido há ' + Math.abs(c.dias) + ' dias</span>'
                 : '<span class="badge b-aguardando">vence em ' + c.dias + ' dias</span>') + '</td>' +
-              '<td class="acoes">' + (S.pode('estoque')
+              '<td class="acoes">' + (S.podeMover('ativos')
                 ? '<button class="btn-sm btn-aprovar" data-av-calibrar="' + c.ativo.id + '">Abrir calibração</button>' : '') +
               '</td></tr>';
           }).join('') + '</tbody></table>'
@@ -1101,7 +1114,7 @@ ERP.ativos = (function () {
     const custo = Math.round(lista.reduce(function (a, o) {
       return a + (o.custo_peca || 0) + (o.custo_servico || 0); }, 0) * 100) / 100;
     return '<div class="filtros">' +
-        (S.pode('estoque') ? '<button class="btn-sm btn-aprovar" id="av-nova-os">+ Abrir OS</button>' : '') +
+        (S.podeMover('ativos') ? '<button class="btn-sm btn-aprovar" id="av-nova-os">+ Abrir OS</button>' : '') +
         '<label style="align-self:flex-end;font-weight:400"><input type="checkbox" id="av-os-canc" ' +
           'style="width:auto"' + (mostrarCanceladas ? ' checked' : '') + '> mostrar canceladas</label>' +
       '</div>' +
@@ -1129,17 +1142,17 @@ ERP.ativos = (function () {
                 : '<span class="badge b-' + (o.status === 'aberta' ? 'vencido' : 'aguardando') + '">' +
                   U.esc(S.NOME_ETAPA_OS[o.status] || o.status) + '</span>') + '</td>' +
             '<td class="num">' + brlSeguro((o.custo_peca || 0) + (o.custo_servico || 0)) + '</td>' +
-            '<td class="acoes">' + (o.status !== 'fechada' && S.pode('estoque')
+            '<td class="acoes">' + (o.status !== 'fechada' && S.podeMover('ativos')
               ? S.ETAPAS_OS.filter(function (e) { return e !== 'fechada' && e !== o.status; })
                   .map(function (e) {
                     return '<button class="btn-sm" data-av-mover="' + o.id + '" data-etapa="' + e + '">' +
                       U.esc(S.NOME_ETAPA_OS[e]) + '</button>';
                   }).join(' ') + ' ' : '') +
-              (o.status !== 'fechada' && (S.pode('estoque') || S.pode('lancar'))
+              (o.status !== 'fechada' && (S.podeMover('ativos') || S.pode('lancar'))
                 ? '<button class="btn-sm btn-aprovar" data-av-fechar="' + o.id + '">Fechar</button>' : '') +
-              (['fechada', 'cancelada'].indexOf(o.status) < 0 && S.pode('estoque')
+              (['fechada', 'cancelada'].indexOf(o.status) < 0 && S.podeMover('ativos')
                 ? ' <button class="btn-sm btn-cancelar" data-av-cancelar-os="' + o.id + '">Cancelar</button>' : '') +
-              (['fechada', 'cancelada'].indexOf(o.status) > -1 && S.pode('estoque')
+              (['fechada', 'cancelada'].indexOf(o.status) > -1 && S.podeMover('ativos')
                 ? ' <button class="btn-sm" data-av-reabrir-os="' + o.id + '">Reabrir</button>' : '') +
               '</td></tr>';
         }).join('')
@@ -1248,7 +1261,7 @@ ERP.ativos = (function () {
     const cats = S.ativos({}).map(function (a) { return a.categoria; })
       .filter(function (c, i, arr) { return c && arr.indexOf(c) === i; }).sort();
     return '<div class="filtros">' +
-        (S.pode('estoque') ? '<button class="btn-sm btn-aprovar" id="av-novo-plano">+ Plano de manutenção</button>' : '') +
+        (S.podeMover('ativos') ? '<button class="btn-sm btn-aprovar" id="av-novo-plano">+ Plano de manutenção</button>' : '') +
       '</div>' +
       '<div class="ajuda">A preventiva que vence é aberta como OS quando alguém entra neste módulo — ' +
         'sem servidor, é o que substitui o job diário.</div>' +
@@ -1264,7 +1277,7 @@ ERP.ativos = (function () {
               '<td class="sub">' + U.esc(p.checklist || '—') + '</td>' +
               '<td class="mono' + (venceu ? ' erro' : '') + '">' + U.fData(p.proxima) + '</td>' +
               '<td class="sub">' + U.esc(p.responsavel || '—') + '</td>' +
-              '<td class="acoes">' + (S.pode('estoque')
+              '<td class="acoes">' + (S.podeMover('ativos')
                 ? '<button class="btn-sm" data-av-plano="' + p.id + '">Editar</button> ' +
                   '<button class="btn-sm btn-cancelar" data-av-plano-x="' + p.id + '">Excluir</button>' : '') + '</td></tr>';
           }).join('') + '</tbody></table>'
@@ -1338,7 +1351,7 @@ ERP.ativos = (function () {
               '<td class="num' + (a.dias_parado > 180 ? ' erro' : '') + '">' +
                 (a.dias_parado === null ? '—' : a.dias_parado + ' dias') + '</td>' +
               '<td class="num">' + brlSeguro(a.valor || 0) + '</td>' +
-              '<td class="acoes">' + (S.pode('estoque')
+              '<td class="acoes">' + (S.podeMover('ativos')
                 ? '<button class="btn-sm btn-aprovar" data-av-mov="' + a.id + '">Alocar</button>' : '') + '</td></tr>';
           }).join('') + '</tbody></table>'
         : '<div class="vazio"><strong>Nenhum equipamento parado.</strong>Tudo alocado.</div>');
