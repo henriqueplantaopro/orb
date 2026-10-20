@@ -10478,4 +10478,41 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /select o_que, resultado from diag order by ordem/.test(sql64), '');
 })();
 
+
+/* ══════════════════════════════════════════════════════════
+   v125 · a tela pergunta pelo SEU modulo
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const avi = fsE.readFileSync(__dirname + '/js/ui-ativos.js', 'utf8');
+  const pro = fsE.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
+
+  /* Os dezessete botoes de Ativos perguntavam pelo modulo ESTOQUE.
+     Um perfil com Ativos em V, M e $ via so Ficha e Etiqueta. */
+  const semComentarios = avi.replace(/\/\*[\s\S]*?\*\//g, '');
+  verificar('v125 — a tela de Ativos nao pergunta mais pelo modulo Estoque',
+    semComentarios.indexOf("S.pode('estoque')") < 0, '');
+  verificar('v125 — e pergunta pelo nivel de movimentacao em Ativos',
+    (semComentarios.match(/S\.podeMover\('ativos'\)/g) || []).length >= 17, '');
+  /* Os dois cruzamentos que CONTINUAM, de proposito. */
+  verificar('v125 — locacao e fechamento de OS seguem aceitando faturar e lancar',
+    /S\.podeMover\('ativos'\) \|\| S\.pode\('faturar'\)/.test(avi) &&
+    /S\.podeMover\('ativos'\) \|\| S\.pode\('lancar'\)/.test(avi), '');
+
+  /* `pode('produtividade')` nao existe: devolvia false para todos. */
+  verificar('v125 — a trava de pagamento da produtividade deixou de ser sempre falsa',
+    !/S\.pode\('produtividade'\)/.test(pro.replace(/\/\*[\s\S]*?\*\//g, '')) &&
+    /S\.podeMover\('produtividade'\)/.test(pro), '');
+
+  verificar('v125 — existe varredura que cobra a tela perguntar pelo proprio modulo',
+    fsE.existsSync(__dirname + '/varredura-acessos.js'), '');
+  const vrd = fsE.readFileSync(__dirname + '/varredura-acessos.js', 'utf8');
+  verificar('v125 — e ela acusa acao que nao existe nem na matriz nem no perfil',
+    /acao que nao existe/.test(vrd), '');
+  /* Pendencia declarada e pendencia visivel: o que fica para
+     decidir nao pode virar silencio. */
+  verificar('v125 — os cruzamentos a rever ficam declarados, nao escondidos',
+    /const aRever = \{/.test(vrd) && /ui-compras\.js/.test(vrd), '');
+})();
+
 concluir();
