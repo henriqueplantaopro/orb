@@ -432,7 +432,13 @@ ERP.persistencia = (function () {
   const PARAMETROS_POLITICA = ['alcada', 'sem_aprovacao', 'impedir_autoaprovacao',
     'impedir_autoaprovacao_compras', 'exigir_anexo', 'travar_competencia_ate',
     'nsa_ini', 'nsa_fim', 'feriados_extras', 'impostos_procedimentos',
-    'plantao_valor', 'plantao_horas'];
+    'plantao_valor', 'plantao_horas',
+    /* QUEM RECEBE O VALE. Sem estes dois nomes AQUI, a escolha da
+       operadora do cartao seria gravada na tela e sumiria na
+       recarga — o mesmo defeito que os cargos e os perfis ja
+       tiveram, e que e invisivel justamente porque a tela mostra o
+       valor certo ate alguem atualizar a pagina. */
+    'credor_vt', 'credor_vr'];
 
   async function gravarParametros() {
     const c = cliente();
@@ -476,7 +482,17 @@ ERP.persistencia = (function () {
     'jornada_semanal_horas', 'centro', 'rateio', 'dependentes', 'dependentes_irrf',
     'insalubridade_pct', 'periculosidade', 'vale_transporte', 'vt_dia', 'vt_desconto_modo',
     'vt_desconto_valor', 'vale_refeicao', 'vr_dia', 'pensao_alimenticia', 'ferias',
-    'dados_pagamento', 'dados_aprovados', 'ativo'];
+    'dados_pagamento', 'dados_aprovados', 'ativo',
+    /* NOVE CAMPOS QUE A TELA SALVAVA E O BANCO NAO GUARDAVA.
+       O que nao esta nesta lista cai na coluna `extra`, em JSON — e
+       funcionarios, diferente das outras tabelas, nunca desempacota
+       o `extra` na leitura. Resultado: a conta bancaria de quem
+       recebe a folha, o desconto do consignado e o modo do vale
+       eram digitados, apareciam na ficha, e sumiam na recarga.
+       O modo do vale e o pior dos nove: voltando a "por dia util",
+       um vale de R$ 500 fixos vira R$ 500 x 21 na previsao. */
+    'credito_trabalhador', 'banco', 'agencia', 'conta_bancaria', 'pix',
+    'vt_modo', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor'];
 
   let sombraFuncionarios = {};
 

@@ -68,6 +68,10 @@ ERP.store = (function () {
        nota anexada antes de pagar, competência fechada e o sequencial
        da remessa dividido com o Protheus. */
     parametros: {
+      /* Operadora do cartao de vale. Vazio = nao escolhida: a
+         previsao do beneficio sai sem fornecedor, e a conciliacao
+         com a nota fica manual. */
+      credor_vt: '', credor_vr: '',
       /* Comprador e assistente ficavam de fora deste objeto — e aqui
          "não configurado" e "zero" dão exatamente no mesmo `|| 0`, que
          quer dizer SEM LIMITE. Na prática, os dois perfis que mais
@@ -5184,9 +5188,34 @@ ERP.store = (function () {
        trabalhar. Quem quiser outro número informa em extras. */
     const uteisDoMes = extras.dias_uteis !== undefined ? extras.dias_uteis : U.diasUteis(competencia);
     const uteisPagos = Math.max(0, Math.round(uteisDoMes * (diasPagos / (diasMes || 30))));
+
+    /* POR DIA OU FIXO NO MES — e o cadastro de cada pessoa que diz.
+
+       Ate aqui todo beneficio era por dia util, e isso esta certo
+       para vale-transporte comprado por passagem. Mas ha quem tenha
+       valor fechado no mes: cartao com credito fixo, auxilio
+       combinado em contrato. Multiplicar esse valor pelos dias uteis
+       inflava a despesa em mais de vinte vezes.
+
+       No modo FIXO o valor e do mes inteiro, e so cai em mes
+       incompleto: quem foi admitido no dia 20 recebe a parte dele,
+       proporcional aos dias pagos — mesmo criterio que o modo por
+       dia ja aplicava ao reduzir os dias uteis.
+
+       Sem `modo` no cadastro, vale POR DIA: e o que o sistema fazia
+       antes, e cadastro antigo nao pode mudar de significado por
+       causa de um campo novo. */
+    const valorBeneficio = function (valor, modo) {
+      if (!(valor > 0)) return 0;
+      if (modo === 'mes') {
+        const proporcao = Math.min(1, Math.max(0, diasPagos / (diasMes || 30)));
+        return Math.round(valor * proporcao * 100) / 100;
+      }
+      return Math.round(valor * uteisPagos * 100) / 100;
+    };
     let vtGasto = 0, vtDesconto = 0;
     if (f.vale_transporte && f.vt_dia > 0) {
-      vtGasto = Math.round(f.vt_dia * uteisPagos * 100) / 100;
+      vtGasto = valorBeneficio(f.vt_dia, f.vt_modo);
       /* Editável por mês via extras.vt_desconto_valor (a tela de Folha
          usa isso pra deixar corrigir o desconto sem mudar o cadastro).
          Sem override, usa o que está cadastrado no funcionário: modo
@@ -5222,7 +5251,7 @@ ERP.store = (function () {
     if (f.vale_refeicao && f.vr_dia > 0) {
       /* Mesma regra do vale-transporte: refeição se paga por dia
          trabalhado, não por 30 dias corridos. */
-      vrGasto = Math.round(f.vr_dia * uteisPagos * 100) / 100;
+      vrGasto = valorBeneficio(f.vr_dia, f.vr_modo);
       if (extras.vr_desconto_valor !== undefined) {
         vrDesconto = Math.min(vrGasto, Math.max(0, extras.vr_desconto_valor));
       } else if (f.vr_desconto_modo === 'valor' && f.vr_desconto_valor > 0) {
@@ -5540,6 +5569,178 @@ ERP.store = (function () {
       : null;
   }
 
+  /* AS DATAS DA FOLHA, num lugar so.
+
+     O fechamento e a previsao precisam das MESMAS datas. Enquanto
+     cada um calculava a sua, bastava um ajuste de regra num deles
+     para a previsao passar a cair num dia e o real em outro — e
+     divergencia de data em fluxo de caixa e pior que numero errado,
+     porque parece certo em toda conferencia de total.
+
+     Liquido no 5o dia util do mes seguinte; FGTS e as guias de
+     INSS/IRRF vinte dias depois do fim da competencia, antecipando
+     quando cai em fim de semana. */
+  function datasDaFolha(competencia) {
+    const p = String(competencia).split('-');
+    const fimMes = new Date(Date.UTC(+p[0], +p[1], 0));
+    const dataFolha = fimMes.toISOString().slice(0, 10);
+    return {
+      dataFolha: dataFolha,
+      vencLiquido: quintoDiaUtil(competencia),
+      vencEncargos: antecipaSeFimDeSemana(U.addDias(dataFolha, 20))
+    };
+  }
+
+  /* ── PREVISAO DE FOLHA, DOZE MESES A FRENTE ──────────────
+
+     Ate aqui a folha so tocava o financeiro no FECHAMENTO: dez
+     pessoas cadastradas e nenhum centavo no fluxo de caixa ate
+     alguem fechar a competencia. Folha e a despesa mais previsivel
+     que existe — deixa-la fora do fluxo e esconder o que ja se
+     sabe.
+
+     A MESMA CALCULADORA. Cada mes projetado passa por
+     `calcularHolerite`, a mesma funcao que o fechamento usa. Nao ha
+     conta paralela: no dia em que mudar a tabela do INSS ou a regra
+     do beneficio, muda para os dois ao mesmo tempo. As datas vem de
+     `datasDaFolha`, pelo mesmo motivo.
+
+     O REAL MANDA SOBRE O PREVISTO. Competencia que ja tem folha
+     fechada e pulada: os titulos de verdade estao em `st.parcelas`
+     e o fluxo ja os le. Sem isso, o mes fechado apareceria duas
+     vezes.
+
+     O QUE ENTRA: dinheiro que sai. Liquido no 5o dia util, FGTS e
+     as guias de INSS/IRRF no vencimento das guias, e o custo dos
+     beneficios.
+
+     O QUE NAO ENTRA: provisao de 13o e de ferias. Elas sao CUSTO do
+     mes e aparecem no DRE, mas nao sao saida de caixa naquele mes —
+     o 13o sai em novembro e dezembro, as ferias quando a pessoa
+     goza. Somar a provisao ao fluxo contaria o mesmo dinheiro duas
+     vezes: uma na provisao, outra no pagamento. */
+  const PREVISAO_MESES = 12;
+
+  function previsaoFolha(mesesAFrente) {
+    const meses = mesesAFrente || PREVISAO_MESES;
+    const linhas = [];
+    const base = U.mesAtual() + '-01';
+
+    for (let i = 0; i < meses; i++) {
+      const comp = U.compDe(U.addMeses(base, i));
+
+      /* Folha fechada e viva: o real ja esta no fluxo. */
+      const temFechada = (st.folhas || []).some(function (fl) {
+        return fl.competencia === comp && !fl.cancelada;
+      });
+      if (temFechada) continue;
+
+      const ativos = funcionariosDaFolha(comp);
+      if (!ativos.length) continue;
+
+      const dt = datasDaFolha(comp);
+      let liquido = 0, fgts = 0, patronal = 0, retido = 0, salFamilia = 0;
+      /* Separados desde a origem: somar para depois tentar dividir
+         perderia o arredondamento de cada um. */
+      let vtEmpresa = 0, vrEmpresa = 0;
+
+      ativos.forEach(function (f) {
+        let h;
+        /* Um cadastro problematico nao pode derrubar a previsao
+           inteira: a pessoa fica de fora e a conta segue com as
+           outras, como a carga faz com as tabelas. */
+        try { h = calcularHolerite(f.id, comp); } catch (e) { return; }
+        if (!h || h.erro) return;
+        liquido += h.liquido || 0;
+        fgts += h.fgts || 0;
+        patronal += (h.inss_patronal || 0) + (h.outros_encargos || 0);
+        retido += (h.valor_inss || h.inss || 0) + (h.valor_irrf || 0);
+        vtEmpresa += h.vt_custo_empresa || 0;
+        vrEmpresa += h.vr_custo_empresa || 0;
+        salFamilia += h.salario_familia || 0;
+      });
+
+      const arredonda = function (v) { return Math.round(v * 100) / 100; };
+      const patronalAPagar = Math.max(0, arredonda(patronal - salFamilia));
+
+      const poe = function (valor, data, descricao, natureza, credor) {
+        if (!(valor > 0.004)) return;
+        linhas.push({ competencia: comp, data: data, valor: arredonda(valor),
+          descricao: descricao + ' ' + U.fComp(comp) + ' (previsto)',
+          natureza: natureza, credor: credor || '', origem: 'folha-previsao',
+          pessoas: ativos.length });
+      };
+
+      poe(liquido, dt.vencLiquido, 'Folha — líquido', '4.01');
+      poe(fgts, dt.vencEncargos, 'FGTS', '4.03');
+      poe(patronalAPagar, dt.vencEncargos, 'INSS patronal + RAT/FAP + terceiros', '4.03');
+      poe(retido, dt.vencEncargos, 'INSS e IRRF retidos', '4.03');
+
+      /* ── O VALE TEM DONO, E SAO DOIS ────────────────────
+         O beneficio nao e pago ao funcionario: e pago a operadora
+         do cartao. Transporte e refeicao costumam ser empresas
+         diferentes — Rio Card e Pluxee, por exemplo —, com nota,
+         vencimento e conciliacao proprios. Uma linha so, somando
+         as duas, nao se concilia com nenhuma das duas notas.
+
+         A compra acontece ANTES de o mes rodar: o cartao e
+         carregado para a pessoa usar no proprio mes. Por isso o
+         primeiro dia util da competencia, e nao o fim dela.
+
+         O LANCAMENTO REAL DERRUBA A PREVISAO. Diferente do
+         liquido e das guias — que somem quando a folha fecha —,
+         o vale nao nasce do fechamento: alguem lanca a nota da
+         operadora no contas a pagar. Entao a regra de
+         substituicao e outra: havendo parcela viva daquele
+         fornecedor na mesma competencia, a previsao sai. */
+      /* O QUE CONTA COMO "JA LANCADO".
+
+         Vale por competencia OU por vencimento dentro do mes. Quem
+         lanca a nota da operadora nem sempre preenche a
+         competencia — muita gente deixa no mes do vencimento —, e
+         exigir as duas coisas faria a previsao continuar de pe ao
+         lado da nota de verdade: o mes dobraria no fluxo de caixa,
+         que e exatamente o erro que esta regra existe para evitar.
+
+         `cancelado` e `substituido` nao contam: sao titulo morto.
+         Tudo o mais conta, inclusive `previsto` — uma previsao de
+         contrato com a mesma operadora ja e a mesma saida de
+         caixa, e somar as duas contaria duas vezes.
+
+         Erra para o lado de NAO duplicar: se a operadora tem
+         qualquer titulo vivo naquele mes, a previsao da folha sai
+         de cena e deixa o numero real falar. */
+      const jaLancado = function (credorId) {
+        if (!credorId) return false;
+        return (st.parcelas || []).some(function (pc) {
+          if (pc.credor !== credorId) return false;
+          if (pc.status === 'cancelado' || pc.status === 'substituido') return false;
+          return pc.comp === comp || String(pc.venc || '').slice(0, 7) === comp;
+        });
+      };
+      const nomeCredor = function (credorId) {
+        const c2 = D.credor && D.credor(credorId);
+        return c2 ? c2.nome : '';
+      };
+      const credorVT = st.parametros.credor_vt || '';
+      const credorVR = st.parametros.credor_vr || '';
+      const diaDoVale = antecipaSeFimDeSemana(comp + '-01');
+
+      if (!jaLancado(credorVT)) {
+        poe(vtEmpresa, diaDoVale,
+          'Vale-transporte' + (nomeCredor(credorVT) ? ' — ' + nomeCredor(credorVT) : ''),
+          '4.02', credorVT);
+      }
+      if (!jaLancado(credorVR)) {
+        poe(vrEmpresa, diaDoVale,
+          'Vale-refeição' + (nomeCredor(credorVR) ? ' — ' + nomeCredor(credorVR) : ''),
+          '4.02', credorVR);
+      }
+    }
+
+    return linhas;
+  }
+
   function fecharFolha(competencia, ajustesPorFuncionario, opcoes) {
     opcoes = opcoes || {};
     if (!pode('fechar_folha')) {
@@ -5590,11 +5791,10 @@ ERP.store = (function () {
        pra trás. */
     const tituloIds = [];
     try {
-    const p = competencia.split('-');
-    const fimMes = new Date(Date.UTC(+p[0], +p[1], 0));
-    const dataFolha = fimMes.toISOString().slice(0, 10);
-    const vencLiquido = quintoDiaUtil(competencia);                        // 5º dia útil do mês seguinte
-    const vencEncargos = antecipaSeFimDeSemana(U.addDias(dataFolha, 20));   // FGTS e guia de INSS/IRRF, referência
+    const dt = datasDaFolha(competencia);
+    const dataFolha = dt.dataFolha;
+    const vencLiquido = dt.vencLiquido;
+    const vencEncargos = dt.vencEncargos;
 
     const holerites = [];
     let totalLiquido = 0, totalFGTS = 0, totalINSS = 0, totalIRRF = 0, totalINSSPatronal = 0, totalOutrosEncargos = 0, totalSalarioFamilia = 0;
@@ -6596,8 +6796,13 @@ ERP.store = (function () {
       conta_bancaria: dados.conta_bancaria || '', pix: dados.pix || '',
       pagamento_aprovado: pagamentoAprovado,
       vale_transporte: !!dados.vale_transporte, vt_dia: dados.vt_dia || 0,
+      /* 'dia' (padrao) ou 'mes'. O nome `vt_dia` ficou do tempo em
+         que so havia um modo; trocar o nome agora exigiria migrar
+         cadastro, e o campo guarda o valor informado nos dois casos. */
+      vt_modo: dados.vt_modo === 'mes' ? 'mes' : 'dia',
       vt_desconto_modo: dados.vt_desconto_modo || 'percentual', vt_desconto_valor: dados.vt_desconto_valor || 0,
       vale_refeicao: !!dados.vale_refeicao, vr_dia: dados.vr_dia || 0,
+      vr_modo: dados.vr_modo === 'mes' ? 'mes' : 'dia',
       vr_desconto_modo: dados.vr_desconto_modo || 'nenhum', vr_desconto_valor: dados.vr_desconto_valor || 0,
       credito_trabalhador: normalizarCredito(dados.credito_trabalhador),
       insalubridade_pct: dados.insalubridade_pct || 0, periculosidade: !!dados.periculosidade,
@@ -6735,8 +6940,8 @@ ERP.store = (function () {
     const campos = ['nome', 'pis', 'nascimento', 'cargo', 'jornada_semanal_horas',
       'dependentes_irrf', 'dependentes', 'pensao_alimenticia', 'credito_trabalhador',
       'centro', 'rateio', 'banco', 'agencia', 'conta_bancaria', 'pix',
-      'vale_transporte', 'vt_dia', 'vt_desconto_modo', 'vt_desconto_valor',
-      'vale_refeicao', 'vr_dia', 'vr_desconto_modo', 'vr_desconto_valor',
+      'vale_transporte', 'vt_dia', 'vt_modo', 'vt_desconto_modo', 'vt_desconto_valor',
+      'vale_refeicao', 'vr_dia', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor',
       'insalubridade_pct', 'periculosidade'];
     const mudou = [];
     campos.forEach(function (k) {
@@ -11408,6 +11613,14 @@ ERP.store = (function () {
       if (d[k] !== undefined) p[k] = !!d[k];
     });
     if (d.travar_competencia_ate !== undefined) p.travar_competencia_ate = d.travar_competencia_ate;
+    /* QUEM RECEBE O VALE. O beneficio nao e pago ao funcionario: e
+       pago a operadora do cartao — Rio Card no transporte, Pluxee
+       na refeicao. Sao dois fornecedores de verdade, com titulo
+       proprio, e e por isso que moram aqui e nao numa constante:
+       mudam de empresa para empresa e de contrato para contrato.
+       String vazia LIMPA a escolha; `undefined` nao mexe. */
+    if (d.credor_vt !== undefined) p.credor_vt = d.credor_vt || '';
+    if (d.credor_vr !== undefined) p.credor_vr = d.credor_vr || '';
     if (d.nsa_ini !== undefined) p.nsa_ini = parseInt(d.nsa_ini, 10) || 1;
     if (d.nsa_fim !== undefined) p.nsa_fim = parseInt(d.nsa_fim, 10) || 999999;
     logar('parametro', 'geral', 'alterou parâmetros',
@@ -17646,7 +17859,7 @@ ERP.store = (function () {
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO,
     calcularINSS, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
-    folhas, fecharFolha, cancelarFolha,
+    folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
     criarFuncionario, editarFuncionario, desligarFuncionario, registrarReajusteSalarial, historicoSalarial, criarCargo,
     aprovarDadosPagamento,
     funcionariosForaDaFolha, calcularFerias, lancarFerias, cancelarFerias, situacaoFerias, calcularRescisao, lancarRescisao, cancelarRescisao, TIPOS_RESCISAO, alertasDP,

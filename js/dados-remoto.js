@@ -105,8 +105,27 @@ ERP.dadosRemoto = (function () {
   function limpar(linha) {
     const o = {};
     Object.keys(linha).forEach(function (k) {
+      if (k === 'extra') return;
       if (linha[k] !== null) o[k] = linha[k];
     });
+    /* RESGATE DO QUE FICOU PRESO NO `extra`.
+
+       A gravacao manda para `extra`, em JSON, tudo o que nao tem
+       coluna propria. As outras tabelas desempacotam isso na
+       leitura; funcionarios nunca desempacotou — e por isso nove
+       campos digitados na ficha sumiam na recarga, sem erro e sem
+       aviso.
+
+       As colunas foram criadas (SQL 65), entao daqui pra frente o
+       caminho normal e a coluna. Isto aqui resgata o que ja foi
+       salvo antes dela existir, e e por isso que a COLUNA MANDA:
+       `extra` so preenche o que a linha nao trouxe. */
+    if (linha.extra && typeof linha.extra === 'object') {
+      Object.keys(linha.extra).forEach(function (k) {
+        if (o[k] !== undefined) return;
+        if (linha.extra[k] !== null) o[k] = linha.extra[k];
+      });
+    }
     return o;
   }
 

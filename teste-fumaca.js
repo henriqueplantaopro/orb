@@ -10515,4 +10515,110 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /const aRever = \{/.test(vrd) && /ui-compras\.js/.test(vrd), '');
 })();
 
+
+/* ══════════════════════════════════════════════════════════
+   v126 · a folha entra no fluxo como previsao, 12 meses
+   ══════════════════════════════════════════════════════════ */
+(function () {
+  const fsE = require('fs');
+  const sto = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const flx = fsE.readFileSync(__dirname + '/js/exportar-fluxo.js', 'utf8');
+  const dpU = fsE.readFileSync(__dirname + '/js/ui-dp.js', 'utf8');
+  const perE = fsE.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* UMA CALCULADORA, DOIS USOS. A previsao passa por
+     `calcularHolerite`, a mesma funcao do fechamento — e as datas
+     saem de `datasDaFolha`, usada pelos dois. */
+  verificar('v126 — existe previsao de folha para 12 meses',
+    /function previsaoFolha/.test(sto) && /const PREVISAO_MESES = 12;/.test(sto), '');
+  verificar('v126 — e ela usa a MESMA calculadora do fechamento',
+    /previsaoFolha[\s\S]{0,2200}calcularHolerite\(f\.id, comp\)/.test(sto), '');
+  verificar('v126 — as datas moram num lugar so, para nao divergirem',
+    /function datasDaFolha/.test(sto) &&
+    /const dt = datasDaFolha\(competencia\);/.test(sto) &&
+    /const dt = datasDaFolha\(comp\);/.test(sto), '');
+  /* Competencia fechada ja esta no fluxo pelos titulos reais. */
+  verificar('v126 — competencia com folha fechada nao entra na previsao',
+    /if \(temFechada\) continue;/.test(sto), '');
+  verificar('v126 — a previsao alimenta o fluxo de caixa',
+    /S\.previsaoFolha\(\)\.forEach/.test(flx) && /Previsão de folha/.test(flx), '');
+  /* Provisao e custo do mes, nao saida de caixa: somar no fluxo
+     contaria o 13o duas vezes. */
+  verificar('v126 — provisao de 13o e ferias fica FORA do fluxo',
+    /nao sao saida de caixa naquele mes/.test(sto) &&
+    !/poe\(provisao/.test(sto), '');
+
+  /* O BENEFICIO POR DIA OU FIXO NO MES. */
+  verificar('v126 — o beneficio tem modo por dia util ou fixo no mes',
+    /const valorBeneficio = function \(valor, modo\)/.test(sto) &&
+    /vt_modo: dados\.vt_modo === 'mes'/.test(sto) &&
+    /vr_modo: dados\.vr_modo === 'mes'/.test(sto), '');
+  verificar('v126 — sem o campo, o cadastro antigo continua por dia',
+    /if \(modo === 'mes'\)/.test(sto) &&
+    /vt_modo: dados\.vt_modo === 'mes' \? 'mes' : 'dia'/.test(sto), '');
+  verificar('v126 — no modo fixo, mes incompleto entra proporcional',
+    /const proporcao = Math\.min\(1, Math\.max\(0, diasPagos \/ \(diasMes \|\| 30\)\)\)/.test(sto), '');
+  verificar('v126 — o modo e escolhido no cadastro do funcionario',
+    /id="fn-vt-modo"/.test(dpU) && /id="fn-vr-modo"/.test(dpU) &&
+    /vt_modo: U\.val\('fn-vt-modo'\)/.test(dpU), '');
+  verificar('v126 — e a ficha mostra qual modo esta valendo',
+    /fixo no mês/.test(dpU) && /\/dia útil/.test(dpU), '');
+  verificar('v126 — os dois campos vao ao banco',
+    /'vale_transporte', 'vt_dia', 'vt_modo'/.test(sto) &&
+    /'vale_refeicao', 'vr_dia', 'vr_modo'/.test(sto), '');
+
+  /* ── v127 · o vale tem dono, e sao dois ──────────────
+     O beneficio e pago a operadora do cartao, nao ao
+     funcionario. Duas empresas, duas notas, dois titulos. */
+  verificar('v127 — a previsao do vale sai separada por operadora',
+    /poe\(vtEmpresa,/.test(sto) && /poe\(vrEmpresa,/.test(sto) &&
+    !/poe\(beneficios,/.test(sto), '');
+  verificar('v127 — e cada linha leva o fornecedor que recebe',
+    /credorVT\)/.test(sto) && /credorVR\)/.test(sto) &&
+    /credor: credor \|\| ''/.test(sto), '');
+  verificar('v127 — o lancamento real derruba a previsao daquele vale',
+    /const jaLancado = function/.test(sto) &&
+    /if \(!jaLancado\(credorVT\)\)/.test(sto) &&
+    /if \(!jaLancado\(credorVR\)\)/.test(sto), '');
+  verificar('v127 — titulo cancelado ou substituido nao derruba nada',
+    /jaLancado[\s\S]{0,700}'cancelado'[\s\S]{0,80}'substituido'/.test(sto), '');
+  verificar('v127 — casa por competencia OU por vencimento no mes',
+    /jaLancado[\s\S]{0,900}pc\.comp === comp \|\| String\(pc\.venc/.test(sto), '');
+  verificar('v127 — sem operadora escolhida a despesa continua prevista',
+    /jaLancado = function \(credorId\) \{\s*if \(!credorId\) return false;/.test(sto), '');
+  verificar('v127 — a operadora se escolhe no ERP, na aba de tabelas do DP',
+    /comboCredor\('dp-credor-vt'/.test(dpU) && /comboCredor\('dp-credor-vr'/.test(dpU) &&
+    /dp-salvar-operadoras/.test(dpU) &&
+    /salvarParametros\(\{[\s\S]{0,160}credor_vt/.test(dpU), '');
+  verificar('v127 — e a escolha vai ao banco, nao so a tela',
+    /'credor_vt', 'credor_vr'\]/.test(perE), '');
+  verificar('v127 — o nome da operadora chega ao fluxo de caixa exportado',
+    /D\.credor\(pf\.credor\)/.test(flx), '');
+
+  /* ── v127 · os nove campos que sumiam na recarga ─────
+     A ficha salvava conta bancária, consignado e modo do vale em
+     campos sem coluna no banco: iam para o `extra`, em JSON, e a
+     leitura de funcionários nunca desempacotava o `extra`. */
+  const remE = fsE.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  const sqlE = fsE.readFileSync(__dirname + '/supabase/65-ATUALIZAR-v127.sql', 'utf8');
+  const NOVE = ['credito_trabalhador', 'banco', 'agencia', 'conta_bancaria', 'pix',
+    'vt_modo', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor'];
+  const listaFn = perE.slice(perE.indexOf('const COLUNAS_FUNCIONARIO'),
+    perE.indexOf('];', perE.indexOf('const COLUNAS_FUNCIONARIO')));
+  verificar('v127 — os nove campos tem coluna propria na gravacao',
+    NOVE.every(function (c) { return listaFn.indexOf("'" + c + "'") > -1; }),
+    NOVE.filter(function (c) { return listaFn.indexOf("'" + c + "'") < 0; }).join(',') || 'todos');
+  verificar('v127 — e o SQL cria as nove no banco',
+    NOVE.every(function (c) {
+      return new RegExp('add column if not exists\\s+' + c + '\\b').test(sqlE);
+    }), '');
+  verificar('v127 — a leitura desempacota o extra, resgatando o que ja esta preso la',
+    /if \(k === 'extra'\) return;/.test(remE) &&
+    /linha\.extra && typeof linha\.extra === 'object'/.test(remE), '');
+  verificar('v127 — e a COLUNA manda sobre o extra, nao o contrario',
+    /extra[\s\S]{0,160}if \(o\[k\] !== undefined\) return;/.test(remE), '');
+  verificar('v127 — o SQL nao sobrescreve coluna ja preenchida',
+    /coalesce\(banco,\s*extra->>'banco'\)/.test(sqlE), '');
+})();
+
 concluir();
