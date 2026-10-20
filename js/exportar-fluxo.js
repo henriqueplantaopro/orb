@@ -171,6 +171,23 @@ ERP.exportarFluxo = (function () {
         origem: 'Previsão de despesa' });
     });
 
+    /* ── FOLHA DOS PROXIMOS MESES ───────────────────────
+       Doze competencias a frente, a partir de quem esta cadastrado
+       hoje. Competencia com folha ja fechada NAO entra aqui: os
+       titulos reais dela ja subiram na primeira varredura, acima, e
+       conta-la de novo dobraria a despesa justamente no mes que se
+       conhece com certeza. Quem garante isso e `previsaoFolha`, que
+       pula a competencia fechada. */
+    if (S.previsaoFolha) {
+      S.previsaoFolha().forEach(function (pf) {
+        const g = grupoDe(pf.natureza);
+        L.push({ data: pf.data, desc: pf.descricao, entrada: 0, saida: pf.valor,
+          pagar: 'S', grupo: g.grupo, sub: g.sub, projeto: '',
+          fornecedor: pf.credor && D.credor(pf.credor) ? D.credor(pf.credor).nome : '',
+          origem: 'Previsão de folha' });
+      });
+    }
+
     return L.sort(function (a, b) { return (a.data || '').localeCompare(b.data || ''); });
   }
 

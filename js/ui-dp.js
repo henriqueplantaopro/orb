@@ -158,8 +158,12 @@ ERP.dp = (function () {
         (vp ? linha('Banco', U.esc(f.banco || '—') + (f.agencia ? ' · ag. ' + U.esc(f.agencia) : '') +
           (f.conta_bancaria ? ' · cc ' + U.esc(f.conta_bancaria) : '')) +
           linha('PIX', U.esc(f.pix || '—')) : '') +
-        linha('Vale-transporte', f.vale_transporte ? U.brl(f.vt_dia) + '/dia' : 'Não') +
-        linha('Vale-refeição', f.vale_refeicao ? U.brl(f.vr_dia) + '/dia' : 'Não') +
+        /* A ficha diz o MODO junto do valor: "35,00" sozinho nao
+           se confere. */
+        linha('Vale-transporte', f.vale_transporte
+          ? U.brl(f.vt_dia) + (f.vt_modo === 'mes' ? ' fixo no mês' : '/dia útil') : 'Não') +
+        linha('Vale-refeição', f.vale_refeicao
+          ? U.brl(f.vr_dia) + (f.vr_modo === 'mes' ? ' fixo no mês' : '/dia útil') : 'Não') +
         linha('Insalubridade', f.insalubridade_pct > 0 ? f.insalubridade_pct + '% do salário mínimo' : 'Não') +
         linha('Periculosidade', f.periculosidade ? '30% do salário base' : 'Não') +
         (vp && f.pensao_alimenticia && f.pensao_alimenticia.ativo
@@ -337,13 +341,23 @@ ERP.dp = (function () {
 
         '<h3 style="font-size:12px;margin:14px 0 4px">Vale-transporte e vale-refeição</h3>' +
         '<div class="row2"><div><label><input type="checkbox" id="fn-vt"' + (f && f.vale_transporte ? ' checked' : '') + '> Vale-transporte</label>' +
-          '<div class="row2" style="margin-top:4px"><input class="num" id="fn-vt-dia" inputmode="decimal" placeholder="valor por dia" value="' + U.num(f ? f.vt_dia : 0) + '">' +
+          /* O MODO VEM ANTES DO DESCONTO de proposito: e ele que
+             da sentido ao numero ao lado. Lendo "35,00" sem saber
+             se e por dia ou no mes, a pessoa nao tem como conferir
+             se o cadastro esta certo. */
+          '<div class="row2" style="margin-top:4px">' +
+          '<select id="fn-vt-modo"><option value="dia"' + (!f || f.vt_modo !== 'mes' ? ' selected' : '') + '>Valor por dia util</option>' +
+          '<option value="mes"' + (f && f.vt_modo === 'mes' ? ' selected' : '') + '>Valor fixo no mes</option></select>' +
+          '<input class="num" id="fn-vt-dia" inputmode="decimal" placeholder="valor" value="' + U.num(f ? f.vt_dia : 0) + '">' +
           '<select id="fn-vt-desc-modo"><option value="percentual"' + (!f || f.vt_desconto_modo === 'percentual' ? ' selected' : '') + '>Desconto % (padrão 6%)</option>' +
           '<option value="valor"' + (f && f.vt_desconto_modo === 'valor' ? ' selected' : '') + '>Desconto fixo (R$)</option>' +
           '<option value="nenhum"' + (f && f.vt_desconto_modo === 'nenhum' ? ' selected' : '') + '>Sem desconto</option></select></div>' +
           '<input class="num" id="fn-vt-desc-valor" inputmode="decimal" placeholder="% ou R$ conforme o modo" value="' + U.num(f ? f.vt_desconto_valor || 0 : 0) + '" style="margin-top:4px"></div>' +
         '<div><label><input type="checkbox" id="fn-vr"' + (f && f.vale_refeicao ? ' checked' : '') + '> Vale-refeição</label>' +
-          '<div class="row2" style="margin-top:4px"><input class="num" id="fn-vr-dia" inputmode="decimal" placeholder="valor por dia" value="' + U.num(f ? f.vr_dia : 0) + '">' +
+          '<div class="row2" style="margin-top:4px">' +
+          '<select id="fn-vr-modo"><option value="dia"' + (!f || f.vr_modo !== 'mes' ? ' selected' : '') + '>Valor por dia util</option>' +
+          '<option value="mes"' + (f && f.vr_modo === 'mes' ? ' selected' : '') + '>Valor fixo no mes</option></select>' +
+          '<input class="num" id="fn-vr-dia" inputmode="decimal" placeholder="valor" value="' + U.num(f ? f.vr_dia : 0) + '">' +
           '<select id="fn-vr-desc-modo"><option value="nenhum"' + (!f || f.vr_desconto_modo === 'nenhum' ? ' selected' : '') + '>Sem desconto</option>' +
           '<option value="percentual"' + (f && f.vr_desconto_modo === 'percentual' ? ' selected' : '') + '>Desconto %</option>' +
           '<option value="valor"' + (f && f.vr_desconto_modo === 'valor' ? ' selected' : '') + '>Desconto fixo (R$)</option></select></div>' +
@@ -393,6 +407,7 @@ ERP.dp = (function () {
           rateio: rateioFinal,
           banco: U.val('fn-banco'), agencia: U.val('fn-agencia'), conta_bancaria: U.val('fn-conta'),
           pix: U.val('fn-pix'), vale_transporte: U.el('fn-vt').checked, vt_dia: U.parseValor(U.val('fn-vt-dia')),
+          vt_modo: U.val('fn-vt-modo'), vr_modo: U.val('fn-vr-modo'),
           vt_desconto_modo: U.val('fn-vt-desc-modo'), vt_desconto_valor: U.parseValor(U.val('fn-vt-desc-valor')),
           vale_refeicao: U.el('fn-vr').checked, vr_dia: U.parseValor(U.val('fn-vr-dia')),
           vr_desconto_modo: U.val('fn-vr-desc-modo'), vr_desconto_valor: U.parseValor(U.val('fn-vr-desc-valor')),
@@ -1618,6 +1633,22 @@ ERP.dp = (function () {
     const box = U.el('dp-aba-tabelas');
     const inss = D.tabelaINSS, irrf = D.tabelaIRRF, dp = D.parametrosDP;
     const podeEditar = S.pode('admin');
+    const par = S.st.parametros || {};
+
+    /* Só fornecedor ativo, e o escolhido sempre presente mesmo que
+       tenha sido inativado depois — senão a tela "esqueceria" a
+       escolha sem avisar, e o próximo Salvar a apagaria de verdade. */
+    const comboCredor = function (id, escolhido, habilitado) {
+      const lista = (D.credores || []).filter(function (c) {
+        return c.ativo !== false || c.id === escolhido;
+      }).sort(function (a3, b3) { return String(a3.nome).localeCompare(String(b3.nome), 'pt-BR'); });
+      return '<select id="' + id + '"' + (habilitado ? '' : ' disabled') + '>' +
+        '<option value="">— não informado —</option>' +
+        lista.map(function (c) {
+          return '<option value="' + U.esc(c.id) + '"' + (c.id === escolhido ? ' selected' : '') + '>' +
+            U.esc(c.nome) + '</option>';
+        }).join('') + '</select>';
+    };
 
     box.innerHTML =
       '<h2>Tabelas fiscais<span class="sub">o que muda por lei — confirme todo início de ano</span></h2>' +
@@ -1667,7 +1698,26 @@ ERP.dp = (function () {
         '<div><label>RAT×FAP (%) <span class="sub">varia por CNAE/FAP</span></label><input class="num" id="dp-rat-fap" value="' + U.num(dp.aliquota_rat_fap) + '"' + (podeEditar ? '' : ' disabled') + '></div>' +
         '<div><label>Terceiros/Sistema S (%) <span class="sub">confirme com o contador</span></label><input class="num" id="dp-terceiros" value="' + U.num(dp.aliquota_terceiros) + '"' + (podeEditar ? '' : ' disabled') + '></div>' +
       '</div>' +
-      (podeEditar ? '<button class="btn-linha" id="dp-salvar-tabelas" style="margin-top:12px">Salvar tabelas</button>' : '');
+      (podeEditar ? '<button class="btn-linha" id="dp-salvar-tabelas" style="margin-top:12px">Salvar tabelas</button>' : '') +
+
+      /* ── QUEM RECEBE O VALE ──────────────────────────────
+         O vale não é pago ao funcionário: é pago à operadora do
+         cartão — Rio Card no transporte, Pluxee na refeição. São
+         duas notas, de duas empresas, com vencimentos próprios.
+         Dizendo quem são, a previsão de caixa sai separada por
+         fornecedor e some sozinha quando a nota de verdade é
+         lançada. Sem dizer, a previsão continua saindo, só que sem
+         dono — e a conciliação vira trabalho manual. */
+      '<h3 style="font-size:12px;margin:18px 0 6px">Operadoras do vale</h3>' +
+      '<div class="ajuda">O vale é pago à empresa do cartão, não ao funcionário. Indicando quem são, ' +
+        'a previsão de caixa sai com um título para cada uma, e cada título desaparece sozinho quando ' +
+        'a nota daquela operadora é lançada no contas a pagar da mesma competência.</div>' +
+      '<div class="row3">' +
+        '<div><label>Vale-transporte — quem recebe</label>' + comboCredor('dp-credor-vt', par.credor_vt, podeEditar) + '</div>' +
+        '<div><label>Vale-refeição — quem recebe</label>' + comboCredor('dp-credor-vr', par.credor_vr, podeEditar) + '</div>' +
+        '<div></div>' +
+      '</div>' +
+      (podeEditar ? '<button class="btn-linha" id="dp-salvar-operadoras" style="margin-top:12px">Salvar operadoras</button>' : '');
 
     if (podeEditar && U.el('dp-salvar-tabelas')) {
       U.el('dp-salvar-tabelas').addEventListener('click', function () {
@@ -1698,6 +1748,18 @@ ERP.dp = (function () {
         } });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Tabelas atualizadas — os próximos cálculos já usam os novos valores.', 'ok');
+        render();
+      });
+    }
+
+    if (podeEditar && U.el('dp-salvar-operadoras')) {
+      U.el('dp-salvar-operadoras').addEventListener('click', function () {
+        const r = S.salvarParametros({
+          credor_vt: U.val('dp-credor-vt'),
+          credor_vr: U.val('dp-credor-vr')
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.aviso('Operadoras do vale definidas — a previsão de caixa já sai separada por fornecedor.', 'ok');
         render();
       });
     }
