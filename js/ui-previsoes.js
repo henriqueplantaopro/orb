@@ -271,38 +271,56 @@ ERP.previsoes = (function () {
               U.esc(x.curto || x.nome) + '</option>'; }).join('') + '</select></div>' +
         '<div><label>Valor previsto</label><input id="pd-valor" class="num" inputmode="decimal" value="' +
           U.num(pv ? pv.valor : 0) + '"></div>' +
-        '<div><label>Data prevista</label><input type="date" id="pd-data" value="' +
-          (pv ? pv.data : comp + '-10') + '"></div></div>' +
+        '<div><label>' + (pv ? 'Data prevista' : 'Primeiro vencimento') + '</label>' +
+          '<input type="date" id="pd-data" value="' + (pv ? pv.data : comp + '-10') + '"></div></div>' +
+        (pv ? '' :
+          '<div class="ajuda">O primeiro vencimento pode ser uma data JÁ PASSADA: lançando hoje um ' +
+          'contrato que começou em agosto, as parcelas de agosto e setembro entram vencidas no contas ' +
+          'a pagar, como têm de entrar. A competência de cada parcela sai da data dela.</div>') +
         (pv
           ? (pv.serie
               ? '<div class="ajuda">Esta linha faz parte de uma série recorrente. Alterar aqui muda ' +
                 'só este mês; use "Replicar" na lista para levar o novo valor aos meses seguintes.</div>'
               : '')
-          : '<label>Repetir nos próximos meses</label><select id="pd-repetir">' +
-            [['1', 'só este mês'], ['3', '3 meses'], ['6', '6 meses'], ['12', '12 meses'],
-             ['24', '24 meses']].map(function (o) {
-              return '<option value="' + o[0] + '">' + o[1] + '</option>'; }).join('') + '</select>' +
-            '<div class="ajuda">Conta de luz, aluguel, folha: cadastre uma vez e o sistema cria a ' +
-            'previsão de cada mês, sempre no mesmo dia. Depois dá para ajustar o valor de um mês só ' +
-            'ou replicar o novo valor para os seguintes.</div>'),
+          : '<label>Prever até <span class="sub">(em branco: só o primeiro vencimento)</span></label>' +
+            '<input type="date" id="pd-ate" value="">' +
+            '<div class="ajuda">Conta de luz, aluguel, contrato: cadastre uma vez e o sistema cria a ' +
+            'previsão de todo mês, no mesmo dia do primeiro vencimento, até a data que você colocar ' +
+            'aqui — 31/12/2027, o fim do contrato, o que for. Mês sem o dia (31 em fevereiro) usa o ' +
+            'último dia do mês. Depois dá para ajustar o valor de um mês só ou replicar o novo valor ' +
+            'para os seguintes.</div>'),
       acoes: [{ txt: pv ? 'Salvar' : 'Incluir', cls: 'btn-aprovar', fn: function () {
-        const rep = U.el('pd-repetir') ? parseInt(U.val('pd-repetir'), 10) : 1;
+        const ate = U.el('pd-ate') ? U.val('pd-ate') : '';
         const nomeCr = U.val('pd-credor');
         const cr = nomeCr ? D.credores.find(function (x) {
           return x.nome.toUpperCase() === nomeCr.toUpperCase(); }) : null;
         if (nomeCr && !cr) return ERP.app.aviso('Fornecedor "' + nomeCr +
           '" não está cadastrado. Deixe em branco ou cadastre em Cadastros › Fornecedores.', 'erro');
+        /* A COMPETÊNCIA SAI DA DATA, não do mês aberto na tela.
+           Era o mês do seletor, então um contrato que começou em
+           agosto, cadastrado em outubro, nascia como competência de
+           outubro com data de agosto — competência e vencimento
+           contando histórias diferentes. */
+        const data = U.val('pd-data');
         const r = S.salvarPrevisaoDespesa({
+          id: pv ? pv.id : null,
           credor: cr ? cr.id : null,
-          conta: U.val('pd-conta'), centro: U.val('pd-centro'), competencia: comp,
-          valor: U.parseValor(U.val('pd-valor')), data: U.val('pd-data'),
-          descricao: U.val('pd-desc'), serie: pv ? pv.serie : null, repetir: rep
+          conta: U.val('pd-conta'), centro: U.val('pd-centro'),
+          competencia: (data || '').slice(0, 7) || comp,
+          valor: U.parseValor(U.val('pd-valor')), data: data,
+          descricao: U.val('pd-desc'), serie: pv ? pv.serie : null,
+          ate: ate || null
         });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
+        /* Diz ONDE caiu. Cadastrando com primeiro vencimento em
+           agosto enquanto a tela mostra outubro, a linha não
+           aparece na lista aberta — e sem esta frase a pessoa
+           conclui que não salvou e cadastra de novo. */
         ERP.app.aviso(r.n > 1
-          ? 'Despesa recorrente criada em ' + r.n + ' meses, a partir de ' + U.fComp(comp) + '.'
-          : 'Despesa prevista salva.', 'ok');
+          ? r.n + ' parcelas previstas, de ' + U.fData(r.de) + ' a ' + U.fData(r.ate) + '.'
+          : 'Despesa prevista salva em ' + U.fComp((data || comp).slice(0, 7)) + '.', 'ok');
+        if (data && data.slice(0, 7) !== comp) U.setVal('pd-comp', data.slice(0, 7));
         renderDespesas();
       } }]
     });
