@@ -13903,26 +13903,83 @@ ERP.store = (function () {
     if (!pode('lancar')) return { erro: 'Seu perfil não altera previsões de despesa.' };
     if (!d.conta) return { erro: 'Escolha a natureza.' };
     if (!d.competencia) return { erro: 'Informe a competência.' };
-    const repetir = Math.max(1, Math.min(36, parseInt(d.repetir, 10) || 1));
+    /* ── ATÉ QUANDO, EM VEZ DE QUANTAS VEZES ─────────────
+       A previsão era criada por contagem — 3, 6, 12, 24 meses —,
+       escolhida numa lista fechada. Quem quer prever "até o fim de
+       2027" tinha de contar os meses de cabeça e torcer para a
+       conta fechar, e qualquer prazo fora da lista não existia.
+
+       Agora o fim é uma DATA. `repetir` continua aceito para não
+       quebrar o que já chama esta função com contagem (o botão de
+       copiar o mês anterior, por exemplo), mas `ate` manda quando
+       vem: a série vai do primeiro vencimento até o último mês que
+       couber dentro dessa data.
+
+       O DIA É O DO PRIMEIRO VENCIMENTO, e `U.addMeses` encurta
+       sozinho no mês curto — dia 31 vira 28 ou 29 em fevereiro, em
+       vez de escorregar para março. */
+    let repetir = Math.max(1, Math.min(360, parseInt(d.repetir, 10) || 1));
+    if (d.ate) {
+      const primeiro = String(d.data || (d.competencia + '-10'));
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(String(d.ate))) {
+        return { erro: 'Data final da previsão inválida.' };
+      }
+      if (String(d.ate) < primeiro) {
+        return { erro: 'A previsão termina em ' + U.fData(d.ate) + ', antes do primeiro vencimento (' +
+          U.fData(primeiro) + '). Escolha uma data final igual ou posterior.' };
+      }
+      /* Conta os meses contidos entre as duas datas, pelo dia do
+         primeiro vencimento — e não pela diferença de competência,
+         que contaria um mês a mais quando o dia do vencimento cai
+         depois da data final. */
+      let n = 1;
+      while (n < 360 && U.addMeses(primeiro, n) <= String(d.ate)) n++;
+      repetir = n;
+      if (repetir >= 360) {
+        return { erro: 'Esse período passa de 30 anos. Escolha uma data final mais perto.' };
+      }
+    }
     if (repetir > 1) {
       const serie = d.serie || novoId('sr');
-      const dia = String(d.data || (d.competencia + '-10')).slice(-2);
+      const primeiro = String(d.data || (d.competencia + '-10'));
       let n = 0;
       for (let i = 0; i < repetir; i++) {
-        const comp = U.compDe(U.addMeses(d.competencia + '-01', i));
+        const data = U.addMeses(primeiro, i);
         const r = salvarPrevisaoDespesa(Object.assign({}, d, {
-          competencia: comp, data: comp + '-' + dia, repetir: 1, serie: serie
+          competencia: data.slice(0, 7), data: data, repetir: 1, ate: null, serie: serie
         }));
         if (r.ok) n++;
       }
       logar('previsao', serie, 'criou despesa recorrente',
-        (D.conta(d.conta) || {}).nome + ' · ' + U.brl(d.valor || 0) + ' × ' + n + ' meses');
-      return { ok: true, n: n, serie: serie };
+        (D.conta(d.conta) || {}).nome + ' · ' + U.brl(d.valor || 0) + ' × ' + n + ' meses · ' +
+        U.fData(primeiro) + (d.ate ? ' até ' + U.fData(d.ate) : ''));
+      return { ok: true, n: n, serie: serie,
+        de: primeiro, ate: U.addMeses(primeiro, repetir - 1) };
     }
-    const achado = st.previsoes.find(function (p) {
+    /* ── QUAL LINHA ESTA GRAVAÇÃO SUBSTITUI ──────────────
+       A chave era natureza + centro + competência, e só. Duas
+       despesas diferentes da mesma natureza no mesmo centro e no
+       mesmo mês — dois aluguéis, dois contratos de TI — eram a
+       MESMA linha: a segunda apagava a primeira, sem erro e sem
+       aviso. Quem cadastra em lote só descobria conferindo um a
+       um, depois.
+
+       Agora: editando, manda o id (a tela sabe qual linha abriu),
+       e aí a descrição pode mudar à vontade. Criando, a descrição
+       entra na chave — mesma descrição atualiza (é o que o botão
+       de copiar o mês anterior precisa, para não duplicar a cada
+       clique), descrição diferente cria linha nova. */
+    const mesmaCoisa = function (p) {
       return p.tipo === 'despesa' && p.conta === d.conta &&
-             p.centro === (d.centro || null) && p.competencia === d.competencia;
-    });
+        p.centro === (d.centro || null) && p.competencia === d.competencia;
+    };
+    const achado = d.id
+      ? st.previsoes.find(function (p) { return p.id === d.id; })
+      : st.previsoes.find(function (p) {
+          return mesmaCoisa(p) &&
+            String(p.descricao || '').trim().toUpperCase() ===
+            String(d.descricao || '').trim().toUpperCase();
+        });
     const alvo = achado || {
       id: novoId('pd'), tipo: 'despesa', conta: d.conta,
       centro: d.centro || null, competencia: d.competencia, status: 'estimada'

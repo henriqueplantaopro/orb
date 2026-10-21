@@ -10700,6 +10700,36 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /return !fl\.cancelada &&/.test(sto), '');
   verificar('v129 — e a correcao com folha fechada vai para a trilha',
     /mudou a data de admissão com folha já fechada/.test(sto), '');
+
+  /* ── v130 · despesa prevista: inicio livre e fim por data ──
+     Ele vai cadastrar em lote tudo o que ja esta contratado, ate
+     o fim de 2027 — inclusive contrato que comecou meses atras. */
+  const pvU = fsE.readFileSync(__dirname + '/js/ui-previsoes.js', 'utf8');
+  verificar('v130 — a previsao termina numa DATA, nao numa contagem',
+    /if \(d\.ate\)/.test(sto) &&
+    /while \(n < 360 && U\.addMeses\(primeiro, n\) <= String\(d\.ate\)\) n\+\+;/.test(sto), '');
+  verificar('v130 — e a tela pede essa data em vez da lista fechada',
+    /id="pd-ate"/.test(pvU) && !/'24 meses'/.test(pvU), '');
+  verificar('v130 — o primeiro vencimento manda na data de cada parcela',
+    /const data = U\.addMeses\(primeiro, i\);/.test(sto) &&
+    /competencia: data\.slice\(0, 7\), data: data/.test(sto), '');
+  verificar('v130 — e a competencia da tela tambem sai da data',
+    /competencia: \(data \|\| ''\)\.slice\(0, 7\) \|\| comp,/.test(pvU), '');
+  /* A TRAVA QUE MAIS IMPORTA NESTA VERSAO: a chave antiga era
+     natureza + centro + competencia, e duas despesas diferentes do
+     mesmo mes eram a MESMA linha — a segunda apagava a primeira
+     sem erro e sem aviso. Em cadastro de lote isso come entrada. */
+  verificar('v130 — gravar uma despesa nao apaga outra do mesmo mes e natureza',
+    /const mesmaCoisa = function \(p\)/.test(sto) &&
+    /String\(p\.descricao \|\| ''\)\.trim\(\)\.toUpperCase\(\) ===/.test(sto), '');
+  verificar('v130 — e editando pelo id a descricao pode mudar',
+    /const achado = d\.id\s*\?\s*st\.previsoes\.find/.test(sto) &&
+    /id: pv \? pv\.id : null,/.test(pvU), '');
+  verificar('v130 — data final antes do primeiro vencimento e recusada',
+    /antes do primeiro vencimento/.test(sto), '');
+  verificar('v130 — e a tela diz em que mes a previsao caiu',
+    /Despesa prevista salva em/.test(pvU) &&
+    /U\.setVal\('pd-comp', data\.slice\(0, 7\)\)/.test(pvU), '');
 })();
 
 concluir();
