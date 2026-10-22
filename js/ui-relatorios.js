@@ -90,8 +90,26 @@ ERP.relatorios = (function () {
      esses três leem o mundo. */
   const compIni = () => U.compDe(per.de);
   const compFim = () => U.compDe(per.ate);
+  /* PREVISÃO NÃO É FATO (v133).
+
+     Os três relatórios que leem daqui — DRE por competência, Total
+     por centro de custo e Resultado por projeto — respondem "o que
+     aconteceu". Previsão de despesa, porém, cria parcela DE VERDADE
+     em `st.parcelas`, com status 'previsto', e `todasParcelas` não
+     filtra status nenhum: o aluguel previsto até 2027 entrava no
+     resultado como se já fosse custo incorrido, inflando o custo de
+     todo centro e de todo projeto que tivesse previsão lançada.
+
+     O DRE gerencial já se defendia sozinho (`dre-gerencial.js`:
+     "Previsão não é fato: entra no fluxo de caixa projetado, não no
+     resultado"). Os outros três não — e divergiam dele, cada um
+     dando um número diferente para a mesma pergunta.
+
+     Previsão continua inteira nos relatórios de CAIXA, que é onde
+     ela responde alguma coisa. */
   const validas = () => S.todasParcelas().filter(function (p) {
-    return p.status !== 'cancelado' && (p.comp || '') >= compIni() && (p.comp || '') <= compFim();
+    return p.status !== 'cancelado' && p.status !== 'previsto' &&
+      (p.comp || '') >= compIni() && (p.comp || '') <= compFim();
   });
 
   /* ── relatórios do financeiro por período ───────────────
@@ -694,8 +712,17 @@ ERP.relatorios = (function () {
     });
   }
 
+  /* A SITUAÇÃO EM COLUNA PRÓPRIA (v133).
+     Antes, "previsto" era uma linha miúda escondida dentro da célula
+     de Forma PG — invisível na tela e perdida na exportação, onde
+     virava parte do texto da forma de pagamento. Quem lê um
+     relatório de contas a pagar e a receber precisa saber, por
+     linha, o que é compromisso firmado e o que é estimativa. */
+  const situacaoDaLinha = l => (l.previsto ? 'Previsto' : 'Confirmado');
+
   const COLS_PREVISTO = [
     { titulo: 'Tipo', largura: 10, valor: l => l.tipo },
+    { titulo: 'Situação', largura: 12, valor: situacaoDaLinha },
     { titulo: 'Mov.', largura: 7, valor: l => l.mov },
     { titulo: 'Documento', largura: 16, valor: l => l.documento },
     { titulo: 'Forma PG', largura: 16, valor: l => l.forma },
@@ -865,19 +892,26 @@ ERP.relatorios = (function () {
       '</div>' +
       (r.saldo_final < 0 ? '<div class="ajuda erro">O saldo projetado fica negativo dentro do período — ' +
         'olhe a coluna Saldo para ver em que dia isso acontece.</div>' : '') +
-      '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-apr"><thead><tr>' +
         COLS_PREVISTO.map(function (c) {
           return '<th' + (c.tipo === 'numero' ? ' class="num"' : '') + '>' + c.titulo + '</th>';
         }).join('') + '</tr></thead><tbody>' +
         /* A primeira linha é o saldo de partida, como na planilha do
            financeiro — sem ela a coluna Saldo não faz sentido. */
-        '<tr><td>Saldo</td><td>Sim</td><td colspan="8" class="sub">saldo bancário em ' + U.fData(U.hoje()) + '</td>' +
+        '<tr><td>Saldo</td><td class="sub">—</td><td>Sim</td><td colspan="8" class="sub">saldo bancário em ' + U.fData(U.hoje()) + '</td>' +
           '<td class="num">—</td><td class="num"><b>' + U.brl(r.saldo_banco) + '</b></td></tr>' +
         (r.linhas.length ? r.linhas.map(function (l) {
           return '<tr' + (l.saldo < 0 ? ' style="background:#fff4f2"' : '') + '>' +
-            '<td>' + l.tipo + '</td><td class="sub">' + l.mov + '</td>' +
+            '<td>' + l.tipo + '</td>' +
+            /* Texto puro, sem selo: o selo tem recheio e borda, e com
+               treze colunas ele empurrava a tabela 416px para fora da
+               caixa — e esta tela não rola de lado. A cor distingue o
+               bastante. */
+            '<td class="sub"' + (l.previsto ? ' style="color:var(--laranja,#b45309)"' : '') + '>' +
+              situacaoDaLinha(l) + '</td>' +
+            '<td class="sub">' + l.mov + '</td>' +
             '<td class="mono">' + U.esc(l.documento || '—') + '</td>' +
-            '<td class="sub">' + U.esc(l.forma) + (l.previsto ? '<div class="sub">previsto</div>' : '') + '</td>' +
+            '<td class="sub">' + U.esc(l.forma) + '</td>' +
             '<td class="desc">' + U.esc(l.contraparte) + '</td>' +
             '<td class="desc">' + U.esc(l.descricao) + '</td>' +
             '<td class="mono sub">' + U.esc(l.competencia) + '</td>' +
@@ -887,8 +921,12 @@ ERP.relatorios = (function () {
             '<td class="num">' + U.brl(l.valor) + '</td>' +
             '<td class="num' + (l.saldo < 0 ? ' erro' : '') + '">' + U.brl(l.saldo) + '</td></tr>';
         }).join('')
-          : '<tr><td colspan="12" class="vazio"><strong>Nada vencendo neste período.</strong></td></tr>') +
-      '</tbody></table></div>';
+          : '<tr><td colspan="13" class="vazio"><strong>Nada vencendo neste período.</strong></td></tr>') +
+      '</tbody></table></div>' +
+      '<div class="ajuda"><b>Confirmado</b> é título lançado: nota, contrato ou folha fechada. ' +
+      '<b>Previsto</b> ainda não existe como título — é a previsão de despesa, a previsão de folha ' +
+      'e a previsão de faturamento dos projetos. Os dois entram no saldo projetado, porque os dois ' +
+      'vão mexer no caixa; a coluna Situação diz qual é qual.</div>';
   }
 
   function pagasRecebidas() {
@@ -1640,12 +1678,21 @@ ERP.relatorios = (function () {
        a faturar. Então a previsão só entra no fluxo enquanto não há
        realizado para aquele projeto e competência. O mesmo vale para o
        repasse: fechamento importado substitui a estimativa. */
-    S.previsoes().forEach(function (pv) {
-      if (!dentro(pv.data)) return;
-      const res = S.residuoPrevisao(pv);
-      if (res.faturamento) bota(entP, U.compDe(pv.data), res.faturamento);
-      if (res.produtividade) bota(saiP, U.compDe(pv.data), res.produtividade);
-    });
+    /* UM GERADOR SÓ (v133). Este relatório percorria apenas
+       `S.previsoes()` — o que alguém salvou — enquanto o exportador
+       do fluxo completo percorria todos os projetos ativos, caindo
+       na estimativa do cadastro onde não houvesse linha salva. Os
+       dois relatórios de fluxo davam números diferentes para o mesmo
+       projeto no mesmo dia. Agora leem da mesma regra.
+
+       A janela vai em competências, e `previsoesDeProjeto` sabe que
+       mês passado sem previsão salva não ganha estimativa inventada. */
+    S.previsoesDeProjeto({ de: U.compDe(per.de), ate: U.compDe(per.ate) })
+      .forEach(function (pr) {
+        if (!dentro(pr.data)) return;
+        if (pr.faturamento) bota(entP, U.compDe(pr.data), pr.faturamento);
+        if (pr.produtividade) bota(saiP, U.compDe(pr.data), pr.produtividade);
+      });
     S.previsoesDespesa().forEach(function (pv) {
       if (!dentro(pv.data)) return;
       const res = S.residuoDespesa(pv);

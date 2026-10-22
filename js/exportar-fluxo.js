@@ -134,32 +134,27 @@ ERP.exportarFluxo = (function () {
         origem: 'A receber' });
     });
 
-    const projetos = D.centros.filter(function (c) { return c.ativo && c.tipo === 'projeto'; });
-    const base = U.mesAtual();
-    for (let i = 0; i < (mesesFrente || 6); i++) {
-      const comp = U.compDe(U.addMeses(base + '-01', i));
-      projetos.forEach(function (c) {
-        const salva = S.previsaoDe(c.id, comp);
-        // salva: entra o resíduo (previsto − faturado), e nada se encerrada
-        const base = salva || { centro: c.id, competencia: comp, status: 'estimada',
-          faturamento: c.prev_faturamento || 0, produtividade: c.prev_repasse || 0 };
-        const res = S.residuoPrevisao(base);
-        const fat = res.faturamento, rep = res.produtividade;
-        if (!fat && !rep) return;
-        const data = salva ? salva.data : S.dataPrevista(comp, S.prazoDe(c.id, null).dias);
-        if (fat) {
-          L.push({ data: data, desc: c.curto + ' — faturamento previsto ' + U.fComp(comp),
-            entrada: n2(fat), saida: 0, pagar: '', grupo: grupoReceita(c),
-            sub: c.curto, projeto: c.curto, fornecedor: '', origem: 'Previsão' });
-        }
-        if (rep) {
-          L.push({ data: data, desc: 'Repasse produção — ' + c.curto + ' ' + U.fComp(comp),
-            entrada: 0, saida: n2(rep), pagar: 'S',
-            grupo: 'Custos diretos - Serviços médicos', sub: c.curto,
-            projeto: c.curto, fornecedor: '', origem: 'Previsão' });
-        }
-      });
-    }
+    /* A MESMA REGRA QUE A TELA (v133). Este laço era a segunda
+       implementação da previsão por projeto; a outra vivia no
+       relatório "Fluxo de caixa" da tela e dava outro número, porque
+       só olhava o que estava salvo. Agora os dois chamam
+       `S.previsoesDeProjeto`, que é onde a regra mora. */
+    S.previsoesDeProjeto({ meses: mesesFrente || 6 }).forEach(function (pr) {
+      const c = D.centro(pr.centro) || {};
+      const fat = pr.faturamento, rep = pr.produtividade;
+      const data = pr.data, comp = pr.competencia;
+      if (fat) {
+        L.push({ data: data, desc: c.curto + ' — faturamento previsto ' + U.fComp(comp),
+          entrada: n2(fat), saida: 0, pagar: '', grupo: grupoReceita(c),
+          sub: c.curto, projeto: c.curto, fornecedor: '', origem: 'Previsão' });
+      }
+      if (rep) {
+        L.push({ data: data, desc: 'Repasse produção — ' + c.curto + ' ' + U.fComp(comp),
+          entrada: 0, saida: n2(rep), pagar: 'S',
+          grupo: 'Custos diretos - Serviços médicos', sub: c.curto,
+          projeto: c.curto, fornecedor: '', origem: 'Previsão' });
+      }
+    });
     // despesas previstas que ainda não viraram título
     S.previsoesDespesa().forEach(function (pv) {
       const resto = S.residuoDespesa(pv);

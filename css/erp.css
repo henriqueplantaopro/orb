@@ -1158,3 +1158,17 @@ label:has(> input[type="radio"]) {
 .hb-marca { font-weight: 400; font-size: 12px; display: inline-flex; gap: 5px;
   align-items: center; white-space: nowrap; }
 .hb-marca input { width: auto; }
+
+/* ── Contas a pagar e a receber: treze colunas em 1280px ──
+   Com a coluna Situação (v133) a tabela passou a querer 1619px numa
+   caixa de 1214, e esta tela nao rola de lado. O espaco estava em
+   Fornecedor (420px) e Descricao (346px), que esticavam ate o teto
+   de `td.desc` por causa de um nome comprido.
+
+   Eles QUEBRAM LINHA em vez de cortar com reticencias: este
+   relatorio e impresso, e no papel nao existe passar o mouse para
+   ver o resto. Linha mais alta e melhor que dado escondido. */
+table.tab-apr td.desc{
+  max-width:170px; white-space:normal; word-break:break-word;
+  overflow:visible; text-overflow:clip;
+}
