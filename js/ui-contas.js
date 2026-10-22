@@ -393,6 +393,7 @@ ERP.contas = (function () {
       barra.style.display = 'none';
     }
 
+    renderValesBaixados();
     const tb = U.el('tbody-contas');
     if (!lista.length) {
       tb.innerHTML = '<tr><td colspan="11" class="vazio"><strong>Nada com esses filtros.</strong>' +
@@ -584,8 +585,81 @@ ERP.contas = (function () {
         ({ aprovar: aprovarUma, reprovar: abrirReprovar, pagar: abrirBaixa,
            autorizar: autorizarUm, desfazer: desfazerSolicitacao,
            editar: abrirEditar, efetivar: abrirEfetivar,
-           cancelar: abrirCancelar, ver: abrirDetalhe, nf: abrirNF })[acao](id);
+           cancelar: abrirCancelar, ver: abrirDetalhe, nf: abrirNF,
+           'baixar-vale': abrirBaixarVale })[acao](id);
       });
+    });
+  }
+
+  /* ── O QUE FOI BAIXADO, E COMO VOLTAR ────────────────
+     O botão "Já lancei" tira a linha e ela não volta sozinha. Sem
+     um lugar para ver o que foi baixado, um clique errado vira um
+     buraco silencioso no fluxo que ninguém acha depois. */
+  function renderValesBaixados() {
+    const caixa = U.el('cp-vales-baixados');
+    if (!caixa) return;
+    const lista = (S.st.vales_baixados || []).slice()
+      .sort(function (a, b) { return String(b.competencia).localeCompare(String(a.competencia)); });
+    if (!lista.length || abaContas === 'pagas') { caixa.innerHTML = ''; return; }
+    const podeMexer = S.pode('lancar');
+    caixa.innerHTML =
+      '<div class="card" style="margin-top:12px">' +
+      '<h2 style="font-size:14px">Previsões de vale baixadas' +
+        '<span class="sub">meses que você marcou como já lançados</span></h2>' +
+      '<div class="ajuda">Estes meses não entram mais na previsão do contas a pagar. ' +
+        'Desfazendo, a previsão volta na hora.</div>' +
+      '<table class="parcelas"><thead><tr><th>Competência</th><th>Benefício</th>' +
+        '<th>Observação</th><th>Quem baixou</th><th></th></tr></thead><tbody>' +
+      lista.map(function (v) {
+        return '<tr><td class="mono">' + U.fComp(v.competencia) + '</td>' +
+          '<td>' + (v.beneficio === 'vt' ? 'Vale-transporte' : 'Vale-refeição') + '</td>' +
+          '<td>' + U.esc(v.observacao || '—') + '</td>' +
+          '<td class="sub">' + U.esc(v.baixado_por || '—') +
+            (v.baixado_em ? ' · ' + U.fData(String(v.baixado_em).slice(0, 10)) : '') + '</td>' +
+          '<td>' + (podeMexer
+            ? '<button class="btn-sm" data-reativar="' + U.esc(v.beneficio + ':' + v.competencia) +
+              '">Desfazer</button>'
+            : '') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+    caixa.querySelectorAll('[data-reativar]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const partes = this.dataset.reativar.split(':');
+        const r = S.reativarVale(partes[0], partes[1]);
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.aviso('Previsão de ' + (partes[0] === 'vt' ? 'vale-transporte' : 'vale-refeição') +
+          ' de ' + U.fComp(partes[1]) + ' voltou para o contas a pagar.', 'ok');
+        render();
+      });
+    });
+  }
+
+  /* ── "JÁ LANCEI": a baixa da previsão de vale ────────
+     Confirma antes de agir, porque a linha some da tela e a
+     pessoa precisa saber que dá para desfazer e onde. */
+  function abrirBaixarVale(chave) {
+    const partes = String(chave).split(':');
+    const ben = partes[0], comp = partes[1];
+    const nome = ben === 'vt' ? 'vale-transporte' : 'vale-refeição';
+    ERP.app.modal({
+      titulo: 'Baixar a previsão de ' + nome,
+      corpo:
+        '<div class="ajuda">A previsão de <b>' + U.esc(nome) + '</b> de <b>' +
+          U.fComp(comp) + '</b> sai do contas a pagar e não volta — nem ' +
+          'depois de recarregar. Use quando os boletos das operadoras já ' +
+          'estiverem lançados, ou quando a despesa já tiver sido paga.</div>' +
+        '<div class="ajuda">Os títulos que você lançar continuam onde estão: ' +
+          'esta baixa só tira a <i>estimativa</i>, para o mês não contar duas ' +
+          'vezes. Dá para desfazer na lista logo abaixo da tabela.</div>' +
+        '<label>Observação <span class="sub">(opcional — ex.: "3 boletos Rio Card + 1 SP")</span></label>' +
+        '<input id="bv-obs" placeholder="o que foi lançado no lugar">',
+      acoes: [{ txt: 'Baixar a previsão', cls: 'btn-aprovar', fn: function () {
+        const r = S.baixarVale(ben, comp, U.val('bv-obs'));
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        ERP.app.aviso('Previsão de ' + nome + ' de ' + U.fComp(comp) +
+          ' baixada. Para voltar atrás, use a lista abaixo da tabela.', 'ok');
+        render();
+      } }]
     });
   }
 
@@ -600,7 +674,22 @@ ERP.contas = (function () {
        quando a folha do mês fecha, substituída pelos títulos de
        verdade. Quem quiser mudar o número muda o cadastro do
        funcionário, que é de onde ele vem. */
-    if (p.previsao) return '<span class="sub">sai no fechamento</span>';
+    /* PREVISAO DE FOLHA: um botao so, e so no vale.
+
+       Salario, FGTS e guias saem sozinhos quando a folha fecha —
+       nao ha o que clicar. O vale e outra histaria: ele nao nasce
+       do fechamento, nasce de um boleto da operadora que chega
+       depois, e que as vezes sao tres (o VT vem por regiao). Como
+       o sistema nao tem como saber quais titulos avulsos sao o
+       vale daquele mes, quem diz e quem lancou. */
+    if (p.previsao) {
+      const ben = /transporte/i.test(p.descricao) ? 'vt'
+                : /refei/i.test(p.descricao) ? 'vr' : null;
+      if (ben && S.pode('lancar')) {
+        return btn('Já lancei', 'btn-aprovar', 'baixar-vale', ben + ':' + p.comp);
+      }
+      return '<span class="sub">sai no fechamento</span>';
+    }
     trava = trava || S.impedimentos(p);
     if (p.status !== 'cancelado') {
       if (p.status === 'aguardando') {

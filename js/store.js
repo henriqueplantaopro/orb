@@ -43,6 +43,20 @@ ERP.store = (function () {
     get centros() { return D.centros; },
     get clientes() { return D.clientes; },
     get bancos() { return D.bancos; },
+    /* VALES BAIXADOS — a previsao de vale que ja foi resolvida.
+
+       O vale nao e pago ao funcionario, e sim a operadora do
+       cartao, e o boleto nao obedece ao desenho do sistema: o
+       vale-transporte vem em VARIOS boletos (um por regiao, de
+       operadoras diferentes) e o vale-refeicao vem num so. Nao ha
+       como o sistema adivinhar que aqueles tres titulos avulsos
+       sao o VT daquele mes.
+
+       Entao quem diz e a pessoa: um botao na linha da previsao,
+       e a baixa fica gravada aqui — beneficio + competencia, com
+       quem baixou e quando. Linha baixada nao volta a ser
+       prevista, nem depois de recarregar, que e o ponto. */
+    vales_baixados: [],
     titulos: [],
     parcelas: [],
     pagamentos: [],
@@ -5667,11 +5681,20 @@ ERP.store = (function () {
     for (let i = 0; i < meses; i++) {
       const comp = U.compDe(U.addMeses(base, i));
 
-      /* Folha fechada e viva: o real ja esta no fluxo. */
+      /* FOLHA FECHADA: o real ja esta no fluxo — MENOS O VALE.
+
+         O fechamento cria titulo de salario, FGTS, INSS patronal e
+         retidos. Nao cria titulo de vale: o vale e pago a
+         operadora do cartao, contra boleto que chega depois e que
+         nem sempre e um so. Pulando a competencia inteira aqui, o
+         vale previsto sumia junto e nada entrava no lugar — o
+         contas a pagar encolhia na hora do fechamento.
+
+         Entao a competencia fechada segue adiante com UMA regra:
+         so o vale e previsto. O resto ja virou titulo. */
       const temFechada = (st.folhas || []).some(function (fl) {
         return fl.competencia === comp && !fl.cancelada;
       });
-      if (temFechada) continue;
 
       const ativos = funcionariosDaFolha(comp);
       if (!ativos.length) continue;
@@ -5709,10 +5732,10 @@ ERP.store = (function () {
           pessoas: ativos.length });
       };
 
-      poe(liquido, dt.vencLiquido, 'Folha — líquido', '4.01');
-      poe(fgts, dt.vencEncargos, 'FGTS', '4.03');
-      poe(patronalAPagar, dt.vencEncargos, 'INSS patronal + RAT/FAP + terceiros', '4.03');
-      poe(retido, dt.vencEncargos, 'INSS e IRRF retidos', '4.03');
+      if (!temFechada) poe(liquido, dt.vencLiquido, 'Folha — líquido', '4.01');
+      if (!temFechada) poe(fgts, dt.vencEncargos, 'FGTS', '4.03');
+      if (!temFechada) poe(patronalAPagar, dt.vencEncargos, 'INSS patronal + RAT/FAP + terceiros', '4.03');
+      if (!temFechada) poe(retido, dt.vencEncargos, 'INSS e IRRF retidos', '4.03');
 
       /* ── O VALE TEM DONO, E SAO DOIS ────────────────────
          O beneficio nao e pago ao funcionario: e pago a operadora
@@ -5764,12 +5787,25 @@ ERP.store = (function () {
       const credorVR = st.parametros.credor_vr || '';
       const diaDoVale = antecipaSeFimDeSemana(comp + '-01');
 
-      if (!jaLancado(credorVT)) {
+      /* DUAS MANEIRAS DE A PREVISAO DO VALE SAIR DE CENA:
+
+         1. BAIXA MANUAL. O boleto do vale nao obedece ao desenho do
+            sistema — o VT vem em varios, de operadoras diferentes
+            por regiao, e nenhum deles casa com um fornecedor so.
+            Entao quem diz que aquele mes esta resolvido e a
+            pessoa, pelo botao na linha. E o unico jeito honesto:
+            adivinhar qual titulo avulso e o vale daria falso
+            positivo, e falso positivo aqui some com despesa.
+
+         2. NOTA DA OPERADORA CADASTRADA. Quando o beneficio tem
+            uma operadora so — o caso do VR — basta lancar a nota
+            dela que a previsao sai sozinha, sem clique nenhum. */
+      if (!valeBaixado('vt', comp) && !jaLancado(credorVT)) {
         poe(vtEmpresa, diaDoVale,
           'Vale-transporte' + (nomeCredor(credorVT) ? ' — ' + nomeCredor(credorVT) : ''),
           '4.02', credorVT);
       }
-      if (!jaLancado(credorVR)) {
+      if (!valeBaixado('vr', comp) && !jaLancado(credorVR)) {
         poe(vrEmpresa, diaDoVale,
           'Vale-refeição' + (nomeCredor(credorVR) ? ' — ' + nomeCredor(credorVR) : ''),
           '4.02', credorVR);
@@ -11729,6 +11765,50 @@ ERP.store = (function () {
   /* ── administração ──────────────────────────────────────*/
   const parametros = () => st.parametros;
 
+  /* ── A PREVISAO DE VALE QUE JA FOI RESOLVIDA ─────────
+     `baixarVale` marca que o VT (ou o VR) daquela competencia nao
+     precisa mais ser previsto: os boletos ja foram lancados, ou a
+     despesa ja foi paga. `reativarVale` desfaz, porque clicar no
+     lugar errado acontece e sem volta a pessoa fica presa. */
+  function valeBaixado(beneficio, competencia) {
+    return (st.vales_baixados || []).find(function (v) {
+      return v.beneficio === beneficio && v.competencia === competencia;
+    }) || null;
+  }
+
+  function baixarVale(beneficio, competencia, observacao) {
+    if (!pode('lancar')) return { erro: 'Seu perfil não baixa previsão.' };
+    if (beneficio !== 'vt' && beneficio !== 'vr') {
+      return { erro: 'Benefício inválido (' + JSON.stringify(beneficio) + ').' };
+    }
+    if (!/^\d{4}-\d{2}$/.test(String(competencia || ''))) {
+      return { erro: 'Competência inválida.' };
+    }
+    const jaTem = valeBaixado(beneficio, competencia);
+    if (jaTem) return { ok: true, baixa: jaTem, jaEstava: true };
+    const nome = beneficio === 'vt' ? 'vale-transporte' : 'vale-refeição';
+    const baixa = {
+      id: novoId('vb'), beneficio: beneficio, competencia: competencia,
+      observacao: observacao || '',
+      baixado_por: usuario().nome, baixado_por_id: (usuario() || {}).id || null,
+      baixado_em: new Date()
+    };
+    st.vales_baixados.push(baixa);
+    logar('previsao', baixa.id, 'baixou a previsão de ' + nome,
+      U.fComp(competencia) + (observacao ? ' · ' + observacao : ''));
+    return { ok: true, baixa: baixa };
+  }
+
+  function reativarVale(beneficio, competencia) {
+    if (!pode('lancar')) return { erro: 'Seu perfil não altera previsão.' };
+    const achado = valeBaixado(beneficio, competencia);
+    if (!achado) return { erro: 'Essa previsão não está baixada.' };
+    st.vales_baixados = st.vales_baixados.filter(function (v) { return v.id !== achado.id; });
+    logar('previsao', achado.id, 'reativou a previsão de ' +
+      (beneficio === 'vt' ? 'vale-transporte' : 'vale-refeição'), U.fComp(competencia));
+    return { ok: true };
+  }
+
   function salvarParametros(d) {
     if (!pode('admin')) return { erro: 'Só o perfil de administração altera parâmetros.' };
     const p = st.parametros;
@@ -16079,14 +16159,26 @@ ERP.store = (function () {
        aliviaria. */
 
     /* TRAVA 2: competencia que ja tem titulo de folha no contas a
-       pagar nao e prevista de novo. */
+       pagar nao e prevista de novo.
+
+       MAS O VALE NAO, e isto e uma correcao de um defeito que eu
+       mesmo criei na v128. O fechamento da folha gera salario,
+       FGTS, INSS patronal e retidos — e NAO gera titulo de vale.
+       Derrubando a competencia inteira, o vale previsto sumia e
+       nada entrava no lugar: o contas a pagar encolhia na hora do
+       fechamento, subestimando o caixa em milhares de reais por
+       mes, justo na tela usada para decidir pagamento.
+
+       O vale so sai por baixa manual ou pela nota da operadora,
+       que sao as duas travas de dentro de `previsaoFolha`. */
     const jaTemTitulo = {};
     st.parcelas.forEach(function (p) {
       if (p.origem === 'folha' && p.status !== 'cancelado') jaTemTitulo[p.comp] = true;
     });
+    const ehVale = function (pf) { return pf.natureza === '4.02'; };
 
     return previsaoFolha().filter(function (pf) {
-      return !jaTemTitulo[pf.competencia];
+      return ehVale(pf) || !jaTemTitulo[pf.competencia];
     }).map(function (pf) {
       return {
         /* Id estavel e reconhecivel: estavel para a tela nao piscar
@@ -18088,6 +18180,7 @@ ERP.store = (function () {
   }
 
   return {
+    valeBaixado, baixarVale, reativarVale,
     st, init, usuario, setUsuario, pode, acesso, acessoDoPerfil, podeMover, veFinanceiro,
     matrizAcesso: matriz, salvarMatrizAcesso, visivel, ehFeriado, quintoDiaUtil, conciliarVarios, gruposQueFecham, descricaoVisivel, nomeCredorVisivel, obsVisivel, tituloSigiloso,
     /* Cadastros são gravados direto pela tela (não passam por uma

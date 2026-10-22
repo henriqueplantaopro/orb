@@ -39,7 +39,12 @@ ERP.dadosRemoto = (function () {
     { tabela: 'armazens', destino: 'armazens', ordem: 'id' },
     { tabela: 'bancos', destino: 'bancos', ordem: 'id' },
     { tabela: 'credores', destino: 'credores', ordem: 'id' },
-    { tabela: 'cargos', destino: 'cargos', ordem: 'id' }
+    { tabela: 'cargos', destino: 'cargos', ordem: 'id' },
+    /* A baixa da previsao de vale. Pequena e rara, mas TEM de vir
+       do banco: baixa que vive so na memoria volta a aparecer no
+       proximo login, e a pessoa baixa de novo todo dia sem
+       entender por que nao fica. */
+    { tabela: 'vales_baixados', destino: 'vales_baixados', ordem: 'id' }
   ];
 
   /* FUNCIONÁRIOS é cadastro, e vai à parte porque a FONTE depende

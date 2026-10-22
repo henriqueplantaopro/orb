@@ -10537,9 +10537,16 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /function datasDaFolha/.test(sto) &&
     /const dt = datasDaFolha\(competencia\);/.test(sto) &&
     /const dt = datasDaFolha\(comp\);/.test(sto), '');
-  /* Competencia fechada ja esta no fluxo pelos titulos reais. */
-  verificar('v126 — competencia com folha fechada nao entra na previsao',
-    /if \(temFechada\) continue;/.test(sto), '');
+  /* Competencia fechada ja esta no fluxo pelos titulos reais —
+     o que virou titulo. Na v131 isto deixou de ser a competencia
+     INTEIRA: o vale continua previsto, porque o fechamento nao
+     cria titulo de vale. As quatro linhas que viram titulo sao as
+     que o fechamento suprime. */
+  verificar('v126 — o que o fechamento transforma em titulo sai da previsao',
+    /if \(!temFechada\) poe\(liquido,/.test(sto) &&
+    /if \(!temFechada\) poe\(fgts,/.test(sto) &&
+    /if \(!temFechada\) poe\(patronalAPagar,/.test(sto) &&
+    /if \(!temFechada\) poe\(retido,/.test(sto), '');
   verificar('v126 — a previsao alimenta o fluxo de caixa',
     /S\.previsaoFolha\(\)\.forEach/.test(flx) && /Previsão de folha/.test(flx), '');
   /* Provisao e custo do mes, nao saida de caixa: somar no fluxo
@@ -10578,8 +10585,8 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /credor: credor \|\| ''/.test(sto), '');
   verificar('v127 — o lancamento real derruba a previsao daquele vale',
     /const jaLancado = function/.test(sto) &&
-    /if \(!jaLancado\(credorVT\)\)/.test(sto) &&
-    /if \(!jaLancado\(credorVR\)\)/.test(sto), '');
+    /!jaLancado\(credorVT\)\)/.test(sto) &&
+    /!jaLancado\(credorVR\)\)/.test(sto), '');
   verificar('v127 — titulo cancelado ou substituido nao derruba nada',
     /jaLancado[\s\S]{0,700}'cancelado'[\s\S]{0,80}'substituido'/.test(sto), '');
   verificar('v127 — casa por competencia OU por vencimento no mes',
@@ -10637,15 +10644,20 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v128 — competencia com titulo de folha nao e prevista de novo',
     /const jaTemTitulo = \{\}/.test(sto) &&
     /p\.origem === 'folha' && p\.status !== 'cancelado'/.test(sto) &&
-    /return !jaTemTitulo\[pf\.competencia\]/.test(sto), '');
+    /return ehVale\(pf\) \|\| !jaTemTitulo\[pf\.competencia\]/.test(sto), '');
   verificar('v128 — a previsao nao e titulo: marcada, sem aprovacao, com id proprio',
     /previsao: true,/.test(sto) &&
     /id: 'previsao-folha:'/.test(sto) &&
     /aprovacao: '',/.test(sto), '');
   verificar('v128 — e a tela nunca deixa selecionar uma previsao',
     /if \(p\.previsao\) return false;/.test(ctsU), '');
-  verificar('v128 — nem oferece botao de acao sobre ela',
-    /if \(p\.previsao\) return '<span class="sub">sai no fechamento<\/span>';/.test(ctsU), '');
+  /* Na v131 a previsao do vale ganhou UM botao — "Já lancei" — e
+     so ela. Pagar, Efetivar e Editar continuam fora de qualquer
+     previsao: trabalham sobre titulo do banco, que aqui nao
+     existe. */
+  verificar('v128 — previsao nao oferece Pagar, Efetivar nem Editar',
+    /if \(p\.previsao\) \{/.test(ctsU) &&
+    /return '<span class="sub">sai no fechamento<\/span>';/.test(ctsU), '');
   verificar('v128 — nem acusa pendencia que previsao nao tem',
     /p\.previsao \|\| !trava\.length/.test(ctsU) &&
     /nf_dispensada: false, sem_nf: false/.test(sto), '');
@@ -10730,6 +10742,51 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v130 — e a tela diz em que mes a previsao caiu',
     /Despesa prevista salva em/.test(pvU) &&
     /U\.setVal\('pd-comp', data\.slice\(0, 7\)\)/.test(pvU), '');
+
+  /* ── v131 · a baixa da previsao de vale ──────────────
+     O vale e pago a operadora contra boleto que chega depois — e o
+     VT vem em varios, um por regiao. Quem diz que o mes esta
+     resolvido e a pessoa, por um botao. */
+  const ctsV = fsE.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  const sql67 = fsE.readFileSync(__dirname + '/supabase/67-ATUALIZAR-v131.sql', 'utf8');
+  const remV = fsE.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
+  /* A TRAVA QUE MAIS IMPORTA NESTA VERSAO: o fechamento da folha
+     NAO cria titulo de vale. Derrubando a competencia inteira, o
+     vale previsto sumia e nada entrava no lugar — o contas a pagar
+     encolhia milhares de reais no fechamento. */
+  verificar('v131 — fechar a folha nao some com a previsao do vale',
+    /const ehVale = function \(pf\) \{ return pf\.natureza === '4\.02'; \};/.test(sto) &&
+    /return ehVale\(pf\) \|\| !jaTemTitulo\[pf\.competencia\];/.test(sto) &&
+    /if \(!temFechada\) poe\(liquido,/.test(sto), '');
+  verificar('v131 — a baixa existe, grava autor e da para desfazer',
+    /function baixarVale/.test(sto) && /function reativarVale/.test(sto) &&
+    /function valeBaixado/.test(sto) &&
+    /baixado_por: usuario\(\)\.nome/.test(sto), '');
+  verificar('v131 — e a previsao respeita a baixa',
+    /if \(!valeBaixado\('vt', comp\) && !jaLancado\(credorVT\)\)/.test(sto) &&
+    /if \(!valeBaixado\('vr', comp\) && !jaLancado\(credorVR\)\)/.test(sto), '');
+  verificar('v131 — a baixa vai ao banco e volta de la',
+    /vales_baixados: \{ tabela: 'vales_baixados'/.test(perE) &&
+    /tabela: 'vales_baixados', destino: 'vales_baixados'/.test(remV) &&
+    /create table if not exists vales_baixados/.test(sql67), '');
+  verificar('v131 — um beneficio so se baixa uma vez por mes',
+    /unique \(beneficio, competencia\)/.test(sql67) &&
+    /if \(jaTem\) return \{ ok: true, baixa: jaTem, jaEstava: true \};/.test(sto), '');
+  verificar('v131 — o botao aparece SO na linha de vale',
+    /baixar-vale/.test(ctsV) && /Já lancei/.test(ctsV) &&
+    /const ben = \/transporte\/i\.test\(p\.descricao\) \? 'vt'/.test(ctsV), '');
+  verificar('v131 — e a janela diz que nao volta e onde desfazer',
+    /function abrirBaixarVale/.test(ctsV) &&
+    /não volta/.test(ctsV) && /desfazer na lista logo abaixo/.test(ctsV), '');
+  /* A lista de desfazer mora no CONTAS A PAGAR, e nao na tela de
+     Pessoal: baixar e decisao de quem mexe no contas a pagar, e
+     essa pessoa pode nao ter o modulo de Pessoal para voltar
+     atras. A varredura de acessos acusou isso. */
+  verificar('v131 — ha onde ver e desfazer, do lado do financeiro',
+    /function renderValesBaixados/.test(ctsV) && /data-reativar/.test(ctsV) &&
+    /Previsões de vale baixadas/.test(ctsV) &&
+    /id="cp-vales-baixados"/.test(fsE.readFileSync(__dirname + '/index.html', 'utf8')) &&
+    !/data-reativar/.test(dpU), '');
 })();
 
 concluir();
