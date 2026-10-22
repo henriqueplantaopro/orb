@@ -18004,7 +18004,15 @@ ERP.store = (function () {
       return f ? (f.nome || f.codigo) : '';
     };
 
-    st.parcelas.forEach(function (p) {
+    /* A FOLHA DOS PROXIMOS MESES TAMBEM (v134).
+       A previsao de folha (salario, FGTS, INSS, vale) e calculada na
+       hora e so existe como linha virtual dentro de `listar`. Este
+       relatorio lia `st.parcelas` direto e por isso nao a enxergava:
+       mostrava o aluguel previsto e nao mostrava a folha, que e o
+       maior desembolso do mes. `previsaoFolhaComoParcelas` ja derruba
+       sozinha a competencia que virou titulo, entao nao conta duas
+       vezes. */
+    st.parcelas.concat(previsaoFolhaComoParcelas({})).forEach(function (p) {
       if (['aberto', 'parcial', 'previsto', 'aguardando', 'autorizado', 'enviado'].indexOf(p.status) < 0) return;
       if (!p.venc || p.venc < de || p.venc > ate) return;
       linhas.push({
@@ -18117,7 +18125,10 @@ ERP.store = (function () {
 
     /* Vencido entra no primeiro dia (é o que sai assim que houver
        dinheiro), a menos que a pessoa peça para desconsiderar. */
-    st.parcelas.forEach(function (p) {
+    /* Idem no fluxo diario: a folha prevista e obrigacao que vai sair
+       do caixa, e era justamente ela que faltava no "primeiro dia
+       negativo". */
+    st.parcelas.concat(previsaoFolhaComoParcelas({})).forEach(function (p) {
       /* 'previsto' entra: é obrigação que vai sair do caixa — folha
          fechada, guia de retenção, provisão. Sem ele o fluxo diário
          ignorava justamente os maiores desembolsos do mês, e o
@@ -18134,8 +18145,17 @@ ERP.store = (function () {
       const vencido = p.venc < hoje;
       if (vencido && semVencidos) return;
       const dia = vencido ? hoje : p.venc;
-      põe(saidas, dia, saldo, (nomeCredorVisivel(p) || '') + (vencido ? ' (vencida)' : '') +
-        (p.status === 'previsto' ? ' (previsto)' : ''), p.status === 'previsto');
+      /* O rotulo e o CREDOR, e previsao de folha nao tem credor: as
+         linhas apareciam em branco no detalhe do dia, um valor sem
+         dono. Na falta do credor vale a descricao, que para a folha
+         ja diz "Folha — liquido 10/2026" e para o vale diz qual e. */
+      const quem = nomeCredorVisivel(p) || descricaoVisivel(p) || p.descricao || '';
+      /* A descricao da linha virtual de folha ja termina em
+         "(previsto)"; sem esta conferencia saia "(previsto)
+         (previsto)". O marcador e um so. */
+      const jaDiz = /\(previsto\)\s*$/.test(quem);
+      põe(saidas, dia, saldo, quem + (vencido ? ' (vencida)' : '') +
+        (p.status === 'previsto' && !jaDiz ? ' (previsto)' : ''), p.status === 'previsto');
     });
     /* Entrada prevista entra no fluxo diário (v133). Faltava: o
        relatório projetava as saídas previstas e nenhuma entrada

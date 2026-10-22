@@ -10908,6 +10908,22 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /const DIAS_A_FRENTE = 30;/.test(cts) &&
     /function aplicarPadraoDeVencimento/.test(cts) &&
     (cts.match(/aplicarPadraoDeVencimento\(\);/g) || []).length >= 2, '');
+  /* v134 · o que a v133 errou e o que faltava
+     O teto de 30 dias so vivia no `montar()`, que roda uma vez na
+     abertura do sistema. Entrar no Financeiro passa por
+     `estadoDaAba`, que LIMPA as datas — e apagava o teto na primeira
+     visita. A prova montava a tela a mao e nao via isso. */
+  verificar('v134 — o teto sobrevive a entrar no Financeiro',
+    /aplicarPadraoDeVencimento\(\);/.test(cts.slice(cts.indexOf('function estadoDaAba'),
+      cts.indexOf('function aplicarAba'))), '');
+  /* A previsao de folha e linha virtual e so existia dentro de
+     `listar`: os relatorios de caixa liam `st.parcelas` direto e
+     mostravam o aluguel previsto sem mostrar a folha. */
+  verificar('v134 — a previsao de folha chega aos relatorios de caixa',
+    (sto.match(/st\.parcelas\.concat\(previsaoFolhaComoParcelas\(\{\}\)\)/g) || []).length >= 2, '');
+  verificar('v134 — e cada linha dela tem rotulo, sem marcador duplicado',
+    /nomeCredorVisivel\(p\) \|\| descricaoVisivel\(p\) \|\| p\.descricao/.test(sto) &&
+    /const jaDiz = \/\\\(previsto\\\)\\s\*\$\/\.test\(quem\);/.test(sto), '');
 })();
 
 concluir();
