@@ -10921,6 +10921,36 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      mostravam o aluguel previsto sem mostrar a folha. */
   verificar('v134 — a previsao de folha chega aos relatorios de caixa',
     (sto.match(/st\.parcelas\.concat\(previsaoFolhaComoParcelas\(\{\}\)\)/g) || []).length >= 2, '');
+  /* v135 · o prazo de cada projeto
+     A pergunta "quando este faturamento entra" tinha TRES respostas
+     no codigo: `prazoDe(centro, null)` (descarta o prazo do
+     CLIENTE, que e o de maior prioridade), `prazoDe(centro,
+     cliente)` (certo, so na tela de faturamento) e `venctoSugerido`
+     na produtividade (o unico que conhecia projeto de dia fixo).
+     Agora e uma funcao so, no store. */
+  const prd = fsE.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
+  const prv = fsE.readFileSync(__dirname + '/js/ui-previsoes.js', 'utf8');
+  verificar('v135 — uma regra so para o vencimento previsto',
+    /function vencimentoPrevistoDe/.test(sto) && /function origemDoPrazo/.test(sto), '');
+  /* AS DUAS funcoes resolvem o cliente: `vencimentoPrevistoDe`
+     (que calcula a data) e `origemDoPrazo` (que explica na tela).
+     Conferir "existe uma linha assim" deixava passar a mutacao que
+     quebrava so uma delas — a verificacao achava a linha na outra e
+     dizia que estava tudo bem. Tem de ser DUAS. */
+  verificar('v135 — e ela NAO descarta o prazo do cliente (nas duas funcoes)',
+    (sto.match(/const pz = prazoDe\(centroId, cli \? cli\.documento : null\);/g) || []).length === 2,
+    String((sto.match(/const pz = prazoDe\(centroId, cli \? cli\.documento : null\);/g) || []).length));
+  /* As linhas que APLICAM, nao so a que declara. */
+  verificar('v135 — a previsao calculada usa a regra',
+    /data: \(salva && salva\.data\) \? salva\.data : vencimentoPrevistoDe\(comp, c\.id\)/.test(sto), '');
+  verificar('v135 — a previsao GRAVADA usa a mesma regra',
+    /const data = d\.data \|\| vencimentoPrevistoDe\(d\.competencia, d\.centro\);/.test(sto), '');
+  verificar('v135 — e as telas tambem, sem copia propria da regra',
+    /S\.vencimentoPrevistoDe\(comp, c\.id\)/.test(prv) &&
+    /return S\.vencimentoPrevistoDe\(comp, centroId\);/.test(prd) &&
+    /return S\.origemDoPrazo\(centroId\)\.texto;/.test(prd) &&
+    /* a copia da produtividade tem de ter sumido */
+    !/const ultimo = new Date\(Date\.UTC\(\+p\[0\], \+p\[1\] - 1 \+ offset \+ 1, 0\)\)/.test(prd), '');
   verificar('v134 — e cada linha dela tem rotulo, sem marcador duplicado',
     /nomeCredorVisivel\(p\) \|\| descricaoVisivel\(p\) \|\| p\.descricao/.test(sto) &&
     /const jaDiz = \/\\\(previsto\\\)\\s\*\$\/\.test\(quem\);/.test(sto), '');

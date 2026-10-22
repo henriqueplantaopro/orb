@@ -1057,30 +1057,17 @@ ERP.produtividade = (function () {
     });
   }
 
+  /* v135: esta funcao ERA a unica que conhecia projeto de dia fixo
+     de recebimento, e por isso dava uma resposta que o resto do
+     sistema nao dava. A regra mudou de casa para o store, onde todo
+     mundo le dela; aqui ficou so o nome. */
   function venctoSugerido(comp, centroId) {
-    const c = D.centro(centroId) || {};
-    const pz = S.prazoDe(centroId, null);
-    if (pz.origem !== 'padrão' || c.recebimento_dia === undefined) {
-      return S.dataPrevista(comp, pz.dias);
-    }
-    const dia = c.recebimento_dia || 10;
-    const offset = c.recebimento_mes_offset === undefined ? 1 : c.recebimento_mes_offset;
-    const p = comp.split('-');
-    const ultimo = new Date(Date.UTC(+p[0], +p[1] - 1 + offset + 1, 0)).getUTCDate();
-    const d = new Date(Date.UTC(+p[0], +p[1] - 1 + offset, Math.min(dia, ultimo)));
-    return d.toISOString().slice(0, 10);
+    return S.vencimentoPrevistoDe(comp, centroId);
   }
+  /* O texto acompanha a mesma regra da data: se os dois nao sairem
+     do mesmo lugar, a tela explica um criterio e aplica outro. */
   function textoVencto(centroId) {
-    const c = D.centro(centroId) || {};
-    const pz = S.prazoDe(centroId, null);
-    if (pz.origem !== 'padrão' || c.recebimento_dia === undefined) {
-      return pz.origem === 'padrão'
-        ? 'projeto sem prazo cadastrado — usando 30 dias após o fim da competência'
-        : pz.dias + ' dias após o fim da competência (prazo do ' + pz.origem + ')';
-    }
-    return c.recebimento_dia
-      ? 'previsão de recebimento do projeto: dia ' + c.recebimento_dia
-      : 'projeto sem previsão de recebimento cadastrada — usando dia 10';
+    return S.origemDoPrazo(centroId).texto;
   }
   const refPadrao = L => 'FECH-' + txt(L.projeto).toUpperCase() + '-' + L.competencia;
 
