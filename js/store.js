@@ -2756,7 +2756,7 @@ ERP.store = (function () {
       alvo.origem = 'procedimentos';
       alvo.observacao = 'Calculado pelos procedimentos lançados';
       alvo.atualizado_em = U.hoje();
-      if (!alvo.data) alvo.data = dataPrevista(comp, prazoDe(a.centro, null).dias);
+      if (!alvo.data) alvo.data = vencimentoPrevistoDe(comp, a.centro);
       if (!previsao) st.previsoes.push(alvo);
       n++;
     });
@@ -13887,6 +13887,69 @@ ERP.store = (function () {
     return { dias: 30, origem: 'padrão' };
   }
 
+  /* ── QUANDO O FATURAMENTO DESTE PROJETO ENTRA ──────────
+     (v135) UMA REGRA SÓ, para todo mundo que faz esta pergunta.
+
+     Ela estava espalhada em três versões diferentes, e por isso
+     dava três respostas:
+
+       1. `prazoDe(centro, null)` — o jeito mais comum no código.
+          Passar `null` no cliente DESCARTA o prazo do cliente, que
+          é justamente o de maior prioridade dentro de `prazoDe`.
+          Projeto cujo prazo está cadastrado no cliente caía no
+          padrão de 30 dias, e a competência inteira ia para o
+          último dia do mês seguinte.
+       2. `prazoDe(centro, cliente)` — o jeito certo, usado só na
+          tela de faturamento e no cadastro de clientes.
+       3. `venctoSugerido` na produtividade — o único que conhecia
+          projeto que paga em DIA FIXO (`recebimento_dia`), como
+          "todo dia 10 do mês seguinte", em vez de "N dias depois
+          do fim da competência".
+
+     A ordem é a que o sistema já praticava: prazo do cliente, senão
+     prazo do projeto, senão dia fixo de recebimento se houver,
+     senão 30 dias. O dia fixo só vale quando não há prazo
+     cadastrado — é assim que a produtividade decide, e mudar isso
+     aqui mudaria número de medição fechada. */
+  function vencimentoPrevistoDe(comp, centroId) {
+    if (!comp) return '';
+    const c = D.centro(centroId) || {};
+    const cli = D.clienteDoCentro ? D.clienteDoCentro(centroId) : null;
+    const pz = prazoDe(centroId, cli ? cli.documento : null);
+    if (pz.origem !== 'padrão' || c.recebimento_dia === undefined) {
+      return dataPrevista(comp, pz.dias);
+    }
+    /* Dia fixo do mês: `recebimento_mes_offset` diz quantos meses
+       depois da competência (1 = mês seguinte, o padrão). O
+       `Math.min` evita pedir dia 31 num mês que não tem. */
+    const dia = c.recebimento_dia || 10;
+    const offset = c.recebimento_mes_offset === undefined ? 1 : c.recebimento_mes_offset;
+    const p = comp.split('-');
+    const ultimo = new Date(Date.UTC(+p[0], +p[1] - 1 + offset + 1, 0)).getUTCDate();
+    const d = new Date(Date.UTC(+p[0], +p[1] - 1 + offset, Math.min(dia, ultimo)));
+    return d.toISOString().slice(0, 10);
+  }
+
+  /* Por que o prazo saiu daquele projeto, em palavras — a tela de
+     previsões e a de produtividade explicam isso para quem confere. */
+  function origemDoPrazo(centroId) {
+    const c = D.centro(centroId) || {};
+    const cli = D.clienteDoCentro ? D.clienteDoCentro(centroId) : null;
+    const pz = prazoDe(centroId, cli ? cli.documento : null);
+    if (pz.origem === 'padrão' && c.recebimento_dia !== undefined) {
+      const offset = c.recebimento_mes_offset === undefined ? 1 : c.recebimento_mes_offset;
+      return { dias: null, origem: 'dia fixo',
+        texto: 'todo dia ' + (c.recebimento_dia || 10) +
+          (offset === 1 ? ' do mês seguinte à competência'
+            : offset === 0 ? ' do próprio mês da competência'
+              : ' de ' + offset + ' meses após a competência') };
+    }
+    return { dias: pz.dias, origem: pz.origem,
+      texto: pz.origem === 'padrão'
+        ? 'projeto sem prazo cadastrado — usando 30 dias após o fim da competência'
+        : pz.dias + ' dias após o fim da competência (prazo do ' + pz.origem + ')' };
+  }
+
   function dataPrevista(comp, dias) {
     if (!comp) return '';
     const p = comp.split('-');
@@ -14900,8 +14963,11 @@ ERP.store = (function () {
     const c = D.centro(d.centro);
     if (!c) return { erro: 'Projeto não encontrado.' };
     if (!d.competencia) return { erro: 'Informe a competência.' };
-    const pz = prazoDe(d.centro, null);
-    const data = d.data || dataPrevista(d.competencia, pz.dias);
+    /* v135: a data gravada na previsao passa pela mesma regra que a
+       tela mostra. Antes saia daqui com `prazoDe(centro, null)`, que
+       ignora o prazo do CLIENTE — e a previsao nascia com uma data
+       diferente da que todo o resto do sistema calculava. */
+    const data = d.data || vencimentoPrevistoDe(d.competencia, d.centro);
     const achado = st.previsoes.find(function (p) {
       return p.centro === d.centro && p.competencia === d.competencia;
     });
@@ -14948,7 +15014,10 @@ ERP.store = (function () {
     alvo.faturamento = novoValor;
     alvo.produtividade = D.temRepasse(c) ? Math.round((d.produtividade || 0) * 100) / 100 : 0;
     alvo.data = data;
-    alvo.prazo_dias = pz.dias;
+    /* Fica registrado QUAL prazo gerou esta data. Projeto que paga em
+       dia fixo não tem "dias", e gravar um número inventado ali faria
+       a previsão contar uma história que a data não confirma. */
+    alvo.prazo_dias = origemDoPrazo(d.centro).dias;
     alvo.observacao = d.observacao || '';
     alvo.tipo = 'projeto';
     alvo.status = d.status || alvo.status || 'estimada';
@@ -15719,7 +15788,8 @@ ERP.store = (function () {
         if (!res.faturamento && !res.produtividade) return;
         fora.push({
           centro: c.id, competencia: comp,
-          data: salva ? salva.data : dataPrevista(comp, prazoDe(c.id, null).dias),
+          /* A regra completa, nao o prazo do projeto sozinho. */
+          data: (salva && salva.data) ? salva.data : vencimentoPrevistoDe(comp, c.id),
           faturamento: res.faturamento, produtividade: res.produtividade,
           /* `estimada` = veio do cadastro do projeto, ninguém salvou
              nada para este mês. É o grau de firmeza do número, e a
@@ -18424,6 +18494,7 @@ ERP.store = (function () {
     gerarParcelas, criarTitulo, aprovar, reprovar, registrarPagamento, estornar, cancelar,
     criarReceber, emitirFatura, proximoNumeroFatura, contasReceber, listarReceber, receberBaixa, estornarRecebimento, editarReceber,
     previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
+    vencimentoPrevistoDe, origemDoPrazo,
     saldoInicial, saldoInicialEm, saldoAtual, saldosAtuais,
     receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,

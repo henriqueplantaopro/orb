@@ -80,8 +80,11 @@ ERP.previsoes = (function () {
                x.status !== 'cancelado';
       });
       const real = S.realizadoDaPrevisao({ centro: c.id, competencia: comp });
-      const pz = S.prazoDe(c.id, null);
-      const data = S.dataPrevista(comp, pz.dias);
+      /* v135: mesma regra do resto do sistema (prazo do cliente,
+         prazo do projeto, dia fixo de recebimento, 30 dias). Aqui
+         ignorava o prazo do CLIENTE e a tela mostrava uma data que
+         o contas a receber nao confirmava. */
+      const data = S.vencimentoPrevistoDe(comp, c.id);
       tf += pv.faturamento; tp += pv.produtividade;
       trf += real.faturado; trp += real.produzido;
       let cab = '';
@@ -133,8 +136,13 @@ ERP.previsoes = (function () {
       if (sit.alerta) alertas.push({ projeto: c.curto || c.nome, pc: pc, desvio: desvFat });
       return cab + '<tr>' +
         '<td class="desc">' + U.esc(c.curto || c.nome) +
+          /* A explicacao do prazo sai da mesma funcao que calcula a
+             data. Projeto que paga em dia fixo nao tem "N dias", e
+             escrever "null dias" seria pior que nao escrever nada. */
           '<div class="sub">' + (D.TIPOS_SERVICO[c.tipo_servico] || '') + ' · ' +
-          pz.dias + ' dias' + (salva ? '' : ' · estimativa do cadastro') + '</div></td>' +
+          (function () { const op = S.origemDoPrazo(c.id);
+            return op.dias === null ? op.texto : op.dias + ' dias'; })() +
+          (salva ? '' : ' · estimativa do cadastro') + '</div></td>' +
         '<td class="mono">' + U.fData(data) + '</td>' +
         /* Projeto que faz parte de um grupo de faturamento não tem
            previsão própria: o valor é do grupo, digitado uma vez na
