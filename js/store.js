@@ -1641,7 +1641,13 @@ ERP.store = (function () {
     /* Despesa: parcela não cancelada, repartida pelo rateio — pela
        mesma competência usada na receita. */
     st.parcelas.filter(function (p) {
-      return ['cancelado', 'substituido'].indexOf(p.status) < 0 && noPeriodo(p.comp);
+      /* 'previsto' fora (v133): este é o resultado POR EMPRESA, e
+         resultado é o que aconteceu. A previsão de despesa cria
+         parcela de verdade com esse status, e sem este filtro o
+         aluguel previsto até 2027 entrava como custo incorrido.
+         Mesma regra do DRE gerencial e dos relatórios de resultado
+         da tela — as quatro apurações agora respondem igual. */
+      return ['cancelado', 'substituido', 'previsto'].indexOf(p.status) < 0 && noPeriodo(p.comp);
     }).forEach(function (p) {
       const t = st.titulos.find(function (x) { return x.id === p.titulo_id; });
       const intra = ehIntragrupo(t);
@@ -15620,9 +15626,153 @@ ERP.store = (function () {
      realizado e nunca saía do previsto. */
   const saldoReceberDe = r => Math.max(0, Math.round((r.valor_liquido - (r.valor_recebido || 0)) * 100) / 100);
 
+  /* ── A PREVISÃO DE FATURAMENTO COMO LINHA DE A RECEBER ──
+     (v133)
+
+     A tela de "A receber" abria VAZIA enquanto o fluxo de caixa
+     mostrava R$ 7,7 milhões previstos para o mês. Os dois estavam
+     certos, e esse era o problema: a previsão de faturamento mora em
+     `st.previsoes` (uma linha por projeto e competência, com queda
+     para a estimativa do cadastro do projeto), e NUNCA cria linha em
+     `st.receber`. Só o exportador de fluxo sabia disso. Quem abrisse
+     a tela do contas a receber via zero e concluía que não havia
+     nada a receber.
+
+     É exatamente a mesma falta que a v128 corrigiu do lado das
+     despesas, e a correção tem a mesma forma: linhas VIRTUAIS,
+     calculadas na hora, misturadas à lista por `listarReceber`.
+
+     TRÊS CUIDADOS, todos com o mesmo fim — não contar duas vezes:
+
+     1. `residuoPrevisao` é quem decide o quanto ainda não virou
+        nota. Previsão confirmada já gerou linha de verdade em
+        `st.receber`, e o resíduo dela é zero; nota emitida também
+        zera. Então resíduo > 0 significa, por definição, "ainda não
+        está no contas a receber". Não existe aqui uma segunda regra
+        de duplicidade: há uma só, e é a que o resto do sistema já
+        usava.
+
+     2. `contasReceber()` continua devolvendo SÓ linha de verdade.
+        Quem soma caixa — o exportador de fluxo, o `fluxoDiario`, os
+        relatórios — lê de lá e já conta a previsão pela origem
+        própria dela. Se a previsão entrasse em `contasReceber()`, o
+        fluxo passaria a contá-la duas vezes. A mistura acontece em
+        `listarReceber`, que é a visão de tela, e em nenhum outro
+        lugar — igualzinho a `listar` x `todasParcelas`.
+
+     3. A linha virtual não tem id no banco e não pode ser faturada
+        nem recebida. O id diz isso na cara.
+
+     O horizonte é o mesmo da previsão de folha, doze meses, para as
+     duas pontas do caixa enxergarem a mesma distância. */
+  const MESES_PREVISAO_RECEBER = 12;
+
+  /* ── O GERADOR ÚNICO DA PREVISÃO POR PROJETO ───────────
+     (v133)
+
+     Havia DUAS implementações disto, e elas davam números
+     diferentes. O relatório "Fluxo de caixa" da tela percorria só
+     `st.previsoes` — o que alguém salvou. O exportador do fluxo
+     completo percorria TODOS os projetos ativos e, onde não houvesse
+     linha salva, caía na estimativa do cadastro do projeto
+     (`prev_faturamento` / `prev_repasse`). Projeto sem previsão
+     salva aparecia num relatório e sumia do outro, para a mesma
+     pergunta, no mesmo dia.
+
+     Esta função é a regra, e agora é a única. Quem precisa de linha
+     de contas a receber mapeia a partir daqui; quem precisa de fluxo
+     soma a partir daqui.
+
+     Devolve o RESÍDUO: o que ainda não virou nota nem título. É
+     `residuoPrevisao` quem sabe disso, e continua sendo o único que
+     sabe — previsão confirmada, nota emitida ou competência
+     encerrada zeram sozinhas. */
+  function previsoesDeProjeto(opcoes) {
+    opcoes = opcoes || {};
+    const mesAtual = U.mesAtual();
+    /* Janela em competências. Por padrão, deste mês para a frente —
+       que é a pergunta do caixa. Um relatório de período passa a sua
+       própria janela e pode começar no passado. */
+    const de = opcoes.de || mesAtual;
+    const ate = opcoes.ate ||
+      U.compDe(U.addMeses(de + '-01', (opcoes.meses || MESES_PREVISAO_RECEBER) - 1));
+    const projetos = D.centros.filter(function (c) {
+      return c.ativo && c.tipo === 'projeto';
+    });
+    const fora = [];
+    for (let comp = de; comp <= ate; comp = U.compDe(U.addMeses(comp + '-01', 1))) {
+      /* O MÊS JÁ PASSOU, E NINGUÉM SALVOU PREVISÃO PARA ELE.
+         Aqui NÃO vale a estimativa do cadastro do projeto. A
+         estimativa diz "é isto que esperamos faturar"; aplicá-la a
+         um mês vencido inventaria uma expectativa que ninguém
+         registrou na época e transformaria todo mês antigo sem
+         previsão salva numa frustração de meta que nunca existiu.
+         Para trás vale o que foi registrado; para frente vale a
+         estimativa. */
+      const passado = comp < mesAtual;
+      projetos.forEach(function (c) {
+        const salva = previsaoDe(c.id, comp);
+        if (!salva && passado) return;
+        const pv = salva || { centro: c.id, competencia: comp, status: 'estimada',
+          faturamento: c.prev_faturamento || 0, produtividade: c.prev_repasse || 0 };
+        const res = residuoPrevisao(pv);
+        if (!res.faturamento && !res.produtividade) return;
+        fora.push({
+          centro: c.id, competencia: comp,
+          data: salva ? salva.data : dataPrevista(comp, prazoDe(c.id, null).dias),
+          faturamento: res.faturamento, produtividade: res.produtividade,
+          /* `estimada` = veio do cadastro do projeto, ninguém salvou
+             nada para este mês. É o grau de firmeza do número, e a
+             tela precisa dizer isso. */
+          estimada: !salva,
+          etapa: etapaDaPrevisao(salva)
+        });
+      });
+    }
+    return fora;
+  }
+
+  function previsaoFaturamentoComoReceber() {
+    const linhas = [];
+    previsoesDeProjeto().forEach(function (pr) {
+      const resto = pr.faturamento;
+      if (!resto) return;
+      const c = D.centro(pr.centro) || {};
+      const comp = pr.competencia;
+      const data = pr.data;
+      const cli = D.clienteDoCentro(c.id);
+      const ret = Math.round((c.retencao_pct || 0) * resto / 100 * 100) / 100;
+      linhas.push({
+          id: 'previsao-faturamento:' + c.id + ':' + comp,
+          previsao: true,
+          numero: 'PREVISTO', serie: '', nf_chave: null, emissao: null,
+          centro: c.id, conta: '1.01',
+          competencia: comp, vencimento: data,
+          valor_bruto: resto,
+          valor_retido: ret,
+          valor_liquido: Math.round((resto - ret) * 100) / 100,
+          valor_recebido: 0, recebido_em: null,
+          retencoes: [], glosa_prevista: 0, glosa_real: 0,
+          competencia_presumida: false,
+          cliente_nome: cli ? cli.nome : (c.unidade || c.curto || ''),
+          cliente_doc: cli ? cli.documento : '',
+          discriminacao: 'Faturamento previsto — ' + (c.curto || c.nome || ''),
+          /* A etapa em que a previsão está (estimada, confirmada pelo
+             financeiro, autorizada pelo órgão, liberada) é o que diz
+             o quanto este número é firme. A tela mostra isso. */
+          etapa_previsao: pr.etapa,
+          origem: 'previsao-estimada', status: 'previsto',
+          /* Sem conferência pendente: não há nota para conferir. */
+          conferir: false,
+          observacao: pr.estimada ? 'Estimativa do cadastro do projeto' : ''
+      });
+    });
+    return linhas;
+  }
+
   function listarReceber(f) {
     f = f || {};
-    return contasReceber().filter(function (r) {
+    const passa = function (r) {
       return (!f.comp    || r.competencia === f.comp) &&
              (!f.centro  || r.centro === f.centro) &&
              (!f.cliente || r.cliente_doc === f.cliente) &&
@@ -15638,7 +15788,16 @@ ERP.store = (function () {
              (!f.origem || (r.origem || 'nota') === f.origem) &&
              (!f.busca   || (r.numero + ' ' + r.cliente_nome + ' ' + r.discriminacao)
                               .toLowerCase().indexOf(f.busca.toLowerCase()) > -1);
-    });
+    };
+    /* Um filtro só para os dois. Se a previsão tivesse a sua própria
+       cópia do filtro, "Só previsto" passaria a esconder uma coisa e
+       mostrar outra na primeira vez que alguém mexesse num dos
+       dois — e nenhum teste perceberia, porque hoje eles concordam. */
+    return contasReceber().filter(passa)
+      .concat(previsaoFaturamentoComoReceber().filter(passa))
+      .sort(function (a, b) {
+        return (a.vencimento || '').localeCompare(b.vencimento || '');
+      });
   }
 
   const saldoInicial = () => D.bancos.reduce(function (s, b) { return s + (b.saldo_inicial || 0); }, 0);
@@ -17860,12 +18019,23 @@ ERP.store = (function () {
       });
     });
 
-    st.receber.forEach(function (r) {
+    /* AS DUAS ENTRADAS, juntas (v133): o título que existe e a
+       previsão de faturamento que ainda não virou nota. Antes só a
+       primeira entrava, e o relatório de "contas a pagar e a
+       receber" mostrava as saídas previstas (a previsão de despesa
+       cria parcela de verdade) sem as entradas previstas — um caixa
+       projetado só com o lado ruim.
+
+       Não conta duas vezes: `residuoPrevisao`, dentro de
+       `previsaoFaturamentoComoReceber`, devolve zero para a previsão
+       que já virou linha em `st.receber`. */
+    st.receber.concat(previsaoFaturamentoComoReceber()).forEach(function (r) {
       if (!receberAberto(r)) return;
       if (!r.vencimento || r.vencimento < de || r.vencimento > ate) return;
       linhas.push({
         tipo: 'Entrada', mov: 'Sim', documento: r.numero || '',
-        forma: r.origem === 'previsao' ? 'Previsão' : 'Recebimento',
+        forma: r.previsao ? 'Previsão'
+          : r.origem === 'previsao' ? 'Previsão' : 'Recebimento',
         contraparte: r.cliente_nome || '',
         descricao: r.discriminacao || ((D.centro(r.centro) || {}).curto || ''),
         competencia: r.competencia || '', emissao: r.emissao || '', vencimento: r.vencimento,
@@ -17925,7 +18095,18 @@ ERP.store = (function () {
        o leitor precisa saber que parte do buraco ainda não é título
        vencido. */
     let previstoSaida = 0, previstoEntrada = 0;
+    /* O ÚLTIMO DIA QUE ESTE RELATÓRIO MOSTRA.
+       `põe` aceitava qualquer data e somava no total de previsto, mas
+       as linhas só são lidas de `hoje` até aqui: um compromisso de
+       daqui a seis meses engordava o rodapé de um relatório de dez
+       dias, sem aparecer em dia nenhum da tabela. Passava
+       despercebido enquanto quase não havia previsão; com a previsão
+       de faturamento entrando (v133), um relatório de cinco dias
+       passou a anunciar R$ 88 milhões de entrada prevista. O total
+       tem de falar da mesma janela que a tabela. */
+    const ultimoDia = U.addDias(hoje, dias - 1);
     const põe = (mapa, data, valor, desc, previsto) => {
+      if (!data || data < hoje || data > ultimoDia) return;
       mapa[data] = Math.round(((mapa[data] || 0) + valor) * 100) / 100;
       if (previsto) {
         if (mapa === saidas) previstoSaida += valor; else previstoEntrada += valor;
@@ -17956,15 +18137,28 @@ ERP.store = (function () {
       põe(saidas, dia, saldo, (nomeCredorVisivel(p) || '') + (vencido ? ' (vencida)' : '') +
         (p.status === 'previsto' ? ' (previsto)' : ''), p.status === 'previsto');
     });
-    st.receber.forEach(function (r) {
+    /* Entrada prevista entra no fluxo diário (v133). Faltava: o
+       relatório projetava as saídas previstas e nenhuma entrada
+       prevista, e o saldo do dia ficava sistematicamente pessimista.
+       `residuoPrevisao` impede contar duas vezes. */
+    st.receber.concat(previsaoFaturamentoComoReceber()).forEach(function (r) {
       if (!receberAberto(r)) return;
       const saldo = saldoReceberDe(r);
       if (saldo <= 0.004) return;
-      const venc = r.vencimento || r.previsao;
+      /* CUIDADO COM O NOME: em título de verdade `r.previsao` é um
+         campo de DATA antigo (a data prevista, de antes de existir
+         `vencimento`); na linha virtual é o sinalizador booleano de
+         "isto é previsão". Ler os dois pela mesma porta funcionava
+         por acaso — só porque a linha virtual sempre tem
+         `vencimento` e o `||` nunca chegava no segundo. Explícito
+         não depende de sorte. */
+      const ehVirtual = r.previsao === true;
+      const venc = r.vencimento || (ehVirtual ? '' : r.previsao);
       if (!venc) return;
       const vencido = venc < hoje;
       if (vencido && semVencidos) return;
-      põe(entradas, vencido ? hoje : venc, saldo, r.cliente_nome || '');
+      põe(entradas, vencido ? hoje : venc, saldo,
+        (r.cliente_nome || '') + (ehVirtual ? ' (previsto)' : ''), ehVirtual);
     });
 
     const linhas = [];
@@ -18209,6 +18403,7 @@ ERP.store = (function () {
     logarCadastro: logar,
     gerarParcelas, criarTitulo, aprovar, reprovar, registrarPagamento, estornar, cancelar,
     criarReceber, emitirFatura, proximoNumeroFatura, contasReceber, listarReceber, receberBaixa, estornarRecebimento, editarReceber,
+    previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
     saldoInicial, saldoInicialEm, saldoAtual, saldosAtuais,
     receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,

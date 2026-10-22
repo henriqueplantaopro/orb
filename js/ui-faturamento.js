@@ -1631,7 +1631,13 @@ ERP.faturamento = (function () {
      tinha acabado de substituir continuava na lista — e, pior, entrava
      no total de "A receber", inflando o mês inteiro. */
   function listaReceber() {
-    const rs = S.listarReceber({});
+    /* "já geradas" é o título deste painel, e previsão não é gerada:
+       ela é calculada na hora e não tem linha no banco. Desde a v133
+       `listarReceber` mistura as duas coisas para a TELA do contas a
+       receber; aqui, onde se dá baixa e se emite nota, só entra o que
+       existe de verdade — senão apareceria um botão "Baixar" para um
+       título que não existe. */
+    const rs = S.listarReceber({}).filter(function (r) { return !r.previsao; });
     if (!rs.length) return '';
     const aberto = rs.filter(S.receberAberto)
       .reduce(function (s, r) { return s + r.valor_liquido; }, 0);

@@ -158,6 +158,7 @@ ERP.contas = (function () {
       b.addEventListener('click', function () { aplicarAba(this.dataset.ctaba); });
     });
     U.setVal('flt-status', 'apagar');
+    aplicarPadraoDeVencimento();
     U.el('chk-todas').addEventListener('change', function () {
       selecionadas.clear();
       if (this.checked) {
@@ -205,9 +206,34 @@ ERP.contas = (function () {
   }
   function aplicarAba(aba) { estadoDaAba(aba); render(); }
 
+  /* ── COMO A TELA ABRE ────────────────────────────────
+     Esta e a tela mais usada no dia a dia, e a pergunta de todo dia
+     e "o que vence daqui a pouco". Sem limite de data ela abria com
+     doze meses de previsao de folha e de vale pela frente — a conta
+     do mes que importa ficava enterrada.
+
+     Entao o vencimento ja vem preenchido: DE vazio (vencido tambem
+     tem de aparecer, e vencido e o que mais importa) e ATE em hoje
+     + 30 dias. Para ver mais longe, basta apagar ou esticar a data.
+
+     Nao vale para a aba de PAGAS: ali se olha para tras, e um teto
+     no futuro esconderia tudo. */
+  const DIAS_A_FRENTE = 30;
+  function limiteDeVencimento() { return U.addDias(U.hoje(), DIAS_A_FRENTE); }
+  function aplicarPadraoDeVencimento() {
+    if (abaContas === 'pagas') return;
+    U.setVal('flt-de', '');
+    U.setVal('flt-ate', limiteDeVencimento());
+  }
+
   function limpar() {
     CAMPOS_FILTRO.forEach(id => U.setVal(id, ''));
     U.setVal('flt-status', abaContas === 'pagas' ? 'pago' : 'apagar');   // a tela abre pelo que falta pagar
+    /* "Limpar" devolve a tela ao estado em que ela abre, e o teto de
+       30 dias faz parte desse estado. Quem quer ver o ano inteiro
+       apaga a data — e ai ela fica apagada, porque limpar de novo so
+       repoe o padrao, nao atrapalha quem ja escolheu outra coisa. */
+    aplicarPadraoDeVencimento();
     selecionadas.clear();
     render();
   }

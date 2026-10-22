@@ -6,6 +6,11 @@ window.ERP = window.ERP || {};
 ERP.receber = (function () {
   const U = ERP.util, D = ERP.dados, S = ERP.store;
   const CAMPOS = ['rc-busca', 'rc-comp', 'rc-de', 'rc-ate', 'rc-centro', 'rc-status'];
+  /* Quantos meses de previsão de faturamento a tela alcança. O número
+     vem do store (`S.mesesPrevisaoReceber()`), que é quem gera as
+     linhas — dois lugares com o mesmo número viram dois números
+     diferentes na primeira mudança. */
+  const MESES_PREVISTOS = S.mesesPrevisaoReceber();
 
   function montar() {
     const porUni = {};
@@ -52,6 +57,19 @@ ERP.receber = (function () {
      previsto (previsão confirmada), faturado (nota emitida), recebido
      (dinheiro na conta) e substituído (a previsão que a nota trocou). */
   function rotulo(r) {
+    /* A linha calculada na hora (v133) diz com todas as letras que é
+       estimativa, e em que etapa da esteira ela está. Sem isso ela
+       ficaria lado a lado com previsão CONFIRMADA usando o mesmo selo
+       "previsto", e as duas são coisas diferentes: uma o financeiro
+       fechou, a outra ainda é o número do cadastro do projeto. */
+    if (r.previsao) {
+      const txt = { confirmado: 'previsto · valor confirmado',
+        autorizado: 'previsto · autorizado pelo órgão',
+        liberado: 'previsto · liberado para emissão' }[r.etapa_previsao]
+        || 'previsto (estimativa)';
+      return '<span class="badge b-pendente">' + txt + '</span>' +
+        '<div class="sub">ainda não faturado</div>';
+    }
     if (r.status === 'recebido') {
       return '<span class="badge b-pago">recebido ' + U.fData(r.recebido_em) + '</span>' +
         (r.glosa_real > 0.004 ? '<div class="sub">glosa ' + U.brl(r.glosa_real) + '</div>' : '') +
@@ -144,6 +162,12 @@ ERP.receber = (function () {
     const hoje = U.hoje();
     const abertas = todas.filter(S.receberAberto);
     const previstos = abertas.filter(function (r) { return r.status === 'previsto'; });
+    /* CONFIRMADO E PREVISTO EM CAIXAS SEPARADAS, e nunca somados num
+       número só. São doze meses de estimativa de um lado e título
+       existente do outro; juntar os dois daria um total enorme que
+       não responde nenhuma pergunta — nem "quanto tenho a receber de
+       verdade", nem "quanto espero faturar". */
+    const estimadas = S.previsaoFaturamentoComoReceber();
     /* Mesmo critério do alerta e da lista (S.receberVencido): a regra
        própria daqui contava título SEM vencimento como vencido, e o
        cartão mostrava valor que não aparecia em lista nenhuma. */
@@ -160,6 +184,11 @@ ERP.receber = (function () {
     U.el('rc-aberto-pe').textContent = abertas.length + ' título(s)' +
       (previstos.length ? ' · ' + previstos.length + ' ainda previsto(s), ' +
         U.brl(somaSaldo(previstos)) : '');
+    /* O número que faltava na tela: o mesmo que o fluxo de caixa já
+       mostrava e que aqui aparecia como zero. */
+    U.el('rc-previsto').textContent = U.brl(somaSaldo(estimadas));
+    U.el('rc-previsto-pe').textContent = estimadas.length + ' linha(s) · '
+      + MESES_PREVISTOS + ' meses à frente · ainda sem nota';
     U.el('rc-vencido').textContent = U.brl(somaSaldo(vencidas));
     U.el('rc-vencido').style.color = vencidas.length ? 'var(--red)' : '';
     U.el('rc-vencido-pe').textContent = vencidas.length + ' após a previsão' +

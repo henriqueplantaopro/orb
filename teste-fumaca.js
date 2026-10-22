@@ -10840,4 +10840,74 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /sincronizar\(\)/.test(fsE.readFileSync(__dirname + '/prova-banco-real.js', 'utf8')), '');
 })();
 
+/* ── v133 · a previsão que a tela não mostrava ────────────
+   O "A receber" abria VAZIO enquanto o fluxo mostrava R$ 7,7 milhões
+   previstos. Os dois liam fontes diferentes, e só o fluxo conhecia a
+   previsão de faturamento. Estes testes olham o código; quem mede o
+   número é `prova-receber-previsao.js`. */
+(function () {
+  const fsE = require('fs');
+  const sto = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const rel = fsE.readFileSync(__dirname + '/js/ui-relatorios.js', 'utf8');
+  const rec = fsE.readFileSync(__dirname + '/js/ui-receber.js', 'utf8');
+  const cts = fsE.readFileSync(__dirname + '/js/ui-contas.js', 'utf8');
+  const fat = fsE.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const exf = fsE.readFileSync(__dirname + '/js/exportar-fluxo.js', 'utf8');
+  const htm = fsE.readFileSync(__dirname + '/index.html', 'utf8');
+  const css = fsE.readFileSync(__dirname + '/css/erp.css', 'utf8');
+
+  verificar('v133 — a previsao de faturamento vira linha de a receber',
+    /function previsaoFaturamentoComoReceber/.test(sto) &&
+    /previsao-faturamento:/.test(sto), '');
+  /* A linha que APLICA, nao so a que declara — terceira vez que essa
+     licao aparece (v128, v130, v132). */
+  verificar('v133 — e ela entra de fato em listarReceber',
+    /\.concat\(previsaoFaturamentoComoReceber\(\)\.filter\(passa\)\)/.test(sto), '');
+  /* Um filtro so para titulo e previsao: dois filtros divergiriam na
+     primeira alteracao, sem nenhum teste capaz de perceber. */
+  verificar('v133 — um filtro so, para titulo e previsao',
+    /const passa = function \(r\)/.test(sto) &&
+    /return contasReceber\(\)\.filter\(passa\)/.test(sto), '');
+  /* A trava contra contar duas vezes: quem soma caixa le de
+     `contasReceber`, que tem de continuar so com linha de verdade. */
+  verificar('v133 — contasReceber continua so com linha de verdade',
+    /const contasReceber = \(\) => st\.receber\.slice\(\)/.test(sto), '');
+  verificar('v133 — um gerador so de previsao por projeto',
+    /function previsoesDeProjeto/.test(sto) &&
+    /S\.previsoesDeProjeto\(/.test(rel) && /S\.previsoesDeProjeto\(/.test(exf) &&
+    /* a implementacao duplicada do exportador tem de ter sumido */
+    !/const salva = S\.previsaoDe\(c\.id, comp\)/.test(exf), '');
+  verificar('v133 — mes passado sem previsao salva nao ganha estimativa',
+    /if \(!salva && passado\) return;/.test(sto), '');
+  verificar('v133 — o fluxo diario enxerga entrada prevista',
+    /st\.receber\.concat\(previsaoFaturamentoComoReceber\(\)\)/.test(sto), '');
+  /* O rodape tem de falar da mesma janela que a tabela. */
+  verificar('v133 — e o rodape do fluxo diario respeita a janela',
+    /const ultimoDia = U\.addDias\(hoje, dias - 1\);/.test(sto) &&
+    /if \(!data \|\| data < hoje \|\| data > ultimoDia\) return;/.test(sto), '');
+  verificar('v133 — previsao fica fora dos relatorios de RESULTADO',
+    /p\.status !== 'cancelado' && p\.status !== 'previsto' &&/.test(rel) &&
+    /\['cancelado', 'substituido', 'previsto'\]\.indexOf\(p\.status\) < 0/.test(sto), '');
+  verificar('v133 — o relatorio diz o que e previsto e o que e confirmado',
+    /titulo: 'Situação'/.test(rel) &&
+    /const situacaoDaLinha = l => \(l\.previsto \? 'Previsto' : 'Confirmado'\)/.test(rel), '');
+  /* Treze colunas em 1280px so cabem porque as duas colunas largas
+     quebram linha. Sem isto a tabela sai 405px pela direita, e esta
+     tela nao rola de lado. */
+  verificar('v133 — e as treze colunas cabem sem rolar de lado',
+    /table\.tab-apr td\.desc\{/.test(css) && /class="tab-apr"/.test(rel) &&
+    /white-space:normal/.test(css), '');
+  verificar('v133 — a tela de a receber separa confirmado de previsto',
+    /id="rc-previsto"/.test(htm) && /rc-previsto-pe/.test(rec) &&
+    /S\.previsaoFaturamentoComoReceber\(\)/.test(rec), '');
+  /* Onde se da baixa e se emite nota, previsao nao entra: apareceria
+     um botao "Baixar" para um titulo que nao existe. */
+  verificar('v133 — previsao fora da tela onde se da baixa',
+    /\.filter\(function \(r\) \{ return !r\.previsao; \}\)/.test(fat), '');
+  verificar('v133 — o contas a pagar abre com teto de 30 dias',
+    /const DIAS_A_FRENTE = 30;/.test(cts) &&
+    /function aplicarPadraoDeVencimento/.test(cts) &&
+    (cts.match(/aplicarPadraoDeVencimento\(\);/g) || []).length >= 2, '');
+})();
+
 concluir();
