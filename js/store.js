@@ -6753,8 +6753,27 @@ ERP.store = (function () {
     };
   }
 
+  /* Quem nao pode ver dado pessoal NAO GRAVA funcionario: a leitura
+     veio da visao reduzida, e gravar a partir dela apagaria CPF e
+     salario de quem esta no banco. Isso e correto — o que nao podia
+     continuar e DEIXAR EDITAR assim mesmo. O cadastro mudava na
+     tela, a gravacao recusava em silencio, e a pessoa ia embora
+     achando que salvou. Hoje nenhum perfil tem `dp` sem
+     `ver_dados_pessoais`, mas perfil se cria pela tela de
+     Administracao: a trava tem de estar aqui, nao na sorte da
+     tabela de permissoes do momento. */
+  function podeGravarFuncionario() {
+    return pode('ver_dados_pessoais')
+      ? null
+      : { erro: 'Seu perfil abre o cadastro de funcionário sem os dados pessoais, e por isso não pode ' +
+          'gravá-lo — salvar assim apagaria CPF, salário e conta de quem já está cadastrado. ' +
+          'Peça a quem tem acesso a dados pessoais para fazer essa alteração.' };
+  }
+
   function criarFuncionario(dados) {
     if (!pode('dp')) return { erro: 'Seu perfil não cadastra funcionário.' };
+    const semGravar = podeGravarFuncionario();
+    if (semGravar) return semGravar;
     if (!dados.nome) return { erro: 'Informe o nome.' };
     if (!dados.cpf) return { erro: 'Informe o CPF.' };
     if (!pareceCPFValido(dados.cpf)) return { erro: 'CPF inválido — confira os números.' };
@@ -6948,6 +6967,8 @@ ERP.store = (function () {
 
   function editarFuncionario(id, dados) {
     if (!pode('dp')) return { erro: 'Seu perfil não edita funcionário.' };
+    const semGravarEd = podeGravarFuncionario();
+    if (semGravarEd) return semGravarEd;
     const f = D.funcionario(id);
     if (!f) return { erro: 'Funcionário não encontrado.' };
     const errPensaoEd = validarPagamentoTerceiro(dados.pensao_alimenticia, 'Pensão alimentícia');

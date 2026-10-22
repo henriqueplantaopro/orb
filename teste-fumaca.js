@@ -10789,4 +10789,55 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     !/data-reativar/.test(dpU), '');
 })();
 
+/* ── v132 · a gravação que voltava sem gravar ─────────────
+   O VR do Henrique voltou TRÊS vezes ao valor errado. A causa não
+   era cálculo nem tela: `sincronizar()` desistia antes de chegar em
+   `gravarFuncionarios()` quando a única coisa alterada era um
+   funcionário, porque `diferencas()` só percorre o MAPA e
+   funcionário e trilha ficam fora dele. Sem erro, sem trilha, sem
+   gravação — e a tela seguia mostrando o valor novo.
+
+   Estes testes olham o CÓDIGO; quem mede o efeito contra um
+   Postgres de verdade é `prova-banco-real.js`. Os dois são
+   necessários: este corre em milissegundos e pega a regressão no
+   commit; aquele prova que o valor chega mesmo à coluna. */
+(function () {
+  const fsE = require('fs');
+  const perF = fsE.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const stoF = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+
+  /* A linha que APLICA, não só a que declara: já errei isso duas
+     vezes guardando a declaração e deixando a aplicação escapar. */
+  verificar('v132 — sincronizar NAO desiste quando so mudou funcionario',
+    /if \(!mudou\.length && !funcionariosPendentes\(\) && !eventosPendentes\(\)\) return;/.test(perF) &&
+    !/\n\s*if \(!mudou\.length\) return;/.test(perF), '');
+  verificar('v132 — e a trilha tem conta propria de pendencia',
+    /function eventosPendentes\(\)/.test(perF) &&
+    /!eventosEnviados\[e\.id\]/.test(perF), '');
+  /* `pendencias()` já somava funcionários: era o aviso de "não
+     salvo" sabendo o que a gravação ignorava. As duas contas têm
+     de continuar fazendo a MESMA pergunta. */
+  verificar('v132 — o aviso de nao-salvo e a gravacao perguntam o mesmo',
+    /pendencias: \(\) => diferencas\(\)\.length \+ funcionariosPendentes\(\)/.test(perF) &&
+    /funcionariosPendentes\(\)/.test(perF.slice(perF.indexOf('async function sincronizar'),
+      perF.indexOf('async function sincronizar') + 2000)), '');
+
+  /* Perfil que não pode ver dado pessoal não grava funcionário — e
+     por isso não pode EDITAR achando que gravou. Hoje nenhum perfil
+     tem `dp` sem `ver_dados_pessoais`, mas perfil se cria pela tela
+     de Administração: a trava não pode depender da sorte da tabela
+     de permissões do momento. */
+  verificar('v132 — quem nao grava funcionario tambem nao edita em falso',
+    /function podeGravarFuncionario\(\)/.test(stoF) &&
+    /const semGravar = podeGravarFuncionario\(\);/.test(stoF) &&
+    /const semGravarEd = podeGravarFuncionario\(\);/.test(stoF), '');
+
+  /* O defeito de verdade é medido contra um Postgres de verdade.
+     Se esse arquivo sumir, some junto a única prova que fala com o
+     banco — e o sistema volta a ser testado só contra si mesmo. */
+  verificar('v132 — a prova contra o banco de verdade existe',
+    fsE.existsSync(__dirname + '/prova-banco-real.js') &&
+    /sincronizar\(\)/.test(fsE.readFileSync(__dirname + '/prova-banco-real.js', 'utf8')), '');
+})();
+
 concluir();

@@ -1021,6 +1021,15 @@ ERP.persistencia = (function () {
     }).length;
   }
 
+  /* A trilha também vive fora do MAPA, pela mesma razão: ela não é
+     uma coleção do estado que se compara por sombra, é uma fila do
+     que ainda não subiu. Mesma conta, mesmo motivo. */
+  function eventosPendentes() {
+    return (ERP.store.st.eventos || []).filter(function (e) {
+      return e && e.id && !eventosEnviados[e.id];
+    }).length;
+  }
+
   function diferencas() {
     const st = ERP.store.st;
     const mudou = [];
@@ -1154,7 +1163,34 @@ ERP.persistencia = (function () {
     if (!c) return;
     refsDescartadas = [];
     const mudou = diferencas();
-    if (!mudou.length) return;
+    /* ESTA LINHA DESCARTAVA EDIÇÃO DE FUNCIONÁRIO EM SILÊNCIO.
+       `diferencas()` só percorre o MAPA, e funcionários e trilha
+       ficam FORA dele de propósito: funcionário tem gravação
+       própria (a visão sem `ver_dados_pessoais` tem menos colunas,
+       e gravar a partir dela apagaria CPF e salário), e a trilha é
+       fila, não coleção comparada por sombra.
+
+       O resultado é que, quando a ÚNICA coisa alterada era um
+       funcionário, `mudou` vinha vazio e a função voltava aqui —
+       antes de `gravarFuncionarios()` e de `gravarEventos()`, que
+       ficam no fim. Nada ia ao banco, nada ia para a trilha, e
+       nenhum erro era devolvido: a tela seguia mostrando o valor
+       novo, que só existia na memória, até o próximo login trazer
+       o valor velho de volta. Foi o que fez o VR voltar três vezes.
+
+       O sinal de que as duas contas discordavam já estava no
+       código: `pendencias()` somava `funcionariosPendentes()` —
+       ou seja, o aviso de "não salvo" sabia que havia o que
+       gravar, enquanto a gravação achava que não havia. Agora
+       perguntam a mesma coisa.
+
+       `gravarIndexado(MINIMOS)`, que também fica depois daqui, não
+       tem conta própria de pendência: ele passa de carona no evento,
+       porque definir um mínimo sempre vai para a trilha. Isso é
+       verdade hoje e está dito aqui para não parecer projeto — se um
+       dia mexer em mínimo deixar de registrar, é esta linha que
+       precisa ganhar a terceira pergunta. */
+    if (!mudou.length && !funcionariosPendentes() && !eventosPendentes()) return;
 
     salvando = true;
     const falhas = [];
