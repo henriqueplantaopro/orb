@@ -195,6 +195,14 @@ ERP.contas = (function () {
     U.setVal('flt-de', ''); U.setVal('flt-ate', '');
     U.setVal('flt-baixa-de', ''); U.setVal('flt-baixa-ate', '');
     U.setVal('flt-status', pagas ? 'pago' : 'apagar');
+    /* E O TETO DE 30 DIAS VOLTA AQUI.
+       Esta funcao roda toda vez que se entra no Financeiro (o
+       `abrirModulo` chama `abrirAba('contas')`), e as duas linhas
+       acima limpam as datas. Poe-lo so no `montar()` nao bastava:
+       o `montar()` roda uma vez, na abertura do sistema, e a
+       primeira visita ao Financeiro ja apagava o que ele tinha
+       posto. Este e o caminho de verdade. */
+    aplicarPadraoDeVencimento();
     /* O filtro de NF não é dono de nenhuma aba — sem resetar aqui, o
        atalho do painel ("Sem NF") ficava ligado pra sempre depois de
        usado uma vez, e continuava filtrando silenciosamente mesmo
