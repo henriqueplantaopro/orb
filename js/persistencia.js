@@ -90,6 +90,8 @@ ERP.persistencia = (function () {
        na tela do DP criava o cargo só na memória, e o funcionário
        que apontasse para ele batia em "funcionarios_cargo_fkey". */
     cargos: { tabela: 'cargos', colunas: ['id', 'nome', 'cbo', 'salario_piso'] },
+    vales_baixados: { tabela: 'vales_baixados', colunas: ['id', 'beneficio', 'competencia',
+      'observacao', 'baixado_por', 'baixado_por_id', 'baixado_em'] },
     titulos: { tabela: 'titulos', colunas: ['id', 'descricao', 'credor', 'doc', 'tipo_titulo', 'emissao', 'origem', 'origem_ref', 'obs', 'valor_total', 'valor_bruto', 'qtd', 'empresa_tomadora', 'criado_por', 'criado_por_id', 'criado_em'] },
     parcelas: { tabela: 'parcelas', colunas: ['id', 'titulo_id', 'num', 'total', 'descricao', 'credor', 'conta', 'centro', 'rateio', 'tipo_titulo', 'emissao', 'comp', 'venc', 'valor', 'status', 'valor_pago', 'pago_em', 'aprovacao', 'aprovado_por', 'aprovado_em', 'motivo', 'origem', 'doc', 'obs', 'chave', 'retencoes', 'valor_retido', 'itens', 'criado_por', 'criado_por_id', 'criado_em'] },
     pagamentos: { tabela: 'pagamentos', colunas: ['id', 'parcela_id', 'data', 'valor', 'juros', 'multa', 'desconto', 'banco', 'empresa', 'cruzamento', 'doc', 'obs', 'forma', 'forma_codigo', 'situacao', 'estornado', 'usuario', 'usuario_id', 'criado_em'] },

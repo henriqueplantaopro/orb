@@ -1656,6 +1656,7 @@ ERP.dp = (function () {
     const podeEditar = S.pode('admin');
     const par = S.st.parametros || {};
 
+
     /* Só fornecedor ativo, e o escolhido sempre presente mesmo que
        tenha sido inativado depois — senão a tela "esqueceria" a
        escolha sem avisar, e o próximo Salvar a apagaria de verdade. */
