@@ -9600,6 +9600,133 @@ ERP.store = (function () {
     return { ok: true, parcela: p };
   }
 
+  /* ── RETENÇÃO DESCOBERTA NA HORA DE PAGAR ─────────────
+     (v136)
+
+     O caso: existe uma despesa prevista de R$ 5.000 com um
+     fornecedor. A nota chega, e só então se vê que aquele serviço
+     tem retenção. Até aqui a retenção só podia ser informada no
+     LANÇAMENTO, quando o título nasce — quem já tinha o título (ou
+     a previsão virando título) não tinha onde pôr, e a saída era
+     cancelar e relançar.
+
+     A REGRA QUE NÃO PODE QUEBRAR, e é a razão desta função existir
+     em vez de um campo solto na tela: PARCELAS + RETENÇÕES = BRUTO
+     DA NOTA. Retenção não é despesa a mais: é parte do bruto que
+     vai para o governo em vez de ir para o fornecedor. Somar R$ 450
+     de retenção a uma parcela de R$ 5.000 faria a empresa
+     desembolsar R$ 5.450 — R$ 5.000 ao fornecedor e R$ 450 em
+     guias. O fornecedor passa a receber R$ 4.550.
+
+     Então o que entra é o BRUTO DA NOTA, e a parcela é recalculada.
+     Quem quiser que o fornecedor continue recebendo os R$ 5.000
+     informa o bruto como R$ 5.450 — a tela mostra os dois números
+     antes de salvar, para a escolha ser consciente e não um efeito
+     colateral.
+
+     Título com MAIS DE UMA parcela em aberto é recusado de
+     propósito: não existe resposta única para de qual parcela sai a
+     retenção (toda da primeira? rateada?), e isso é decisão de quem
+     lança, não minha. Nesse caso o caminho é o Lançamento, onde a
+     grade de parcelas é editável à mão. */
+  function informarRetencao(parcelaId, d) {
+    d = d || {};
+    const p = parcela(parcelaId);
+    if (tituloSigiloso(p)) {
+      return { erro: 'Título de pessoal — só quem tem acesso a dados pessoais informa retenção.' };
+    }
+    if (!pode('lancar')) return { erro: 'Seu perfil não informa retenção.' };
+    if (!p) return { erro: 'Parcela não encontrada.' };
+    if (p.status === 'cancelado') return { erro: 'Parcela cancelada não recebe retenção.' };
+    if (p.status === 'pago') {
+      return { erro: 'Parcela já paga — estorne o pagamento antes de informar a retenção.' };
+    }
+    if (pagoDe(parcelaId) > 0.004) {
+      return { erro: 'Esta parcela já tem baixa parcial de ' + U.brl(pagoDe(parcelaId)) +
+        '. Estorne antes de mudar o valor com a retenção.' };
+    }
+    if (emCursoDe(parcelaId).length) {
+      return { erro: 'Há pagamento em andamento. Desfaça ou recuse a solicitação antes.' };
+    }
+
+    const t = st.titulos.find(function (x) { return x.id === p.titulo_id; });
+    const irmas = st.parcelas.filter(function (x) {
+      return x.titulo_id === p.titulo_id && x.id !== p.id &&
+        ['cancelado', 'substituido'].indexOf(x.status) < 0;
+    });
+    if (irmas.length) {
+      return { erro: 'Este título tem ' + (irmas.length + 1) + ' parcelas em aberto, e a retenção ' +
+        'teria de sair de alguma delas — não dá para adivinhar de qual. Cancele o título e lance ' +
+        'de novo pelo Lançamento, onde você edita a grade de parcelas junto com a retenção.' };
+    }
+
+    /* Retenção que JÁ virou guia não se mexe: o valor foi recolhido,
+       e alterá-lo aqui faria a guia deixar de bater com o que a
+       soma das retenções diz. */
+    const antigas = st.retencoesRegistradas.filter(function (r) {
+      return r.titulo_id === p.titulo_id && !r.cancelada;
+    });
+    const emGuia = antigas.filter(function (r) { return r.guia_id; });
+    if (emGuia.length) {
+      return { erro: 'Este título já tem retenção recolhida em guia (' +
+        emGuia.map(function (r) { return r.tributo; }).join(', ') +
+        '). Cancele a guia antes de mudar a retenção.' };
+    }
+
+    const limpas = (d.retencoes || [])
+      .map(function (r) { return { tributo: r.tributo, valor: Math.round((Number(r.valor) || 0) * 100) / 100 }; })
+      .filter(function (r) { return r.valor > 0.004; });
+    const somaRet = Math.round(limpas.reduce(function (a, r) { return a + r.valor; }, 0) * 100) / 100;
+    const ruim = limpas.find(function (r) { return !isFinite(r.valor); });
+    if (ruim) return { erro: 'Valor de retenção inválido em ' + ruim.tributo + '.' };
+
+    /* Sem bruto informado, o bruto é o valor atual da parcela: o caso
+       comum, em que a previsão já foi lançada pelo valor da nota. */
+    const bruto = d.valor_bruto !== undefined && d.valor_bruto !== null && d.valor_bruto !== ''
+      ? Math.round(Number(d.valor_bruto) * 100) / 100
+      : Math.round(p.valor * 100) / 100;
+    if (!isFinite(bruto) || bruto <= 0) return { erro: 'Valor bruto da nota inválido.' };
+    const liquido = Math.round((bruto - somaRet) * 100) / 100;
+    if (liquido <= 0.004) {
+      return { erro: 'As retenções (' + U.brl(somaRet) + ') somam o bruto inteiro (' + U.brl(bruto) +
+        ') ou mais — não sobraria nada para o fornecedor. Confira os valores.' };
+    }
+
+    /* Troca limpa: o que havia e ainda não virou guia sai, o novo
+       entra. Sem isto, corrigir um valor digitado errado somaria as
+       duas versões na guia. */
+    antigas.forEach(function (r) { r.cancelada = true; r.cancelada_em = U.hoje(); });
+
+    const rat = (p.rateio && p.rateio.length) ? p.rateio : [{ centro: p.centro, pct: 100 }];
+    limpas.forEach(function (ret) {
+      st.retencoesRegistradas.push({
+        id: novoId('ret'), tributo: ret.tributo, valor: ret.valor,
+        titulo_id: p.titulo_id, credor: p.credor,
+        nf_documento: d.documento || p.doc || '', conta: p.conta,
+        municipio: ret.tributo === 'ISS' ? (d.municipio_iss || (t || {}).municipio_iss || '') : '',
+        competencia: p.comp || U.compDe(p.venc),
+        rateio: rat.map(function (r) { return { centro: r.centro, pct: r.pct }; }),
+        guia_id: null, criado_em: new Date()
+      });
+    });
+
+    const valorAntes = p.valor;
+    p.valor = liquido;
+    if (d.documento) p.doc = d.documento;
+    if (t) {
+      t.valor_bruto = bruto;
+      t.valor_retido = somaRet;
+      t.retencoes = limpas;
+      if (d.municipio_iss) t.municipio_iss = d.municipio_iss;
+    }
+    logar('parcela', p.id, 'informou retenção',
+      'bruto ' + U.brl(bruto) + ' · retido ' + U.brl(somaRet) + ' (' +
+      limpas.map(function (r) { return r.tributo + ' ' + U.brl(r.valor); }).join(', ') + ')' +
+      ' · fornecedor ' + U.brl(valorAntes) + ' → ' + U.brl(liquido));
+    return { ok: true, bruto: bruto, retido: somaRet, liquido: liquido,
+      mudou_valor: Math.abs(valorAntes - liquido) > 0.004 };
+  }
+
   function editarParcela(id, dados) {
     if (tituloSigiloso(parcela(id))) {
       return { erro: 'Título de pessoal — só quem tem acesso a dados pessoais edita.' };
@@ -18492,6 +18619,7 @@ ERP.store = (function () {
        função de domínio). Enquanto for assim, ao menos deixam rastro. */
     logarCadastro: logar,
     gerarParcelas, criarTitulo, aprovar, reprovar, registrarPagamento, estornar, cancelar,
+    informarRetencao,
     criarReceber, emitirFatura, proximoNumeroFatura, contasReceber, listarReceber, receberBaixa, estornarRecebimento, editarReceber,
     previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
     vencimentoPrevistoDe, origemDoPrazo,

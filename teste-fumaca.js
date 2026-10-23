@@ -10930,6 +10930,36 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      Agora e uma funcao so, no store. */
   const prd = fsE.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
   const prv = fsE.readFileSync(__dirname + '/js/ui-previsoes.js', 'utf8');
+  /* v136 · retencao descoberta na hora de pagar
+     A nota chega e so entao se ve que tem retencao. So havia campo
+     no Lancamento; quem ja tinha o titulo (ou a previsao virando
+     titulo) tinha de cancelar e relancar. */
+  verificar('v136 — da para informar retencao num titulo que ja existe',
+    /function informarRetencao/.test(sto), '');
+  /* A INVARIANTE: parcelas + retencoes = bruto. Retencao nao e
+     despesa a mais; e parte do bruto que vai para o governo. */
+  verificar('v136 — e o fornecedor passa a receber o liquido, nao o bruto',
+    /const liquido = Math\.round\(\(bruto - somaRet\) \* 100\) \/ 100;/.test(sto) &&
+    /p\.valor = liquido;/.test(sto), '');
+  verificar('v136 — a retencao vai para a fila de guias',
+    /st\.retencoesRegistradas\.push\(\{[\s\S]{0,400}titulo_id: p\.titulo_id/.test(sto), '');
+  verificar('v136 — corrigir substitui, nao acumula',
+    /antigas\.forEach\(function \(r\) \{ r\.cancelada = true;/.test(sto), '');
+  verificar('v136 — o que ja virou guia e protegido',
+    /if \(emGuia\.length\) \{/.test(sto), '');
+  /* Titulo com varias parcelas: nao existe resposta unica para de
+     qual parcela sai a retencao. Recusar e melhor que chutar. */
+  verificar('v136 — titulo parcelado e recusado, em vez de rateio chutado',
+    /if \(irmas\.length\) \{/.test(sto) && /nao da para adivinhar de qual|não dá para adivinhar de qual/.test(sto), '');
+  /* Nas DUAS telas por onde se mexe num titulo que ja existe. */
+  verificar('v136 — o campo esta no Editar e no Efetivar previsao',
+    /id="ed-ret-tem"/.test(cts) && /id="ef-ret-tem"/.test(cts) &&
+    (cts.match(/S\.informarRetencao\(/g) || []).length === 2, '');
+  /* Ver o liquido ANTES de salvar e o que impede alguem informar a
+     retencao achando que o fornecedor continua recebendo o cheio. */
+  verificar('v136 — e a tela mostra o liquido antes de salvar',
+    /Fornecedor recebe/.test(cts) &&
+    (cts.match(/Fornecedor recebe/g) || []).length === 2, '');
   verificar('v135 — uma regra so para o vencimento previsto',
     /function vencimentoPrevistoDe/.test(sto) && /function origemDoPrazo/.test(sto), '');
   /* AS DUAS funcoes resolvem o cliente: `vencimentoPrevistoDe`
