@@ -1260,6 +1260,38 @@ ERP.contas = (function () {
               : 'Até 5 MB. Fica só nesta sessão até a migração para o Supabase — some se a página recarregar.') +
           '</div>' +
         '</div>' +
+        /* ── RETENÇÃO DE IMPOSTO (v136) ──────────────────
+           A nota chega e só então se vê que o serviço tem retenção.
+           Fica aqui, no Editar, porque é aqui que se mexe no título
+           que já existe — e era o único caminho sem esse campo.
+
+           A caixa mostra o BRUTO e o LÍQUIDO lado a lado enquanto
+           se digita: retenção não é despesa a mais, é parte do
+           bruto que vai para o governo em vez de ir para o
+           fornecedor. Ver os dois números antes de salvar é o que
+           impede alguém informar R$ 450 de retenção achando que o
+           fornecedor continua recebendo os R$ 5.000. */
+        '<label style="display:flex;gap:6px;align-items:flex-start;margin-top:10px">' +
+          '<input type="checkbox" id="ed-ret-tem" style="width:auto;margin-top:3px"' +
+            ((p.retencoes || []).length ? ' checked' : '') + '>' +
+          '<span>Esta nota tem retenção de imposto' +
+          '<span class="sub" style="display:block">O fornecedor recebe o valor da nota menos o ' +
+          'retido; o retido vira guia a recolher em Financeiro → Retenções.</span></span></label>' +
+        '<div id="ed-ret-box" style="display:' + ((p.retencoes || []).length ? '' : 'none') + '">' +
+          '<label>Valor BRUTO da nota (R$)</label>' +
+          '<input id="ed-ret-bruto" class="num" inputmode="decimal" value="' +
+            U.num(p.valor_bruto || p.valor) + '">' +
+          '<div class="ajuda">Deixe o valor da nota. O que o fornecedor recebe aparece abaixo.</div>' +
+          '<div class="row2" style="margin-top:6px">' +
+            ['ISS', 'IRRF', 'PIS', 'COFINS', 'CSLL', 'INSS'].map(function (t) {
+              const ja = (p.retencoes || []).find(function (r) { return r.tributo === t; });
+              return '<div><label>' + t + ' (R$)</label><input class="num" inputmode="decimal" ' +
+                'data-ret="' + t + '" id="ed-ret-' + t + '" value="' +
+                (ja ? U.num(ja.valor) : '') + '"></div>';
+            }).join('') +
+          '</div>' +
+          '<div class="pr-confere" id="ed-ret-conta" style="margin-top:8px"></div>' +
+        '</div>' +
         '<label>Observação</label><textarea id="ed-obs">' + U.esc(p.obs || '') + '</textarea>' +
         '<div class="ajuda" style="margin-top:8px">Reajuste, desconto negociado, NF corrigida, ' +
         'reclassificação de centro: toda alteração fica no histórico do lançamento, com o valor ' +
@@ -1297,6 +1329,32 @@ ERP.contas = (function () {
         U.el('ed-nf-dispensada').addEventListener('change', function () {
           U.el('ed-nf-box').style.display = this.checked ? 'none' : '';
         });
+
+        /* A CONTA NA TELA, enquanto se digita. Quem informa retenção
+           precisa ver, antes de salvar, que o fornecedor passa a
+           receber menos — senão descobre depois, no pagamento. */
+        const contaRet = function () {
+          const bruto = U.parseValor(U.val('ed-ret-bruto'));
+          const retido = Array.from(document.querySelectorAll('[data-ret]'))
+            .reduce(function (a, e) { return a + U.parseValor(e.value); }, 0);
+          const liq = Math.round((bruto - retido) * 100) / 100;
+          const cx = U.el('ed-ret-conta');
+          if (!cx) return;
+          cx.innerHTML =
+            '<span>Nota <b>' + U.brl(bruto) + '</b></span>' +
+            '<span>Retido <b>' + U.brl(Math.round(retido * 100) / 100) + '</b></span>' +
+            '<span>Fornecedor recebe <b class="' + (liq <= 0 ? 'erro' : '') + '">' +
+              U.brl(liq) + '</b></span>';
+        };
+        U.el('ed-ret-tem').addEventListener('change', function () {
+          U.el('ed-ret-box').style.display = this.checked ? '' : 'none';
+          if (this.checked) contaRet();
+        });
+        document.querySelectorAll('[data-ret]').forEach(function (e) {
+          e.addEventListener('input', contaRet);
+        });
+        if (U.el('ed-ret-bruto')) U.el('ed-ret-bruto').addEventListener('input', contaRet);
+        contaRet();
         if (U.el('ed-nf-arquivo')) {
           U.el('ed-nf-arquivo').addEventListener('change', function (e) {
             const arq = e.target.files && e.target.files[0];
@@ -1350,10 +1408,33 @@ ERP.contas = (function () {
             dados.linha_digitavel = lido.linhaDigitavel || '';
           }
         }
+        /* A RETENÇÃO VAI PRIMEIRO, e por uma razão: ela recalcula o
+           valor da parcela (bruto − retido). Se a edição comum
+           rodasse antes, ela gravaria o valor digitado no campo
+           "Valor" e a retenção logo em seguida o sobrescreveria —
+           duas regras mexendo no mesmo número, e a última ganhando
+           por acaso da ordem. Com a retenção primeiro, o campo
+           "Valor" deixa de ser enviado quando ela está ligada, e
+           quem manda no número é uma coisa só. */
+        const temRet = U.el('ed-ret-tem') && U.el('ed-ret-tem').checked;
+        if (temRet) {
+          const rr = S.informarRetencao(id, {
+            valor_bruto: U.parseValor(U.val('ed-ret-bruto')),
+            documento: dados.doc,
+            retencoes: Array.from(document.querySelectorAll('[data-ret]')).map(function (e) {
+              return { tributo: e.dataset.ret, valor: U.parseValor(e.value) };
+            })
+          });
+          if (ERP.app.erroDoRetorno(rr)) return;
+          delete dados.valor;
+          var avisoRet = 'Retenção de ' + U.brl(rr.retido) + ' registrada — o fornecedor recebe ' +
+            U.brl(rr.liquido) + ' e o imposto vira guia em Retenções.';
+        }
         const r = S.editarParcela(id, dados);
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
-        ERP.app.aviso(r.n ? r.n + ' alteração(ões) salva(s): ' + r.mudou[0] : 'Nada mudou.', 'ok');
+        ERP.app.aviso(temRet ? avisoRet
+          : (r.n ? r.n + ' alteração(ões) salva(s): ' + r.mudou[0] : 'Nada mudou.'), 'ok');
         depois();
       } }]
     });
@@ -1413,6 +1494,25 @@ ERP.contas = (function () {
           '<div class="ajuda">Leitor USB funciona como teclado: clique no campo e bipe. O sistema ' +
           'valida, extrai vencimento e valor do próprio código e guarda as 44 posições da remessa.</div>' +
           '<div id="ef-info"></div>' +
+        '</div>' +
+        /* ── RETENÇÃO (v136) ─────────────────────────────
+           Este é O momento do caso: a previsão existia por um valor,
+           a nota chegou, e só agora se vê que tem retenção. Antes o
+           campo não existia em lugar nenhum fora do Lançamento. */
+        '<label style="display:flex;gap:6px;align-items:flex-start;margin-top:10px">' +
+          '<input type="checkbox" id="ef-ret-tem" style="width:auto;margin-top:3px">' +
+          '<span>A nota tem retenção de imposto' +
+          '<span class="sub" style="display:block">O "Valor da conta" acima passa a ser o BRUTO da ' +
+          'nota; o fornecedor recebe o líquido e o retido vira guia em Financeiro → Retenções.' +
+          '</span></span></label>' +
+        '<div id="ef-ret-box" style="display:none">' +
+          '<div class="row2">' +
+            ['ISS', 'IRRF', 'PIS', 'COFINS', 'CSLL', 'INSS'].map(function (t) {
+              return '<div><label>' + t + ' (R$)</label><input class="num" inputmode="decimal" ' +
+                'data-efret="' + t + '" id="ef-ret-' + t + '"></div>';
+            }).join('') +
+          '</div>' +
+          '<div class="pr-confere" id="ef-ret-conta" style="margin-top:8px"></div>' +
         '</div>',
       acoes: [{ txt: 'Efetivar título', cls: 'btn-aprovar', fn: function () {
         const nome = U.val('ef-credor');
@@ -1425,6 +1525,27 @@ ERP.contas = (function () {
           linha_digitavel: lido ? (lido.linhaDigitavel || '') : null
         });
         if (ERP.app.erroDoRetorno(r)) return;
+        /* A retenção entra DEPOIS de efetivar, porque antes disso o
+           título ainda é previsão: `informarRetencao` precisa de um
+           título de verdade para pendurar a guia. O valor digitado
+           em "Valor da conta" é o BRUTO, e é a retenção que o baixa
+           para o líquido do fornecedor. */
+        if (U.el('ef-ret-tem') && U.el('ef-ret-tem').checked) {
+          const rr = S.informarRetencao(id, {
+            valor_bruto: U.parseValor(U.val('ef-valor')),
+            documento: U.val('ef-doc'),
+            retencoes: Array.from(document.querySelectorAll('[data-efret]')).map(function (e) {
+              return { tributo: e.dataset.efret, valor: U.parseValor(e.value) };
+            })
+          });
+          if (ERP.app.erroDoRetorno(rr)) { depois(); return; }
+          ERP.app.fecharModal();
+          ERP.app.aviso('Título efetivado com retenção de ' + U.brl(rr.retido) +
+            ' — o fornecedor recebe ' + U.brl(rr.liquido) +
+            ' e o imposto vira guia em Retenções.', 'ok');
+          depois();
+          return;
+        }
         ERP.app.fecharModal();
         if (r.exige_aprovacao) ERP.app.aviso('Título efetivado, mas o credor ou o valor mudou em relação ao previsto — voltou para aprovação antes do pagamento.', 'erro'); else
         ERP.app.aviso('Título efetivado' +
@@ -1437,6 +1558,29 @@ ERP.contas = (function () {
         /* O que o título precisa depende da FORMA do fornecedor: boleto e
            guia pedem código de barras; PIX, TED, débito e dinheiro não —
            o dado deles já está no cadastro. */
+        /* Os três números na tela enquanto se digita, como no
+           Editar: nota, retido e o que o fornecedor recebe. */
+        const contaEfRet = function () {
+          const bruto = U.parseValor(U.val('ef-valor'));
+          const retido = Array.from(document.querySelectorAll('[data-efret]'))
+            .reduce(function (a, e) { return a + U.parseValor(e.value); }, 0);
+          const liq = Math.round((bruto - retido) * 100) / 100;
+          const cx = U.el('ef-ret-conta');
+          if (!cx) return;
+          cx.innerHTML = '<span>Nota <b>' + U.brl(bruto) + '</b></span>' +
+            '<span>Retido <b>' + U.brl(Math.round(retido * 100) / 100) + '</b></span>' +
+            '<span>Fornecedor recebe <b class="' + (liq <= 0 ? 'erro' : '') + '">' +
+              U.brl(liq) + '</b></span>';
+        };
+        U.el('ef-ret-tem').addEventListener('change', function () {
+          U.el('ef-ret-box').style.display = this.checked ? '' : 'none';
+          if (this.checked) contaEfRet();
+        });
+        document.querySelectorAll('[data-efret]').forEach(function (e) {
+          e.addEventListener('input', contaEfRet);
+        });
+        if (U.el('ef-valor')) U.el('ef-valor').addEventListener('input', contaEfRet);
+
         const mostrarForma = function () {
           const nome = U.val('ef-credor');
           const cr = D.credores.find(function (x) {
