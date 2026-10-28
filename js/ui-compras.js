@@ -739,13 +739,27 @@ ERP.compras = (function () {
               (base ? '<div class="sub">custo médio atual ' + U.brl(base) +
                 (Math.abs(dif) >= 5 ? ' · <b class="' + (dif > 0 ? 'erro' : '') + '">' +
                   (dif > 0 ? '+' : '') + U.num(Math.round(dif)) + '%</b>' : '') + '</div>' : '') + '</td>' +
-            '<td class="num">' + U.num(i.qtd) + '</td>' +
+            /* QUANTIDADE EDITÁVEL (v137). O preço só aparece agora:
+               quem aprova vê que saiu mais caro do que se esperava e
+               decide levar menos. Antes a única saída era devolver
+               pro comprador cotar de novo — um ciclo inteiro por uma
+               mudança de número. O teto é o que a requisição
+               aprovou, e ele fica escrito embaixo do campo. */
+            '<td class="num"><input class="num" inputmode="decimal" style="width:76px" ' +
+              'data-acq="' + r.itens.indexOf(i) + '" data-teto="' +
+              (i.qtd_aprovada_req !== undefined ? i.qtd_aprovada_req : i.qtd) + '" ' +
+              'data-unit="' + (i.custo || 0) + '" data-frete="' + (i.frete || 0) + '" ' +
+              'value="' + U.num(i.qtd) + '">' +
+              '<div class="sub">até ' + U.num(i.qtd_aprovada_req !== undefined ? i.qtd_aprovada_req : i.qtd) +
+              '</div></td>' +
             '<td>' + U.esc(c.nome || '—') + (c.email ? '' : '<div class="sub erro">sem e-mail</div>') + '</td>' +
             '<td class="num">' + U.brl(i.custo || 0) + '</td>' +
             '<td class="num">' + U.brl(i.frete || 0) + '</td>' +
-            '<td class="num">' + U.brl(Math.round(((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) * 100) / 100) + '</td></tr>';
+            '<td class="num" data-actot="' + r.itens.indexOf(i) + '">' +
+              U.brl(Math.round(((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) * 100) / 100) + '</td></tr>';
         }).join('') +
-        '<tr><td colspan="5"><b>Total da compra</b></td><td class="num"><b>' + U.brl(t.total) + '</b></td></tr>' +
+        '<tr><td colspan="5"><b>Total da compra</b></td><td class="num"><b id="ac-total">' +
+          U.brl(t.total) + '</b></td></tr>' +
         '</tbody></table>' +
         (Object.keys(t.por_fornecedor).length > 1
           ? '<div class="ajuda">Sai um pedido por fornecedor: ' +
@@ -758,8 +772,34 @@ ERP.compras = (function () {
             }).join(' ') + '</div>'
           : '<div class="ajuda erro">Nenhuma cotação anexada.</div>') +
         (r.observacao_cotacao ? '<div class="ajuda">' + U.esc(r.observacao_cotacao) + '</div>' : '') +
+        '<div class="ajuda">Dá para reduzir a quantidade aqui mesmo — o total e a alçada ' +
+        'acompanham. Zerar um item tira ele da compra, e aí a observação vira o motivo. ' +
+        'Para comprar MAIS do que a requisição aprovou, abra uma requisição nova.</div>' +
         '<label>Observação / o que precisa mudar</label><input id="ac-obs" placeholder="obrigatório se for devolver pra revisão">',
-      aoAbrir: function () { ligarAnexos(r); },
+      aoAbrir: function () {
+        ligarAnexos(r);
+        /* O total recalcula enquanto se digita: quem aprova precisa
+           ver o número novo ANTES de clicar, não descobrir depois no
+           pedido. O campo fica vermelho se passar do teto, e a trava
+           de verdade está no store. */
+        const recalcular = function () {
+          let total = 0;
+          document.querySelectorAll('[data-acq]').forEach(function (e) {
+            const q = U.parseValor(e.value);
+            const teto = Number(e.dataset.teto);
+            const v = Math.round((q * Number(e.dataset.unit) + Number(e.dataset.frete)) * 100) / 100;
+            if (q > 0) total += v;
+            e.style.color = (q > teto + 0.0001) ? 'var(--red)' : '';
+            const cel = document.querySelector('[data-actot="' + e.dataset.acq + '"]');
+            if (cel) cel.textContent = q > 0 ? U.brl(v) : '—';
+          });
+          const el = U.el('ac-total');
+          if (el) el.textContent = U.brl(Math.round(total * 100) / 100);
+        };
+        document.querySelectorAll('[data-acq]').forEach(function (e) {
+          e.addEventListener('input', recalcular);
+        });
+      },
       acoes: [
         { txt: 'Aprovar compra', cls: 'btn-aprovar', fn: function () { decidir('aprovar'); } },
         { txt: 'Devolver pra revisão', cls: '', fn: function () { decidir('revisar'); } },
@@ -767,12 +807,24 @@ ERP.compras = (function () {
       ]
     });
     function decidir(decisao) {
-      const rr = S.aprovarCompra(id, { decisao: decisao, observacao: U.val('ac-obs') });
+      /* As quantidades só viajam na APROVAÇÃO. Mandar junto de
+         "reprovar" ou "devolver pra revisão" não teria sentido: nos
+         dois casos a compra não acontece, e gravar número novo numa
+         requisição que volta pro comprador só confundiria quem for
+         cotar de novo. */
+      const itens = decisao === 'aprovar'
+        ? Array.from(document.querySelectorAll('[data-acq]')).map(function (e) {
+            return { indice: Number(e.dataset.acq), qtd: U.parseValor(e.value) };
+          })
+        : undefined;
+      const rr = S.aprovarCompra(id, { decisao: decisao, observacao: U.val('ac-obs'), itens: itens });
       if (rr.erro) return ERP.app.aviso(rr.erro, 'erro');
       ERP.app.fecharModal();
       ERP.app.aviso(rr.cancelada ? 'Compra reprovada.'
         : rr.revisar ? 'Devolvida pro comprador revisar a cotação.'
-        : 'Compra aprovada em ' + U.brl(rr.total) + '. Agora é enviar o pedido ao fornecedor.', 'ok');
+        : 'Compra aprovada em ' + U.brl(rr.total) +
+          (rr.ajustes ? ' · ' + rr.mudancas.join(' · ') : '') +
+          '. Agora é enviar o pedido ao fornecedor.', 'ok');
       render();
     }
   }

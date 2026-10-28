@@ -11634,7 +11634,91 @@ ERP.store = (function () {
       return { erro: 'Só cotação registrada vai pra aprovação da compra — esta está em "' +
         (D.STATUS_COMPRA[r.status] || r.status) + '".' };
     }
-    const t = totalCotado(r);
+    /* ── AJUSTAR A QUANTIDADE NA APROVAÇÃO DA COMPRA ────
+       (v137)
+
+       O preço só aparece agora. Quem aprova vê que o item saiu mais
+       caro do que se esperava e decide levar 8 em vez de 10 — e até
+       aqui a única saída era devolver para o comprador cotar de
+       novo, o que custa um ciclo inteiro por uma mudança de número.
+
+       QUATRO CUIDADOS, e cada um existe por uma razão:
+
+       1. A ALÇADA É CONFERIDA COM A QUANTIDADE NOVA. Por isso o
+          ajuste acontece ANTES do cálculo do total, logo abaixo.
+          Fosse depois, alguém aprovaria uma compra de R$ 50.000
+          dentro de uma alçada de R$ 10.000 só porque o total ANTIGO
+          cabia — e o pedido sairia pelo valor novo.
+       2. NÃO DÁ PARA COMPRAR MAIS DO QUE FOI APROVADO na
+          requisição. É a mesma regra de `aprovarRequisicao`; sem
+          ela, a segunda aprovação passaria por cima da primeira, e
+          quem autorizou 10 teria autorizado 30 sem saber.
+       3. QUANTIDADE ZERO É REPROVAÇÃO do item, não "mantém o que
+          estava" — e reprovar item pede motivo, como em toda
+          reprovação do módulo.
+       4. O QUE FOI PEDIDO FICA REGISTRADO. `qtd_pedida` guarda o
+          original e `qtd_aprovada_req` o que a requisição liberou,
+          para a trilha mostrar a cadeia inteira: pedido → aprovado
+          → comprado. Sobrescrever sem guardar apagaria a história
+          que justifica a diferença na entrega. */
+    const ajustes = (d.itens || []).filter(function (x) {
+      return x && (x.qtd !== undefined || x.aprovado === false);
+    });
+    /* DECIDE TUDO ANTES DE MUDAR QUALQUER COISA.
+       A conferência da alçada vem depois daqui e pode recusar a
+       aprovação. Se as quantidades já estivessem gravadas, a função
+       devolveria erro com a requisição ALTERADA — a tela mostraria
+       "acima da sua alçada" e, por trás, os números já teriam
+       mudado. Então primeiro se monta o que vai acontecer, confere-
+       se tudo, e só no fim se aplica. */
+    const planejado = [];
+    if (ajustes.length && d.decisao === 'aprovar') {
+      let erroAj = null;
+      r.itens.forEach(function (i, idx) {
+        const dec = ajustes.find(function (x) {
+          return x.indice !== undefined ? x.indice === idx : x.produto === i.produto;
+        });
+        if (!dec) return;
+        const nomeItem = (D.produtos.find(function (x) { return x.id === i.produto; }) || {}).descricao || 'item';
+        const zerou = dec.aprovado !== false && dec.qtd !== undefined && !(dec.qtd > 0);
+        if (dec.aprovado === false || zerou) {
+          if (!dec.motivo && !d.observacao) {
+            erroAj = 'Diga o motivo de tirar ' + nomeItem + ' da compra.';
+            return;
+          }
+          planejado.push({ item: i, reprovar: true, motivo: dec.motivo || d.observacao || '' });
+          return;
+        }
+        if (dec.qtd === undefined) return;
+        const teto = i.qtd_aprovada_req !== undefined ? i.qtd_aprovada_req : i.qtd;
+        const nova = Math.round(Number(dec.qtd) * 1000) / 1000;
+        if (!isFinite(nova)) { erroAj = 'Quantidade inválida em ' + nomeItem + '.'; return; }
+        if (nova > teto + 0.0001) {
+          erroAj = 'Não dá para comprar ' + U.num(nova) + ' de ' + nomeItem +
+            ': a requisição foi aprovada para ' + U.num(teto) +
+            '. Para aumentar, abra uma requisição nova.';
+          return;
+        }
+        if (Math.abs(nova - i.qtd) > 0.0001) planejado.push({ item: i, qtd: nova });
+      });
+      if (erroAj) return { erro: erroAj };
+      /* O total que a alçada vai conferir é o do plano, não o de
+         agora — calculado sobre uma cópia, sem encostar no estado. */
+      const sobra = r.itens.filter(function (i) {
+        const pl = planejado.find(function (x) { return x.item === i; });
+        return !(pl && pl.reprovar) && !i.reprovado;
+      });
+      if (!sobra.length) {
+        return { erro: 'Todos os itens saíram da compra. Para encerrar a requisição, use Reprovar.' };
+      }
+    }
+
+    const simulado = { itens: r.itens.map(function (i) {
+      const pl = planejado.find(function (x) { return x.item === i; });
+      if (!pl) return i;
+      return Object.assign({}, i, pl.reprovar ? { reprovado: true } : { qtd: pl.qtd });
+    }) };
+    const t = totalCotado(simulado);
     const lim = st.parametros.alcada[(usuario() || {}).perfil] || 0;
     if (lim && t.total > lim && d.decisao === 'aprovar') {
       return { erro: 'Compra de ' + U.brl(t.total) + ' acima da sua alçada de ' + U.brl(lim) +
@@ -11655,13 +11739,34 @@ ERP.store = (function () {
       logar('compra', r.id, 'pediu revisão da cotação', r.numero + ' · ' + d.observacao);
       return { ok: true, revisar: true };
     }
+    /* Passou por tudo: AGORA aplica. Daqui para baixo não há mais
+       recusa possível, então o estado não fica meio alterado. */
+    const mudancas = [];
+    planejado.forEach(function (pl) {
+      const i = pl.item;
+      const nomeItem = (D.produtos.find(function (x) { return x.id === i.produto; }) || {}).descricao || 'item';
+      if (pl.reprovar) {
+        i.reprovado = true;
+        i.motivo_reprovacao = pl.motivo;
+        mudancas.push(nomeItem + ': fora da compra');
+        return;
+      }
+      if (i.qtd_pedida === undefined) i.qtd_pedida = i.qtd;
+      if (i.qtd_aprovada_req === undefined) i.qtd_aprovada_req = i.qtd;
+      mudancas.push(nomeItem + ': ' + U.num(i.qtd) + ' → ' + U.num(pl.qtd));
+      i.qtd = pl.qtd;
+      i.qtd_ajustada_na_compra = true;
+    });
+
     r.status = 'compra_aprovada';
     r.observacao_aprovacao_compra = d.observacao || '';
     r.compra_aprovada_por = usuario().nome;
     r.compra_aprovada_em = new Date();
-    r.historico.push({ status: 'compra_aprovada', data: U.hoje(), usuario: usuario().nome });
-    logar('compra', r.id, 'aprovou compra', r.numero + ' · ' + U.brl(t.total));
-    return { ok: true, total: t.total };
+    r.historico.push({ status: 'compra_aprovada', data: U.hoje(), usuario: usuario().nome,
+      obs: mudancas.length ? 'quantidade ajustada — ' + mudancas.join(' · ') : '' });
+    logar('compra', r.id, 'aprovou compra', r.numero + ' · ' + U.brl(t.total) +
+      (mudancas.length ? ' · ' + mudancas.join(' · ') : ''));
+    return { ok: true, total: t.total, ajustes: mudancas.length, mudancas: mudancas };
   }
 
   /* E-mail de confirmação do pedido. O sistema roda como arquivo local
