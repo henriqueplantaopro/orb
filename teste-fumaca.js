@@ -10934,6 +10934,34 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      A nota chega e so entao se ve que tem retencao. So havia campo
      no Lancamento; quem ja tinha o titulo (ou a previsao virando
      titulo) tinha de cancelar e relancar. */
+  /* v137 · quantidade na aprovacao da compra
+     O preco so aparece na 2a aprovacao. Quem aprova ve que saiu
+     caro e quer levar menos — e a unica saida era devolver pro
+     comprador cotar de novo. */
+  const cpr = fsE.readFileSync(__dirname + '/js/ui-compras.js', 'utf8');
+  verificar('v137 — da para ajustar a quantidade na aprovacao da compra',
+    /const ajustes = \(d\.itens \|\| \[\]\)\.filter/.test(sto) &&
+    /data-acq=/.test(cpr), '');
+  /* A ALCADA tem de conferir o total NOVO: com o antigo, uma compra
+     de R$ 50.000 passaria numa alcada de R$ 10.000. */
+  verificar('v137 — e a alcada confere o total COM a quantidade nova',
+    /const t = totalCotado\(simulado\);/.test(sto) &&
+    /const simulado = \{ itens: r\.itens\.map/.test(sto), '');
+  /* E se a alcada recusar, nada pode ter mudado: decidir tudo antes
+     de aplicar qualquer coisa. */
+  verificar('v137 — decide tudo antes de gravar (recusa nao deixa estado meio mudado)',
+    /DECIDE TUDO ANTES DE MUDAR QUALQUER COISA/.test(sto) &&
+    sto.indexOf('const simulado = { itens:') < sto.indexOf('Passou por tudo: AGORA aplica'), '');
+  verificar('v137 — nao se compra mais do que a requisicao aprovou',
+    /a requisição foi aprovada para/.test(sto), '');
+  verificar('v137 — e a historia fica: pedido, aprovado, comprado',
+    /qtd_aprovada_req/.test(sto) && /qtd_ajustada_na_compra/.test(sto), '');
+  /* Ver o total novo ANTES de clicar e o que impede aprovar um
+     numero e descobrir outro no pedido. */
+  verificar('v137 — a tela recalcula o total enquanto se digita',
+    /id="ac-total"/.test(cpr) && /data-actot=/.test(cpr), '');
+  verificar('v137 — e a quantidade so viaja na aprovacao',
+    /const itens = decisao === 'aprovar'/.test(cpr), '');
   verificar('v136 — da para informar retencao num titulo que ja existe',
     /function informarRetencao/.test(sto), '');
   /* A INVARIANTE: parcelas + retencoes = bruto. Retencao nao e
