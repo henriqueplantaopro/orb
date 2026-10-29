@@ -1051,6 +1051,34 @@ ERP.estoque = (function () {
               return '<option value="' + p.cod + '"' + (p.cod === '8.04' ? ' selected' : '') + '>' +
                 U.esc(p.cod + ' ' + p.nome) + '</option>'; }).join('') + '</select></div>' +
           '<div><label>Vencimento</label><input type="date" id="en-venc" value="' + U.hoje() + '"></div>' +
+        '</div>' +
+        /* ── PROGRAMAÇÃO DE PAGAMENTO (v138) ─────────────
+           Quem dá entrada tem a nota na mão e sabe como foi
+           combinado: à vista, ou 3x. Antes a tela só aceitava UM
+           vencimento, e parcelar virava tarefa do financeiro depois
+           — com a nota já arquivada e a combinação na cabeça de
+           outra pessoa.
+
+           As datas e os valores vêm sugeridos e são todos
+           editáveis: entrada maior com saldo parcelado é comum, e
+           dividir por igual seria um palpite que atrapalha mais do
+           que ajuda. O que o sistema garante é que a soma feche com
+           o total da nota — e quem garante isso é o store, não esta
+           tela. */
+        '<label style="display:flex;gap:7px;align-items:center;margin-top:10px">' +
+          '<input type="checkbox" id="en-parcelar" style="width:auto"> Parcelar o pagamento</label>' +
+        '<div id="en-parc-box" style="display:none">' +
+          '<div class="row3" style="align-items:end">' +
+            '<div><label>Em quantas vezes</label>' +
+              '<select id="en-parc-n">' +
+                [2, 3, 4, 5, 6, 10, 12].map(function (n) {
+                  return '<option value="' + n + '"' + (n === 3 ? ' selected' : '') + '>' + n + 'x</option>';
+                }).join('') + '</select></div>' +
+            '<div><label>Primeira em</label><input type="date" id="en-parc-1" value="' + U.hoje() + '"></div>' +
+            '<div><label>A cada (dias)</label><input class="num" id="en-parc-int" inputmode="numeric" value="30"></div>' +
+          '</div>' +
+          '<div id="en-parc-linhas" style="margin-top:8px"></div>' +
+          '<div class="pr-confere" id="en-parc-conta" style="margin-top:6px"></div>' +
         '</div></div>'
       : '') +
       '<div class="form-acoes" style="margin:14px -14px -14px">' +
@@ -1108,6 +1136,23 @@ ERP.estoque = (function () {
       }).join(' ') +
       ' <button class="btn-sm" type="button" data-cad="' + ix + '">' +
       (i.produto ? 'Cadastrar como novo' : 'Cadastrar este material') + '</button>' +
+      /* ── USAR O NOME DA NOTA (v138) ──────────────────
+         A requisição costuma ser aberta com o nome abreviado, ou
+         com o que a pessoa lembrou na hora; a nota do fornecedor
+         traz a descrição completa. O botão só aparece quando há
+         material vinculado E os nomes realmente diferem — oferecer
+         "renomear" para um nome igual ao que já está lá é ruído, e
+         ruído ensina a ignorar botão. */
+      (function () {
+        if (!i.produto) return '';
+        const p = D.produtos.find(function (x) { return x.id === i.produto; });
+        if (!p) return '';
+        const daNota = String(i.nome_nf || '').trim().replace(/\s+/g, ' ');
+        if (!daNota || daNota.length < 3) return '';
+        if (daNota.toUpperCase() === String(p.descricao || '').trim().toUpperCase()) return '';
+        return ' <button class="btn-sm" type="button" data-renomear="' + ix + '" ' +
+          'title="Cadastro: ' + U.esc(p.descricao || '') + '">Usar o nome da nota no cadastro</button>';
+      })() +
       '</div>';
   }
 
@@ -1227,6 +1272,44 @@ ERP.estoque = (function () {
       b.addEventListener('click', function () {
         lerItensEntrada();
         cadastrarProdutoDaNota(+this.dataset.cad);
+      });
+    });
+    /* Renomear o cadastro pelo nome da nota (v138). Pergunta antes:
+       o nome antigo aparece em pedidos, relatórios e no histórico
+       de quem já trabalhou com ele, e trocar sem confirmar deixaria
+       a pessoa procurando por um nome que sumiu. */
+    box.querySelectorAll('[data-renomear]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        lerItensEntrada();
+        const ix = +this.dataset.renomear;
+        const linha = linhasEntrada[ix];
+        const p = D.produtos.find(function (x) { return x.id === linha.produto; });
+        if (!p) return;
+        const daNota = String(linha.nome_nf || '').trim().replace(/\s+/g, ' ');
+        ERP.app.modal({
+          titulo: 'Usar o nome da nota no cadastro',
+          fecharTxt: 'Deixar como está',
+          corpo:
+            '<div class="ajuda">O cadastro passa a se chamar como na nota do fornecedor. ' +
+            'Vale a pena quando a requisição foi aberta com o nome abreviado e a nota ' +
+            'trouxe a descrição completa.</div>' +
+            '<div class="pr-confere" style="margin-top:8px;flex-direction:column;align-items:flex-start;gap:4px">' +
+              '<span>Hoje no cadastro: <b>' + U.esc(p.descricao || '') + '</b></span>' +
+              '<span>Na nota: <b>' + U.esc(daNota) + '</b></span>' +
+            '</div>' +
+            '<label style="margin-top:8px">Nome que vai ficar</label>' +
+            '<input id="rn-nome" value="' + U.esc(daNota) + '">' +
+            '<div class="ajuda">O nome antigo fica guardado no cadastro e na trilha — quem ' +
+            'procurar pelo nome velho ainda acha.</div>',
+          acoes: [{ txt: 'Renomear', cls: 'btn-aprovar', fn: function () {
+            const r = S.renomearProdutoPelaNota(p.id, U.val('rn-nome'));
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal();
+            ERP.app.aviso(r.igual ? 'O nome já era esse.'
+              : 'Renomeado: "' + r.antigo + '" → "' + r.descricao + '".', 'ok');
+            renderItensEntrada();
+          } }]
+        });
       });
     });
 
@@ -1787,6 +1870,95 @@ ERP.estoque = (function () {
 
   /* Gera o título no contas a pagar com os dados da nota, rateado no
      projeto do armazém que recebeu o material. */
+  /* ── A GRADE DE PARCELAS DA ENTRADA (v138) ────────────
+     Datas e valores SUGERIDOS, todos editáveis. A sugestão divide
+     por igual e joga a sobra de centavos na última parcela — em
+     R$ 1.000,00 em 3x isso dá 333,33 / 333,33 / 333,34, e não três
+     linhas que somam R$ 999,99. Quem precisa de entrada maior
+     digita por cima; o rodapé mostra o que falta ou o que sobrou
+     para a conta fechar com a nota. */
+  function totalDaEntrada() {
+    lerItensEntrada();
+    const itens = linhasEntrada.filter(function (l) { return l.produto && (l.qtd || 0) > 0; });
+    const bruto = itens.reduce(function (a, l) {
+      return a + (l.qtd || 0) * (l.custo || 0); }, 0);
+    return Math.round((bruto + (despesasNota || 0)) * 100) / 100;
+  }
+
+  function sugerirParcelas() {
+    const n = Math.max(2, parseInt(U.val('en-parc-n'), 10) || 2);
+    const ini = U.val('en-parc-1') || U.hoje();
+    const passo = Math.max(1, parseInt(U.parseValor(U.val('en-parc-int')), 10) || 30);
+    const total = totalDaEntrada();
+    const cada = Math.floor((total / n) * 100) / 100;
+    const linhas = [];
+    for (let i = 0; i < n; i++) {
+      /* A última leva a sobra: sem isso a soma das parcelas fica
+         alguns centavos abaixo da nota e o store recusa — com
+         razão. */
+      const v = i === n - 1 ? Math.round((total - cada * (n - 1)) * 100) / 100 : cada;
+      linhas.push({ venc: U.addDias(ini, passo * i), valor: v });
+    }
+    return linhas;
+  }
+
+  function desenharParcelas(linhas) {
+    const cx = U.el('en-parc-linhas');
+    if (!cx) return;
+    cx.innerHTML = linhas.map(function (l, i) {
+      return '<div class="row2" style="align-items:end;margin-bottom:4px">' +
+        '<div><label>' + (i + 1) + 'ª parcela — vencimento</label>' +
+          '<input type="date" data-pvenc="' + i + '" value="' + l.venc + '"></div>' +
+        '<div><label>Valor (R$)</label>' +
+          '<input class="num" inputmode="decimal" data-pval="' + i + '" value="' +
+          U.num(l.valor) + '"></div></div>';
+    }).join('');
+    cx.querySelectorAll('[data-pval],[data-pvenc]').forEach(function (e) {
+      e.addEventListener('input', conferirParcelas);
+    });
+    conferirParcelas();
+  }
+
+  function parcelasDigitadas() {
+    return Array.from(document.querySelectorAll('[data-pval]')).map(function (e, i) {
+      const dv = document.querySelector('[data-pvenc="' + i + '"]');
+      return { num: i + 1, venc: dv ? dv.value : '', valor: U.parseValor(e.value) };
+    });
+  }
+
+  function conferirParcelas() {
+    const cx = U.el('en-parc-conta');
+    if (!cx) return;
+    const total = totalDaEntrada();
+    const soma = Math.round(parcelasDigitadas()
+      .reduce(function (a, p) { return a + p.valor; }, 0) * 100) / 100;
+    const dif = Math.round((total - soma) * 100) / 100;
+    cx.innerHTML = '<span>Nota <b>' + U.brl(total) + '</b></span>' +
+      '<span>Parcelas <b>' + U.brl(soma) + '</b></span>' +
+      '<span>' + (Math.abs(dif) < 0.02
+        ? 'Fecha <b>certo</b>'
+        : (dif > 0 ? 'Falta <b class="erro">' + U.brl(dif) + '</b>'
+                   : 'Passou <b class="erro">' + U.brl(-dif) + '</b>')) + '</span>';
+  }
+
+  function ligarParcelamento() {
+    const chk = U.el('en-parcelar');
+    if (!chk) return;
+    const atualizar = function () { desenharParcelas(sugerirParcelas()); };
+    chk.addEventListener('change', function () {
+      U.el('en-parc-box').style.display = this.checked ? '' : 'none';
+      /* O campo de vencimento único deixa de valer quando há grade:
+         dois lugares dizendo a data do pagamento confundiriam quem
+         preenche e quem confere depois. */
+      const venc = U.el('en-venc');
+      if (venc) venc.disabled = this.checked;
+      if (this.checked) atualizar();
+    });
+    ['en-parc-n', 'en-parc-1', 'en-parc-int'].forEach(function (id) {
+      if (U.el(id)) U.el(id).addEventListener('change', atualizar);
+    });
+  }
+
   function lancarNoFinanceiro(armSel, valor) {
     const am = D.armazem(armSel) || {};
     const nomeCr = U.val('en-credor') ||
@@ -1799,28 +1971,56 @@ ERP.estoque = (function () {
            String(notaLida.emitente.documento).replace(/\D/g, ''));
     });
     if (!cr) return { erro: 'fornecedor "' + nomeCr + '" não está cadastrado.' };
-    if (!am.centro) return { erro: 'o armazém não aponta para nenhum projeto.' };
 
     const doc = U.val('en-doc') || 'ENTRADA';
     const dataEmissao = U.val('en-data') || U.hoje();
     const ped = U.val('en-pedido') || pedidoSel || '';
+    /* O CENTRO VEM DO PEDIDO quando a entrada está vinculada a um
+       (v138): foi lá que alguém decidiu de quem é a despesa, e
+       pode não ser o centro do armazém — compra entregue na matriz
+       referente a um projeto. Sem pedido, o armazém manda, como
+       sempre mandou. */
+    const doPedido = ped ? (S.compra(ped) || {}).centro : '';
+    const centroDespesa = doPedido || am.centro;
+    if (!centroDespesa) {
+      return { erro: 'nem o pedido nem o armazém apontam para um projeto — ' +
+        'escolha o centro de custo no pedido de compra.' };
+    }
     /* A NF pode trazer mais de uma duplicata (vencimentos diferentes) —
        o Financeiro já respeita isso lendo o mesmo XML; aqui a entrada
        de estoque jogava tudo numa parcela só, com o vencimento do
        campo único da tela, mesmo quando a nota tinha duas ou três
        datas. As duplicatas da própria nota valem mais que o campo. */
-    const linhas = (notaLida && notaLida.duplicatas && notaLida.duplicatas.length)
-      ? notaLida.duplicatas.map(function (d, i) {
-          return { num: i + 1, venc: d.venc, comp: (d.venc || dataEmissao).slice(0, 7), valor: d.valor };
+    /* A GRADE DIGITADA GANHA DE TUDO (v138): se quem dá entrada
+       montou a programação à mão, foi porque sabe como ficou
+       combinado — inclusive quando difere das duplicatas do XML
+       (desconto negociado, entrada maior). Depois dela valem as
+       duplicatas da nota, e só então o campo de vencimento único. */
+    const grade = (U.el('en-parcelar') && U.el('en-parcelar').checked)
+      ? parcelasDigitadas().filter(function (p) { return p.valor > 0; }) : [];
+    const linhas = grade.length
+      ? grade.map(function (p, i) {
+          return { num: i + 1, venc: p.venc || U.hoje(),
+            comp: (p.venc || dataEmissao).slice(0, 7), valor: p.valor };
         })
-      : [{ num: 1, venc: U.val('en-venc') || U.hoje(), comp: dataEmissao.slice(0, 7), valor: valor }];
+      : (notaLida && notaLida.duplicatas && notaLida.duplicatas.length)
+        ? notaLida.duplicatas.map(function (d, i) {
+            return { num: i + 1, venc: d.venc, comp: (d.venc || dataEmissao).slice(0, 7), valor: d.valor };
+          })
+        : [{ num: 1, venc: U.val('en-venc') || U.hoje(), comp: dataEmissao.slice(0, 7), valor: valor }];
     return S.criarTitulo({
       descricao: 'Material — ' + (notaLida && notaLida.natureza ? notaLida.natureza : 'entrada de estoque') +
         (ped ? ' · pedido ' + (S.compra(ped) || {}).numero : ''),
       documento: doc, tipo_titulo: notaLida ? 'nf' : 'recibo',
       credor: cr.id, conta: U.val('en-conta'),
-      centro: am.centro, rateio: [{ centro: am.centro, pct: 100 }],
+      centro: centroDespesa, rateio: [{ centro: centroDespesa, pct: 100 }],
       emissao: dataEmissao, origem: notaLida ? 'nota_fiscal' : 'manual',
+      /* O TOTAL DA NOTA vai junto, e é ele que faz o store conferir
+         "parcelas + retenções = bruto". Sem isso, uma grade de
+         parcelas que não fecha com a entrada passaria batida e o
+         contas a pagar ficaria com valor diferente do estoque. A
+         regra já existia no `criarTitulo`; aqui era só usá-la. */
+      valor_bruto: grade.length ? valor : undefined,
       /* O vínculo com o pedido tem que ir ADIANTE: a descrição já
          escrevia o número do pedido, mas o título nascia sem
          `pedido_id` e a previsão do pedido continuava viva — o fluxo
@@ -2268,6 +2468,7 @@ ERP.estoque = (function () {
           render();
         });
       }
+      ligarParcelamento();
       renderItensEntrada();
     }
     if (U.el('iv-gravar')) U.el('iv-gravar').addEventListener('click', gravarInventario);

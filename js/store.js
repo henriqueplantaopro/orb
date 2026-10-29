@@ -10657,6 +10657,37 @@ ERP.store = (function () {
      Só preenche o que está VAZIO: o que alguém já informou tem
      precedência sobre o que veio do XML, porque a nota do
      fornecedor às vezes classifica diferente do que a empresa usa. */
+  /* ── RENOMEAR O MATERIAL PELO NOME DA NOTA (v138) ─────
+     A requisição costuma ser aberta com o nome abreviado, ou com o
+     que a pessoa lembrou na hora ("luva 7,5"). A nota do fornecedor
+     chega com a descrição completa. Trocar o nome do cadastro por
+     ela é quase sempre um ganho — mas é SOBRESCRITA, não
+     preenchimento de campo vazio como o `completarCadastroPelaNota`
+     logo abaixo, e por isso tem função própria:
+
+       - nunca acontece sozinha: quem dá entrada confirma;
+       - o nome antigo vai para a trilha, porque relatório, pedido e
+         histórico antigos continuam falando dele;
+       - o nome antigo fica guardado no próprio cadastro
+         (`nome_anterior`), para quem procurar pelo nome velho na
+         tela de materiais ainda achar. */
+  function renomearProdutoPelaNota(produtoId, novoNome) {
+    if (!pode('estoque')) return { erro: 'Seu perfil não altera cadastro de material.' };
+    const p = D.produtos.find(function (x) { return x.id === produtoId; });
+    if (!p) return { erro: 'Material não encontrado.' };
+    const novo = String(novoNome || '').trim().replace(/\s+/g, ' ');
+    if (!novo) return { erro: 'O nome da nota veio vazio.' };
+    if (novo.length < 3) return { erro: 'Nome curto demais para substituir o cadastro.' };
+    const antigo = String(p.descricao || '').trim();
+    if (antigo.toUpperCase() === novo.toUpperCase()) {
+      return { ok: true, igual: true, descricao: antigo };
+    }
+    p.nome_anterior = antigo;
+    p.descricao = novo;
+    logar('produto', p.id, 'renomeou pelo nome da nota', p.codigo + ' · "' + antigo + '" → "' + novo + '"');
+    return { ok: true, antigo: antigo, descricao: novo };
+  }
+
   function completarCadastroPelaNota(produtoId, dadosNota) {
     const p = D.produtos.find(function (x) { return x.id === produtoId; });
     if (!p || !dadosNota) return { ok: false };
@@ -11420,10 +11451,23 @@ ERP.store = (function () {
     const itens = (d.itens || []).filter(function (i) { return i.produto && i.qtd > 0; });
     if (!itens.length) return { erro: 'Inclua ao menos um item com quantidade.' };
     if (!d.armazem) return { erro: 'Informe o armazém de destino.' };
+    /* ── CENTRO DE CUSTO DA COMPRA (v138) ───────────────
+       Antes o centro era SEMPRE o do armazém de destino, deduzido
+       lá na frente, na hora de criar a previsão. Isso confunde duas
+       perguntas diferentes: ONDE o material vai ficar guardado e
+       DE QUEM é a despesa. Compra entregue na matriz mas referente
+       a um projeto específico caía no centro da matriz.
+
+       Agora são duas coisas: o armazém continua sendo o destino
+       físico e passa a ser só a SUGESTÃO de centro; o centro viaja
+       na requisição e é ele que a previsão e o título usam. */
+    const centroCompra = d.centro || (D.armazem(d.armazem) || {}).centro || '';
+    if (d.centro && !D.centro(d.centro)) return { erro: 'Centro de custo não encontrado.' };
     const r = {
       id: novoId('rq'),
       numero: 'RQ-' + String(st.compras.length + 1).padStart(4, '0'),
       armazem: d.armazem, status: 'requisicao',
+      centro: centroCompra,
       origem: d.origem || 'manual',
       credor: null, prazo: d.prazo || '',
       observacao: d.observacao || '',
@@ -11854,6 +11898,13 @@ ERP.store = (function () {
     }
     const antes = r.status;
     const valorAntes = valorEstimadoCompra(r).valor;
+    /* O centro vem da tela como qualquer outro campo, e a cópia
+       abaixo é cega: sem esta conferência, um centro inexistente
+       entrava e só aparecia como despesa órfã lá no financeiro.
+       Mesma trava que a criação da requisição já faz. */
+    if (dados && dados.centro && !D.centro(dados.centro)) {
+      return { erro: 'Centro de custo não encontrado.' };
+    }
     r.status = status;
     Object.keys(dados || {}).forEach(function (k) { r[k] = dados[k]; });
     /* Valor subiu depois de aprovada: a alçada foi dada para um
@@ -11987,7 +12038,9 @@ ERP.store = (function () {
         _interno: true,
         descricao: 'Previsão de pedido ' + alvo.numero, documento: 'PREV-' + alvo.numero,
         tipo_titulo: 'previsao', credor: cid, conta: contaPrevisao,
-        centro: (D.armazem(alvo.armazem) || {}).centro, emissao: U.hoje(),
+        /* O centro escolhido na requisição manda; o do armazém é só
+           a queda para requisição antiga, de antes da v138. */
+        centro: alvo.centro || (D.armazem(alvo.armazem) || {}).centro, emissao: U.hoje(),
         origem: 'previsao_compra', origem_ref: alvo.id,
         obs: 'Previsão gerada ao enviar o pedido ' + alvo.numero + ' — some sozinha quando a NF ' +
           'real for lançada na mesma natureza e projeto, ou peça pra cancelar se a compra cair.'
@@ -18724,7 +18777,7 @@ ERP.store = (function () {
        função de domínio). Enquanto for assim, ao menos deixam rastro. */
     logarCadastro: logar,
     gerarParcelas, criarTitulo, aprovar, reprovar, registrarPagamento, estornar, cancelar,
-    informarRetencao,
+    informarRetencao, renomearProdutoPelaNota,
     criarReceber, emitirFatura, proximoNumeroFatura, contasReceber, listarReceber, receberBaixa, estornarRecebimento, editarReceber,
     previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
     vencimentoPrevistoDe, origemDoPrazo,

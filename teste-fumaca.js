@@ -10934,6 +10934,44 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      A nota chega e so entao se ve que tem retencao. So havia campo
      no Lancamento; quem ja tinha o titulo (ou a previsao virando
      titulo) tinha de cancelar e relancar. */
+  /* v138 · centro de custo, parcelamento e nome pela nota */
+  const est = fsE.readFileSync(__dirname + '/js/ui-estoque.js', 'utf8');
+  /* O armazem diz ONDE o material fica; o centro diz DE QUEM e a
+     despesa. Compra entregue na matriz referente a um projeto caia
+     no centro da matriz. */
+  verificar('v138 — a requisicao tem centro de custo proprio',
+    /const centroCompra = d\.centro \|\| \(D\.armazem\(d\.armazem\) \|\| \{\}\)\.centro/.test(sto) &&
+    /id="cp-centro"/.test(fsE.readFileSync(__dirname + '/js/ui-compras.js', 'utf8')), '');
+  verificar('v138 — e e ele que a previsao do pedido usa',
+    /centro: alvo\.centro \|\| \(D\.armazem\(alvo\.armazem\) \|\| \{\}\)\.centro/.test(sto), '');
+  verificar('v138 — centro inexistente e recusado nos dois caminhos',
+    (sto.match(/Centro de custo não encontrado\./g) || []).length === 2, '');
+  verificar('v138 — e a entrada de estoque segue o centro do pedido',
+    /const doPedido = ped \? \(S\.compra\(ped\) \|\| \{\}\)\.centro : '';/.test(est) &&
+    /centro: centroDespesa, rateio: \[\{ centro: centroDespesa/.test(est), '');
+  /* Parcelamento: a soma TEM de fechar com a nota, e quem garante
+     isso e o store (a mesma regra do lancamento), nao a tela. */
+  verificar('v138 — da para parcelar o pagamento na entrada',
+    /id="en-parcelar"/.test(est) && /function sugerirParcelas/.test(est) &&
+    /function parcelasDigitadas/.test(est), '');
+  verificar('v138 — e a soma das parcelas e conferida pelo store',
+    /valor_bruto: grade\.length \? valor : undefined,/.test(est), '');
+  /* A sobra de centavos vai na ultima: 1.000 em 3x nao pode somar
+     999,99 e ser recusado pela propria trava. */
+  verificar('v138 — a sugestao fecha a conta, sem sobrar centavo',
+    /i === n - 1 \? Math\.round\(\(total - cada \* \(n - 1\)\) \* 100\) \/ 100 : cada/.test(est), '');
+  verificar('v138 — e a grade digitada ganha das duplicatas do XML',
+    /const grade = \(U\.el\('en-parcelar'\) && U\.el\('en-parcelar'\)\.checked\)/.test(est), '');
+  /* Renomear pelo nome da nota: sobrescrita, entao confirma e
+     guarda o nome antigo. */
+  verificar('v138 — da para usar o nome da nota no cadastro',
+    /function renomearProdutoPelaNota/.test(sto) && /data-renomear=/.test(est), '');
+  verificar('v138 — guardando o nome antigo, no cadastro e na trilha',
+    /p\.nome_anterior = antigo;/.test(sto) &&
+    /renomeou pelo nome da nota/.test(sto), '');
+  verificar('v138 — e o botao so aparece quando os nomes diferem',
+    /if \(daNota\.toUpperCase\(\) === String\(p\.descricao \|\| ''\)\.trim\(\)\.toUpperCase\(\)\) return '';/.test(est), '');
+
   /* v137 · quantidade na aprovacao da compra
      O preco so aparece na 2a aprovacao. Quem aprova ve que saiu
      caro e quer levar menos — e a unica saida era devolver pro
