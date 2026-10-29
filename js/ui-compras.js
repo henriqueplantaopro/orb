@@ -196,6 +196,19 @@ ERP.compras = (function () {
               U.esc(a.codigo + ' · ' + a.nome) + '</option>'; }).join('') + '</select></div>' +
         '<div><label>Prazo desejado</label><input type="date" id="cp-prazo" value="' +
           (r ? (r.prazo || '') : '') + '"></div></div>' +
+        /* CENTRO DE CUSTO (v138). O armazém diz ONDE o material vai
+           ficar; o centro diz DE QUEM é a despesa, e nem sempre são
+           o mesmo: compra entregue na matriz referente a um projeto
+           específico caía no centro da matriz. O armazém sugere, e
+           quem requisita troca quando for o caso. */
+        '<div><label>Centro de custo da despesa *</label><select id="cp-centro">' +
+          D.centros.filter(function (c) {
+            return c.ativo || (r && r.centro === c.id);
+          }).map(function (c) {
+            return '<option value="' + c.id + '"' + (r && r.centro === c.id ? ' selected' : '') + '>' +
+              U.esc((c.curto || c.codigo || '') + ' · ' + c.nome) +
+              (c.ativo ? '' : ' (encerrado)') + '</option>'; }).join('') + '</select>' +
+          '<div class="ajuda" id="cp-centro-sug"></div></div>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Materiais e quantidades</h2>' +
         listaMateriais() +
         '<div id="cp-itens"></div>' +
@@ -211,12 +224,14 @@ ERP.compras = (function () {
           });
           const res = S.mudarStatusCompra(r.id, r.status, {
             armazem: U.val('cp-arm'), prazo: U.val('cp-prazo'),
+            centro: U.val('cp-centro'),
             observacao: U.val('cp-obs'), itens: r.itens
           });
           if (res.erro) return ERP.app.aviso(res.erro, 'erro');
         } else {
           const res = S.criarRequisicao({
             armazem: U.val('cp-arm'), prazo: U.val('cp-prazo'),
+            centro: U.val('cp-centro'),
             observacao: U.val('cp-obs'), itens: itens
           });
           if (res.erro) return ERP.app.aviso(res.erro, 'erro');
@@ -225,7 +240,35 @@ ERP.compras = (function () {
         ERP.app.aviso('Requisição salva.', 'ok');
         render();
       } }],
-      aoAbrir: renderItens
+      aoAbrir: function () {
+        renderItens();
+        /* O armazém SUGERE o centro: ao escolher o destino, o centro
+           acompanha — mas só enquanto ninguém tiver mexido nele à
+           mão. Sobrescrever uma escolha consciente seria pior que
+           não sugerir nada. */
+        const selArm = U.el('cp-arm'), selCen = U.el('cp-centro');
+        if (!selArm || !selCen) return;
+        let tocado = !!(r && r.centro);
+        selCen.addEventListener('change', function () { tocado = true; dizer(); });
+        const dizer = function () {
+          const am = D.armazem(selArm.value) || {};
+          const doArm = D.centro(am.centro);
+          const cx = U.el('cp-centro-sug');
+          if (!cx) return;
+          cx.textContent = !doArm ? 'Este armazém não aponta para nenhum projeto.'
+            : selCen.value === am.centro
+              ? 'Mesmo centro do armazém de destino.'
+              : 'Entrega em ' + (am.nome || '') + ', despesa em ' +
+                ((D.centro(selCen.value) || {}).curto || '—') + '.';
+        };
+        const sugerir = function () {
+          const am = D.armazem(selArm.value) || {};
+          if (!tocado && am.centro) selCen.value = am.centro;
+          dizer();
+        };
+        selArm.addEventListener('change', sugerir);
+        sugerir();
+      }
     });
   }
 
