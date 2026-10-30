@@ -591,9 +591,10 @@ ERP.compras = (function () {
                 return '<option value="' + c.id + '"' + (i.credor === c.id ? ' selected' : '') + '>' +
                   U.esc(c.nome) + (c.email ? '' : ' (sem e-mail)') + '</option>';
               }).join('') + '</select></td>' +
-            '<td><input class="num" data-ct-custo="' + idx + '" inputmode="decimal" value="' + U.num(i.custo || 0) + '"></td>' +
+            '<td><input class="num" data-ct-custo="' + idx + '" inputmode="decimal" value="' + U.numUnit(i.custo || 0) + '"></td>' +
             '<td><input class="num" data-ct-frete="' + idx + '" inputmode="decimal" value="' + U.num(i.frete || 0) + '"></td>' +
-            '<td class="num" data-ct-tot="' + idx + '">' + U.brl((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) + '</td></tr>';
+            '<td class="num" data-ct-tot="' + idx + '">' +
+              U.brl(Math.round(((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) * 100) / 100) + '</td></tr>';
         }).join('') +
         '<tr><td colspan="5"><b>Total cotado</b></td><td class="num"><b id="ct-total">R$ 0,00</b></td></tr>' +
         '</tbody></table>' +
@@ -626,7 +627,7 @@ ERP.compras = (function () {
         const itens = ativos.map(function (i, idx) {
           return { produto: i.produto,
             credor: document.querySelector('[data-ct-forn="' + idx + '"]').value,
-            custo: U.parseValor(document.querySelector('[data-ct-custo="' + idx + '"]').value),
+            custo: U.parseValor(document.querySelector('[data-ct-custo="' + idx + '"]').value, U.CASAS_UNIT),
             frete: U.parseValor(document.querySelector('[data-ct-frete="' + idx + '"]').value) };
         });
         const enviar = function () {
@@ -654,12 +655,13 @@ ERP.compras = (function () {
         const recalcular = function () {
           let t = 0;
           ativos.forEach(function (i, idx) {
-            const v = U.parseValor(document.querySelector('[data-ct-custo="' + idx + '"]').value) * i.qtd +
-              U.parseValor(document.querySelector('[data-ct-frete="' + idx + '"]').value);
-            document.querySelector('[data-ct-tot="' + idx + '"]').textContent = U.brl(Math.round(v * 100) / 100);
-            t += v;
+            const v = Math.round((U.parseValor(document.querySelector('[data-ct-custo="' + idx + '"]').value,
+                U.CASAS_UNIT) * i.qtd +
+              U.parseValor(document.querySelector('[data-ct-frete="' + idx + '"]').value)) * 100) / 100;
+            document.querySelector('[data-ct-tot="' + idx + '"]').textContent = U.brl(v);
+            t = Math.round((t + v) * 100) / 100;
           });
-          U.el('ct-total').textContent = U.brl(Math.round(t * 100) / 100);
+          U.el('ct-total').textContent = U.brl(t);
         };
         document.querySelectorAll('[data-ct-custo], [data-ct-frete]').forEach(function (e) {
           e.addEventListener('input', recalcular);
@@ -796,7 +798,7 @@ ERP.compras = (function () {
               '<div class="sub">até ' + U.num(i.qtd_aprovada_req !== undefined ? i.qtd_aprovada_req : i.qtd) +
               '</div></td>' +
             '<td>' + U.esc(c.nome || '—') + (c.email ? '' : '<div class="sub erro">sem e-mail</div>') + '</td>' +
-            '<td class="num">' + U.brl(i.custo || 0) + '</td>' +
+            '<td class="num">' + U.brlUnit(i.custo || 0) + '</td>' +
             '<td class="num">' + U.brl(i.frete || 0) + '</td>' +
             '<td class="num" data-actot="' + r.itens.indexOf(i) + '">' +
               U.brl(Math.round(((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) * 100) / 100) + '</td></tr>';
@@ -927,7 +929,7 @@ ERP.compras = (function () {
             '<td class="num">' + U.num(i.qtd) + ' ' + U.esc(p.unidade || '') + '</td>' +
             '<td>' + U.esc(c.nome || '—') + (c.email ? '<div class="sub">' + U.esc(c.email) + '</div>'
               : '<div class="sub erro">sem e-mail no cadastro</div>') + '</td>' +
-            '<td class="num">' + U.brl(i.custo || 0) + '</td>' +
+            '<td class="num">' + U.brlUnit(i.custo || 0) + '</td>' +
             '<td class="num">' + U.brl(i.frete || 0) + '</td>' +
             '<td class="num">' + U.brl(Math.round(((i.qtd || 0) * (i.custo || 0) + (i.frete || 0)) * 100) / 100) + '</td></tr>';
         }).join('') +
@@ -985,8 +987,8 @@ ERP.compras = (function () {
                unidade, não o do cadastro: com o custo do cadastro o
                estoque nunca refletia o que a compra custou. */
             (S.pode('ver_custo')
-              ? '<input class="num" data-rcusto="' + i.produto + '" inputmode="decimal" value="' + U.num(custoReal(i, p)) + '">'
-              : '<input type="hidden" data-rcusto="' + i.produto + '" value="' + U.num(custoReal(i, p)) + '">') +
+              ? '<input class="num" data-rcusto="' + i.produto + '" inputmode="decimal" value="' + U.numUnit(custoReal(i, p)) + '">'
+              : '<input type="hidden" data-rcusto="' + i.produto + '" value="' + U.numUnit(custoReal(i, p)) + '">') +
             '<input data-lote="' + i.produto + '" placeholder="lote">' +
           '</div>';
         }).join('') +
@@ -1000,7 +1002,7 @@ ERP.compras = (function () {
           const l = document.querySelector('[data-lote="' + i.produto + '"]');
           const qtd = U.parseValor(q ? q.value : 0);
           if (qtd > 0) itensEnt.push({ produto: i.produto, qtd: qtd,
-            custo: U.parseValor(cu ? cu.value : 0), lote: l ? l.value : '' });
+            custo: U.parseValor(cu ? cu.value : 0, U.CASAS_UNIT), lote: l ? l.value : '' });
         });
         if (!itensEnt.length) return ERP.app.aviso('Informe o que chegou.', 'erro');
         const dadosEnt = {

@@ -10,6 +10,28 @@ ERP.util = (function () {
     minimumFractionDigits: casas === undefined ? 2 : casas,
     maximumFractionDigits: casas === undefined ? 2 : casas });
 
+  /* PREÇO UNITÁRIO É A ÚNICA EXCEÇÃO ÀS DUAS CASAS.
+
+     Duas casas é a regra da casa para VALOR, e continua sendo: o
+     que se paga, o que entra no título, o que o banco debita tem
+     centavo e ponto final. Mas PREÇO UNITÁRIO não é valor — é
+     quanto custa UM, e a nota do fornecedor manda quatro casas
+     justamente quando o item é barato e a quantidade é grande.
+
+     Luva a R$ 0,2345 em 10.000 unidades são R$ 2.345,00. Lido com
+     duas casas vira R$ 0,23 e R$ 2.300,00: quarenta e cinco reais
+     que não existem em lugar nenhum, e um total que não bate com a
+     nota que está na mão de quem lança.
+
+     Mínimo 2 e máximo 4: R$ 1,20 continua "1,20" — a tela não fica
+     cheia de zeros para o caso normal —, e R$ 0,2345 aparece
+     inteiro. Só o campo de unitário usa este formato; todo total
+     segue em `num`/`brl`, com as duas casas de sempre. */
+  const CASAS_UNIT = 4;
+  const numUnit = v => Number(v || 0).toLocaleString('pt-BR', {
+    minimumFractionDigits: 2, maximumFractionDigits: CASAS_UNIT });
+  const brlUnit = v => 'R$ ' + numUnit(v);
+
   // "1.234,56" | "1234.56" | 1234.56  ->  1234.56
   /* O separador decimal é o ÚLTIMO que aparece.
 
@@ -22,7 +44,13 @@ ERP.util = (function () {
      os dois separadores, o que está mais à direita é o decimal, e o
      outro é milhar. "1.234,56" e "1,234.56" passam a dar o mesmo
      número, cada um na sua convenção. */
-  function parseValor(s) {
+  /* `casas` só é informado por quem lê PREÇO UNITÁRIO, e vale 4.
+     O padrão continua 2, para os outros cento e tantos campos de
+     dinheiro não mudarem de comportamento por tabela: o dia em que
+     "2.345,678" virar 2.345,68 num campo de pagamento é o dia em
+     que alguém paga o centavo errado sem saber por quê. */
+  function parseValor(s, casas) {
+    const f = Math.pow(10, casas === undefined ? 2 : casas);
     if (typeof s === 'number') return s;
     s = String(s || '').trim().replace(/[R$\s]/g, '');
     if (!s) return 0;
@@ -41,7 +69,7 @@ ERP.util = (function () {
       s = s.replace(/\./g, '');
     }
     const n = parseFloat(s);
-    return isNaN(n) ? 0 : Math.round(n * 100) / 100;
+    return isNaN(n) ? 0 : Math.round(n * f) / f;
   }
 
   /* VALOR ESCRITO É NÚMERO? — pergunta diferente de "quanto vale".
@@ -520,6 +548,6 @@ ERP.util = (function () {
     comPrazo: comPrazo, avisarCarga: avisarCarga, andamento: andamento,
     slug,
     mesesEntre,
-    diasUteis, brl, num, parseValor, valorValido, encaixarTabelas, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
+    diasUteis, brl, num, numUnit, brlUnit, CASAS_UNIT, parseValor, valorValido, encaixarTabelas, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
     cnpjValido, cpfValido, documentoNormalizado };
 })();

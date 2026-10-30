@@ -909,7 +909,7 @@ ERP.cadastros = (function () {
           '<td>' + U.esc(p.unidade) + '</td>' +
           '<td class="num">' + U.num(p.minimo || 0) + '</td>' +
           '<td class="num">' + U.num(p.ideal || 0) + '</td>' +
-          '<td class="num sub">' + U.brl(p.custo || 0) + '</td>' +
+          '<td class="num sub">' + U.brlUnit(p.custo || 0) + '</td>' +
           '<td class="num">' + U.num(saldo) + '</td>' +
           '<td class="mono sub">' + U.esc(p.ncm || '—') + '</td>' +
           '<td>' + (p.ativo ? '<span class="badge b-aprovado">ativo</span>'
@@ -936,7 +936,7 @@ ERP.cadastros = (function () {
         '<div><label>Ideal (alvo da reposição)</label>' +
           '<input id="pd-ideal" class="num" inputmode="decimal" value="' + U.num(p ? (p.ideal || 0) : 0) + '"></div>' +
         '<div><label>Custo de referência</label>' +
-          '<input id="pd-custo" class="num" inputmode="decimal" value="' + U.num(p ? (p.custo || 0) : 0) + '"></div></div>' +
+          '<input id="pd-custo" class="num" inputmode="decimal" value="' + U.numUnit(p ? (p.custo || 0) : 0) + '"></div></div>' +
         '<label>Natureza padrão (DRE)</label><select id="pd-conta">' +
           D.plano.filter(function (x) { return x.nivel === 2 && x.pai !== '1'; }).map(function (x) {
             return '<option value="' + x.cod + '"' + (p && p.conta === x.cod ? ' selected' : '') + '>' +
@@ -951,7 +951,7 @@ ERP.cadastros = (function () {
         const dados = {
           descricao: desc, codigo: U.val('pd-cod') || ('MT-' + String(D.produtos.length + 1).padStart(3, '0')),
           unidade: U.val('pd-un') || 'UN', ncm: U.val('pd-ncm'),
-          minimo: min, ideal: ideal, custo: U.parseValor(U.val('pd-custo')),
+          minimo: min, ideal: ideal, custo: U.parseValor(U.val('pd-custo'), U.CASAS_UNIT),
           conta: U.val('pd-conta')
         };
         if (p) {

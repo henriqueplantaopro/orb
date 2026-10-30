@@ -1184,11 +1184,61 @@ ERP.estoque = (function () {
       '</div>';
   }
 
+  /* TOTAL DA LINHA ARREDONDA ANTES DE SOMAR, como a nota faz.
+
+     A nota declara o valor de cada item já com dois decimais
+     (`vProd`) e soma esses valores. Somar `qtd × unitário` em
+     precisão cheia e arredondar no fim dá outro número quando o
+     unitário tem quatro casas — a diferença é de centavos, mas é
+     a diferença entre o total da tela e o total impresso na nota,
+     e é por centavo que a conferência trava.
+
+     É também exatamente o que o `entrada()` do store grava. A
+     tela mostrando uma conta e o banco gravando outra seria pior
+     que mostrar errado. */
+  const totalLinhaEntrada = i =>
+    Math.round((Number(i.qtd) || 0) * (Number(i.custo) || 0) * 100) / 100;
+  /* A soma arredonda UMA vez, no fim, e só para matar a sujeira de
+     ponto flutuante — as parcelas já vêm com dois decimais de
+     `totalLinhaEntrada`. Arredondar também a cada passo daria
+     sempre o mesmo resultado e faria a regra existir em dois
+     lugares: dois lugares é onde as regras começam a divergir. */
+  const somaLinhasEntrada = () => Math.round(linhasEntrada.reduce(function (s, i) {
+    return s + totalLinhaEntrada(i); }, 0) * 100) / 100;
+
+  /* Mercadoria da nota lida: `vProd` item a item, que é com o que a
+     grade se compara. Não é o `vNF` — esse traz frete, ST e IPI,
+     que entram pelo campo de despesas, não pela linha do material. */
+  function totalMercadoriaNota() {
+    if (!notaLida || !(notaLida.itens || []).length) return null;
+    return notaLida.itens.reduce(function (s, it) {
+      const v = (it.valor !== undefined && it.valor !== null && it.valor !== '')
+        ? Number(it.valor)
+        : (Number(it.qtd) || 0) * (Number(it.valorUnit) || 0);
+      return Math.round((s + (isFinite(v) ? v : 0)) * 100) / 100;
+    }, 0);
+  }
+
+  /* A CONFERÊNCIA QUE FALTAVA. O total da nota aparecia num canto
+     da tela e o total digitado em outro, e cabia à pessoa comparar
+     dois números a olho — foi assim que uma divergência de
+     centavos passou despercebida até virar dúvida. */
+  function conferenciaDaNota() {
+    const daNota = totalMercadoriaNota();
+    if (daNota === null || !(daNota > 0)) return '';
+    const dif = Math.round((somaLinhasEntrada() - daNota) * 100) / 100;
+    if (Math.abs(dif) < 0.005) {
+      return '<span class="dif ok">confere com a nota</span>';
+    }
+    return '<span class="dif erro">' + (dif > 0 ? 'acima' : 'abaixo') + ' da nota em ' +
+      U.brl(Math.abs(dif)) + ' — a nota traz ' + U.brl(daNota) + ' em mercadoria</span>';
+  }
+
   function renderItensEntrada() {
     const box = U.el('en-itens');
     if (!box) return;
     if (!linhasEntrada.length) linhasEntrada = [{ produto: '', qtd: 0, un_emb: 1, custo: 0, lote: '', validade: '', nome_nf: '' }];
-    const total = linhasEntrada.reduce(function (s, i) { return s + (i.qtd || 0) * (i.custo || 0); }, 0);
+    const total = somaLinhasEntrada();
     /* O estoque é controlado em UNIDADES, porque é assim que a
        cirurgia consome: entra 1 caixa de máscara com 100, e a baixa é
        de 1 máscara. Por isso a entrada tem duas quantidades — como veio
@@ -1198,7 +1248,13 @@ ERP.estoque = (function () {
       .toUpperCase()) >= 0;
     const unidades = linhasEntrada.reduce(function (s, i) {
       return s + (i.qtd || 0) * (i.un_emb || 1); }, 0);
-    const colunas = 'grid-template-columns:2fr 70px 90px 90px 80px 100px 26px';
+    /* A coluna da quantidade era de 70px e cortava: "10.000,00" não
+       cabia, e a nota de material de consumo é justamente a que vem
+       com milhares de unidades — aparecia "10.000,0" e quem confere
+       não tinha como saber se o campo tinha mais dígito escondido.
+       Os 22px vêm da coluna do material, que é fracionária e tem
+       folga de sobra. */
+    const colunas = 'grid-template-columns:2fr 92px 90px 90px 80px 100px 26px';
 
     /* PREENCHER TODAS DE UMA VEZ. Nota com trinta itens da mesma
        caixa de cem exigia digitar "100" trinta vezes — e basta
@@ -1237,18 +1293,18 @@ ERP.estoque = (function () {
             D.produtos.filter(function (p) { return p.ativo; }).map(function (p) {
               return '<option value="' + p.id + '"' + (p.id === i.produto ? ' selected' : '') + '>' +
                 U.esc(p.codigo + ' · ' + p.descricao) + '</option>'; }).join('') + '</select>' +
-          '<input class="num" data-i="' + ix + '" data-c="qtd" inputmode="decimal" value="' + U.num(i.qtd) + '">' +
+          '<input class="num" data-i="' + ix + '" data-c="qtd" inputmode="decimal" value="' + U.numUnit(i.qtd) + '">' +
           '<input class="num" data-i="' + ix + '" data-c="un_emb" inputmode="decimal" value="' +
             (emb === '' ? '' : U.num(emb)) + '" placeholder="' + (emUnidade(prod) ? '1' : '?') +
             '" title="quantas unidades vêm em cada ' + U.esc((prod || {}).unidade || 'embalagem') + '">' +
-          '<input class="num" data-i="' + ix + '" data-c="custo" inputmode="decimal" value="' + U.num(i.custo) + '">' +
+          '<input class="num" data-i="' + ix + '" data-c="custo" inputmode="decimal" value="' + U.numUnit(i.custo) + '">' +
           '<input data-i="' + ix + '" data-c="lote" value="' + U.esc(i.lote || '') + '">' +
           '<input type="date" data-i="' + ix + '" data-c="validade" value="' + (i.validade || '') + '">' +
           '<button class="btn-ghost" data-rem="' + ix + '" type="button">✕</button>' +
           (totalUn && Number(emb) > 1
             ? '<div class="sub" style="grid-column:1/-1">entra no estoque como ' + U.num(totalUn) +
               ' unidade(s)' + (veCusto() && i.custo
-                ? ' a ' + U.brl(Math.round(i.custo / (Number(emb) || 1) * 10000) / 10000) + ' cada' : '') +
+                ? ' a ' + U.brlUnit(Math.round(i.custo / (Number(emb) || 1) * 10000) / 10000) + ' cada' : '') +
               '</div>'
             : '') +
           (i.itemNf ? tiraSugestao(i, ix)
@@ -1257,6 +1313,7 @@ ERP.estoque = (function () {
       }).join('') +
       '<div class="rodape"><button class="btn-sm" id="en-add" type="button">+ outro material</button>' +
         '<span class="sub">' + U.num(unidades) + ' unidade(s)</span>' +
+        '<span id="en-confere">' + conferenciaDaNota() + '</span>' +
         '<span class="dif ok" id="en-total">' + U.brl(total) + '</span></div></div>';
 
     box.querySelectorAll('[data-troca]').forEach(function (b) {
@@ -1444,8 +1501,12 @@ ERP.estoque = (function () {
   function atualizarTotalEntrada() {
     const el = U.el('en-total');
     if (!el) return;
-    el.textContent = U.brl(linhasEntrada.reduce(function (s2, i) {
-      return s2 + (i.qtd || 0) * (i.custo || 0); }, 0));
+    el.textContent = U.brl(somaLinhasEntrada());
+    /* A conferência acompanha a digitação. Só no fim ela avisaria
+       tarde: quem corrige o unitário quer ver o total fechar na
+       hora, não depois de gravar. */
+    const cf = U.el('en-confere');
+    if (cf) cf.innerHTML = conferenciaDaNota();
   }
 
   function lerItensEntrada() {
@@ -1456,7 +1517,10 @@ ERP.estoque = (function () {
         const i = +e.dataset.i;
         if (!linhasEntrada[i]) return;
         const numerico = campo === 'qtd' || campo === 'custo' || campo === 'un_emb';
-        linhasEntrada[i][campo] = numerico ? U.parseValor(e.value) : e.value;
+        /* Quatro casas: é o campo de UNITÁRIO e de QUANTIDADE da
+           nota, e cortar aqui era onde a nota do fornecedor perdia
+           os decimais depois de ter sido lida certo do XML. */
+        linhasEntrada[i][campo] = numerico ? U.parseValor(e.value, U.CASAS_UNIT) : e.value;
       });
     });
     /* Unidades por embalagem em branco vale 1 — material que a nota
@@ -1563,7 +1627,7 @@ ERP.estoque = (function () {
           '<input id="np-cod" value="' + U.esc(prox) + '"></div>' +
         '<div><label>Unidade</label><input id="np-un" value="' + U.esc(base.unidade) + '"></div>' +
         '<div><label>Custo unitário</label><input class="num" id="np-custo" inputmode="decimal" value="' +
-          U.num(base.custo) + '"></div></div>' +
+          U.numUnit(base.custo) + '"></div></div>' +
         '<div class="row3"><div><label>NCM</label><input id="np-ncm" value="' + U.esc(base.ncm) + '"></div>' +
         '<div><label>Código de barras (EAN)</label><input id="np-ean" value="' + U.esc(base.ean) + '"></div>' +
         '<div><label>Código no fornecedor</label><input id="np-codf" value="' +
@@ -1598,7 +1662,7 @@ ERP.estoque = (function () {
         p.codigo_fornecedor = U.val('np-codf');
         p.minimo = U.parseValor(U.val('np-min'));
         p.ideal = U.parseValor(U.val('np-ideal'));
-        p.custo = U.parseValor(U.val('np-custo'));
+        p.custo = U.parseValor(U.val('np-custo'), U.CASAS_UNIT);
         p.origem = 'nota fiscal';
         linhasEntrada[ix].produto = p.id;
         linhasEntrada[ix].cadastradoAgora = true;
@@ -2069,7 +2133,7 @@ ERP.estoque = (function () {
           '<td><input class="num" data-iv="' + p.id + '" data-c="qtd" inputmode="decimal"></td>' +
           '<td>' + (temHistorico
             ? '<input class="num" data-iv="' + p.id + '" data-c="custo" inputmode="decimal" value="' +
-              U.num(medio) + '" readonly title="Vem da entrada com nota. Para mudar o custo, ' +
+              U.numUnit(medio) + '" readonly title="Vem da entrada com nota. Para mudar o custo, ' +
               'dê entrada com NF ou pedido.">'
             : '<input class="num" data-iv="' + p.id + '" data-c="custo" inputmode="decimal" ' +
               'placeholder="sem histórico — informe" title="Este material ainda não tem entrada ' +
@@ -2102,7 +2166,7 @@ ERP.estoque = (function () {
       const l = document.querySelector('[data-iv="' + p.id + '"][data-c="lote"]');
       const v = document.querySelector('[data-iv="' + p.id + '"][data-c="validade"]');
       const qtd = U.parseValor(q ? q.value : 0);
-      if (qtd > 0) itens.push({ produto: p.id, qtd: qtd, custo: U.parseValor(c ? c.value : 0),
+      if (qtd > 0) itens.push({ produto: p.id, qtd: qtd, custo: U.parseValor(c ? c.value : 0, U.CASAS_UNIT),
         lote: l ? l.value : '', validade: v ? v.value : '' });
     });
     /* Contagem é AJUSTE, não entrada: o store compara com o saldo e

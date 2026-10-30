@@ -22,8 +22,15 @@ ERP.danfe = (function () {
 
   const so = s => String(s == null ? '' : s).replace(/\D/g, '');
   const n2 = v => Math.round((parseFloat(v) || 0) * 100) / 100;
+  const n4 = v => Math.round((parseFloat(v) || 0) * 10000) / 10000;
   // "1.234,56" -> 1234.56
   const valorBR = s => n2(String(s || '').replace(/\./g, '').replace(',', '.'));
+  /* Quantidade e unitário da coluna do DANFE vão a quatro casas,
+     como no XML: a DANFE imprime "0,2345" na coluna VLR. UNIT. e
+     ler isso como 0,23 faz o total da nota deixar de fechar — pelo
+     PDF exatamente como fechava mal pelo XML. Todo TOTAL continua
+     em `valorBR`, com duas casas. */
+  const valorUnitBR = s => n4(String(s || '').replace(/\./g, '').replace(',', '.'));
 
   const UFS = {
     11: 'RO', 12: 'AC', 13: 'AM', 14: 'RR', 15: 'PA', 16: 'AP', 17: 'TO',
@@ -589,7 +596,7 @@ ERP.danfe = (function () {
         out.push({
           codigo: j[1], descricao: junta(v.acima.concat([j[2]], v.abaixo)),
           ncm: j[3], cfop: so(j[4]), unidade: j[5].toUpperCase(), ean: '', cest: '',
-          qtd: valorBR(j[6]), valorUnit: valorBR(j[7]), valor: valorBR(j[8]),
+          qtd: valorUnitBR(j[6]), valorUnit: valorUnitBR(j[7]), valor: valorBR(j[8]),
           confianca: 'lido do PDF'
         });
         return;
@@ -600,7 +607,7 @@ ERP.danfe = (function () {
         codigo: m[1], descricao: junta(v.acima.concat(v.abaixo)),
         ncm: m[2], cfop: so(m[3]), unidade: m[4].toUpperCase(),
         ean: '', cest: '',
-        qtd: valorBR(m[5]), valorUnit: valorBR(m[6]), valor: valorBR(m[7]),
+        qtd: valorUnitBR(m[5]), valorUnit: valorUnitBR(m[6]), valor: valorBR(m[7]),
         confianca: 'lido do PDF'
       });
     });
