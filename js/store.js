@@ -16626,8 +16626,21 @@ ERP.store = (function () {
          pedaço do nome digitado, prefixado por __texto__ — é o que
          permite digitar "marina" e achar a Dra. Marina Alves sem rolar
          uma lista de centenas. */
+      /* `nomeCredorVisivel` precisa do NOME REAL como segundo
+         argumento — ela decide se devolve esse nome ou
+         "[confidencial]", não o busca. Chamada com um argumento só,
+         devolvia `undefined`, e o `.toLowerCase()` seguinte
+         derrubava a tela inteira.
+
+         Não era canto escuro: basta digitar no filtro de
+         fornecedor um texto que case com nenhum ou com mais de um
+         cadastro — com quase trezentos fornecedores, "silva" já
+         faz isso — e o contas a pagar parava de renderizar. A
+         busca por id, que é o que acontece ao escolher da lista,
+         nunca passava por aqui, e por isso o defeito sobreviveu. */
       (!f.credor || (String(f.credor).indexOf('__texto__') === 0
-        ? nomeCredorVisivel(p).toLowerCase().indexOf(String(f.credor).slice(9)) > -1
+        ? String(nomeCredorVisivel(p, (D.credor(p.credor) || {}).nome || '') || '')
+            .toLowerCase().indexOf(String(f.credor).slice(9)) > -1
         : p.credor === f.credor)) &&
       (!f.de      || (p.venc || '') >= f.de) &&
       (!f.ate     || (p.venc || '') <= f.ate) &&
@@ -16850,6 +16863,69 @@ ERP.store = (function () {
      número (ou anexar o arquivo) — o que pode ser feito a qualquer
      momento, mesmo depois de pago. */
   const temNota = p => !!(p.doc || p.arquivo || p.chave);
+
+  /* ── REGIME DO MÉDICO: quem deve nota e quem não deve ───
+
+     O médico que recebe por SCP não emite nota pela produção — é
+     distribuição de resultado, não prestação de serviço. O que
+     recebe como PJ emite, e sem a nota a despesa fica sem lastro.
+
+     A planilha de produtividade diz qual é qual na coluna de
+     observações, e diz do jeito que uma planilha diz: texto livre.
+     Vem "PJ | BAIXADO", "PJ | ASSINADO", "PJTÃO". O trecho depois
+     do "|" é ANDAMENTO do documento, não regime, e por isso só o
+     que vem antes é lido.
+
+     POR QUE FRONTEIRA DE PALAVRA, E NÃO PREFIXO. "PJ | BAIXADO" é
+     PJ. "PJTÃO" não é — é outra coisa, que por acaso começa com as
+     mesmas duas letras. Prefixo simples confundiria os dois e
+     passaria oito linhas por PJ sem ninguém ter decidido isso.
+
+     O que não é exatamente PJ nem SCP vira `outro`, e `outro` NÃO
+     é palpite nenhum: é a categoria que aparece no TOPO da lista
+     justamente para ser classificada por gente. Enquanto não for,
+     segue a regra do SCP e não cobra nota — inventar uma cobrança
+     a partir de uma palavra que o sistema não entende encheria a
+     tela de vermelho que não significa nada, e vermelho que não
+     significa nada é vermelho que ninguém mais olha. */
+  function regimeDeTexto(txt) {
+    const t = String(txt || '').split('|')[0].trim().toUpperCase()
+      .normalize('NFD').replace(/[̀-ͯ]/g, '');
+    if (!t) return '';
+    if (/^SCP\b/.test(t)) return 'scp';
+    if (/^PJ\b/.test(t)) return 'pj';
+    return 'outro';
+  }
+  const ROTULO_REGIME = { pj: 'PJ', scp: 'SCP', outro: 'Outro' };
+  const rotuloRegime = r => ROTULO_REGIME[r] || 'Não informado';
+
+  /* A REGRA, num lugar só: SÓ PJ deve nota.
+
+     "Outro" e o não informado seguem a regra do SCP — não cobram.
+     Eles não somem do radar por isso: aparecem no topo da lista de
+     produtividade, que é onde se classifica. O que os tira de lá é
+     alguém dizer o que são, não um botão vermelho. */
+  const regimeExigeNota = r => r === 'pj';
+
+  /* O regime VALE do cadastro; a planilha preenche quando o
+     cadastro está vazio (ver `garantirCredor` na produtividade). */
+  function regimeDoCredor(credorId) {
+    const c = D.credores.find(function (x) { return x.id === credorId; });
+    return (c && c.regime) || '';
+  }
+
+  /* CPF não emite nota como PJ, e CNPJ que recebe como SCP é
+     igualmente estranho. Isto NÃO decide nada — só aponta, para
+     alguém olhar. Decidir sozinho aqui seria trocar um erro de
+     cadastro por um erro de sistema, que é mais difícil de achar. */
+  function regimeBateComDocumento(regime, documento) {
+    const d = String(documento || '').replace(/\D/g, '');
+    if (!d || !regime) return null;                 // sem o que conferir
+    const ehCnpj = d.length === 14;
+    if (regime === 'pj' && !ehCnpj) return 'PJ (exige NF) cadastrado com CPF';
+    if (regime === 'scp' && ehCnpj) return 'SCP cadastrado com CNPJ';
+    return null;
+  }
   /* Despesa que NÃO tem nota por natureza — tarifa bancária, IOF, juros
      de banco, imposto pago por guia — fica fora do alerta: cobrar nota
      dessas seria cobrar um documento que não existe. A dispensa marcada
@@ -18801,6 +18877,8 @@ ERP.store = (function () {
     logarCadastro: logar,
     gerarParcelas, criarTitulo, aprovar, reprovar, registrarPagamento, estornar, cancelar,
     informarRetencao, renomearProdutoPelaNota,
+    regimeDeTexto, regimeExigeNota, regimeDoCredor, regimeBateComDocumento,
+    rotuloRegime,
     criarReceber, emitirFatura, proximoNumeroFatura, contasReceber, listarReceber, receberBaixa, estornarRecebimento, editarReceber,
     previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
     vencimentoPrevistoDe, origemDoPrazo,

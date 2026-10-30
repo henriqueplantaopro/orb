@@ -1160,13 +1160,27 @@ ERP.cadastros = (function () {
        com aprovação de dados bancários. Editar por aqui trocava o tipo
        pra "médico" e mexia em PIX e banco sem passar pela alçada. */
     const existente = id && D.credor(id);
-    if (existente && ['funcionario', 'medico'].indexOf(existente.tipo) > -1) {
-      return ERP.app.aviso(existente.tipo === 'funcionario'
-        ? 'Este cadastro é de funcionário: edite em Pessoal › Funcionários (dados bancários passam por aprovação).'
-        : 'Este cadastro é de médico: edite pela aba Médicos.', 'erro');
+    if (existente && existente.tipo === 'funcionario') {
+      return ERP.app.aviso('Este cadastro é de funcionário: edite em Pessoal › Funcionários ' +
+        '(dados bancários passam por aprovação).', 'erro');
     }
+    /* MÉDICO ABRE, MAS SEM OS CAMPOS DE PAGAMENTO.
+
+       Antes o cadastro de médico era recusado aqui com a mensagem
+       "edite pela aba Médicos" — e o botão que chamava isto É o da
+       aba Médicos. Não havia caminho nenhum: o cadastro do médico
+       só mudava pela importação do fechamento, e o que a planilha
+       não trouxesse ficava sem conserto para sempre.
+
+       A recusa existia por um motivo certo — editar por aqui mexia
+       em PIX e banco sem passar pela conferência que a produtividade
+       faz. Então o que fecha não é a tela, são os CAMPOS: chave,
+       forma de pagamento e tipo entram só para leitura, e o resto
+       (regime, CRM, razão social, documento) abre. */
     const c = id ? D.credor(id) : null;
     const ehMedico = (c ? c.tipo : tipoPadrao) === 'medico';
+    const travaPagamento = !!(c && c.tipo === 'medico');
+    const trava = travaPagamento ? ' disabled' : '';
     ERP.app.modal({
       titulo: c ? (ehMedico ? 'Médico · ' : 'Fornecedor · ') + c.nome : (ehMedico ? 'Novo médico' : 'Novo fornecedor'),
       corpo:
@@ -1175,7 +1189,7 @@ ERP.cadastros = (function () {
           U.esc(c ? (c.razao_social || '') : '') + '"></div>' +
         '<div><label>CPF / CNPJ</label><input id="cd-doc" inputmode="numeric" value="' +
           U.esc(c ? (c.documento || '') : '') + '"></div></div>' +
-        '<div class="row3"><div><label>Tipo</label><select id="cd-tipo">' +
+        '<div class="row3"><div><label>Tipo</label><select id="cd-tipo"' + trava + '>' +
           ['medico', 'fornecedor', 'orgao', 'socio', 'outro'].map(function (t) {
             return '<option value="' + t + '"' + ((c ? c.tipo : tipoPadrao) === t ? ' selected' : '') + '>' + t + '</option>';
           }).join('') + '</select></div>' +
@@ -1186,18 +1200,42 @@ ERP.cadastros = (function () {
             return '<option value="' + p.cod + '"' + (c && c.conta_padrao === p.cod ? ' selected' : '') + '>' +
               U.esc(p.cod + ' ' + p.nome) + '</option>';
           }).join('') + '</select></div></div>' +
-        '<div class="row2"><div><label>Forma de pagamento</label><select id="cd-forma">' +
+        /* REGIME: só o médico tem. É o campo que decide se o
+           pagamento da produtividade dele vai cobrar nota fiscal.
+           A planilha preenche na primeira importação; daqui em
+           diante o que está aqui é o que vale, e a planilha que
+           discordar vira divergência na conferência, não troca
+           silenciosa. */
+        (ehMedico
+          ? '<div class="row2" style="margin-top:8px"><div><label for="cd-regime">Regime</label>' +
+              '<select id="cd-regime">' +
+              [['', 'Não classificado'], ['pj', 'PJ — emite nota fiscal'],
+               ['scp', 'SCP — não emite nota'], ['outro', 'Outro — classificar']]
+                .map(function (o) {
+                  return '<option value="' + o[0] + '"' +
+                    ((c && c.regime || '') === o[0] ? ' selected' : '') + '>' + U.esc(o[1]) + '</option>';
+                }).join('') + '</select></div>' +
+            '<div class="ajuda" style="align-self:end">Só <b>PJ</b> faz o contas a pagar cobrar a nota. ' +
+              'SCP, "outro" e não classificado não cobram — mas os dois últimos aparecem no topo da ' +
+              'lista de produtividade até alguém classificar.</div></div>'
+          : '') +
+        '<div class="row2"><div><label>Forma de pagamento</label><select id="cd-forma"' + trava + '>' +
           '<option value="">Não configurada</option>' +
           Object.keys(D.formasPagamento).map(function (k) {
             return '<option value="' + k + '"' + (c && c.forma_pagamento === k ? ' selected' : '') + '>' +
               U.esc(D.formasPagamento[k].nome) + '</option>';
           }).join('') + '</select></div>' +
-        '<div><label>Tipo de chave</label><select id="cd-tipochave">' +
+        '<div><label>Tipo de chave</label><select id="cd-tipochave"' + trava + '>' +
           ['', 'CNPJ', 'CPF', 'Email', 'Telefone', 'Aleatoria'].map(function (t) {
             return '<option value="' + t + '"' + (c && c.tipo_chave === t ? ' selected' : '') + '>' +
               (t || '—') + '</option>';
           }).join('') + '</select></div></div>' +
-        '<label>Chave PIX</label><input id="cd-pix" value="' + U.esc(c ? (c.pix || '') : '') + '">' +
+        '<label>Chave PIX</label><input id="cd-pix"' + trava + ' value="' + U.esc(c ? (c.pix || '') : '') + '">' +
+        (travaPagamento
+          ? '<div class="ajuda">Chave PIX, forma de pagamento e tipo do cadastro do médico vêm da ' +
+            'importação do fechamento de produtividade, que confere o que o arquivo traz contra o ' +
+            'cadastro e aponta as divergências. Por isso não se digitam aqui.</div>'
+          : '') +
         '<div class="row2" style="margin-top:8px">' +
           '<div><label>E-mail</label><input id="cd-email" type="email" placeholder="usado no envio do pedido de compra" value="' +
             U.esc(c ? (c.email || '') : '') + '"></div>' +
@@ -1222,6 +1260,16 @@ ERP.cadastros = (function () {
           tipo_chave: U.val('cd-tipochave'), pix: U.val('cd-pix'),
           email: U.val('cd-email'), telefone: U.val('cd-fone'), contato: U.val('cd-contato')
         };
+        if (U.el('cd-regime')) dados.regime = U.val('cd-regime');
+        /* Campo desabilitado não se grava a partir da tela: ler o
+           valor de volta e regravá-lo funcionaria enquanto o HTML
+           estivesse certo, e passaria a apagar o cadastro no dia em
+           que um `disabled` saísse do lugar. O que não se edita, não
+           se escreve. */
+        if (travaPagamento) {
+          delete dados.tipo; delete dados.forma_pagamento;
+          delete dados.tipo_chave; delete dados.pix;
+        }
         if (c) {
           Object.keys(dados).forEach(function (k) { c[k] = dados[k]; });
           S.logarCadastro('cadastro', c.id, 'editou cadastro', (c.nome || c.descricao || c.codigo || ''));

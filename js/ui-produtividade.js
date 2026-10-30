@@ -220,8 +220,33 @@ ERP.produtividade = (function () {
         linhas.push({ p: p, lote: l, saldo: saldo, pago: S.pagoDe(p.id), loteTevePagamento: loteTevePagamento, trava: trava });
       });
     });
+    /* A ORDEM DA LISTA É A ORDEM DO TRABALHO.
+
+       Quatro grupos, do que precisa de gente para o que já está
+       resolvido:
+
+         1. não classificado e "outro" — ninguém disse ainda se esse
+            médico emite nota. É decisão humana, e enquanto não for
+            tomada o sistema não cobra nada dele: se ficasse no fim
+            da lista, não seria tomada nunca.
+         2. PJ sem nota — a cobrança que está aberta.
+         3. PJ com nota — conferido.
+         4. SCP — não deve nota, não há o que fazer.
+
+       Dentro de cada grupo valem os critérios de sempre (quem ficou
+       para trás num fechamento já pago primeiro, depois competência
+       e saldo), que são sobre urgência de PAGAMENTO. Esta ordem é
+       sobre pendência de DOCUMENTO, e por isso vem antes: pagar sem
+       a nota é o que já acontece hoje; o que falta é não esquecer
+       da nota depois. */
+    const ordemNf = function (x) {
+      const regime = S.regimeDoCredor(x.p.credor);
+      if (!S.regimeExigeNota(regime)) return (regime === 'scp') ? 4 : 1;
+      return S.temNota(x.p) ? 3 : 2;
+    };
     linhas.sort(function (a, b) {
-      return (b.loteTevePagamento ? 1 : 0) - (a.loteTevePagamento ? 1 : 0) ||
+      return ordemNf(a) - ordemNf(b) ||
+        (b.loteTevePagamento ? 1 : 0) - (a.loteTevePagamento ? 1 : 0) ||
         a.lote.competencia.localeCompare(b.lote.competencia) || b.saldo - a.saldo;
     });
     const mostrar = soFicaramParaTras ? linhas.filter(function (x) { return x.loteTevePagamento; }) : linhas;
@@ -236,12 +261,26 @@ ERP.produtividade = (function () {
       '</div>' +
       '<div class="ajuda">' + mostrar.length + ' médico(s) · ' + U.brl(total) + ' em aberto</div>' +
       (mostrar.length
-        ? '<table><thead><tr><th>Médico</th><th>Projeto</th><th>Competência</th><th class="num">Valor</th>' +
+        ? '<table><thead><tr><th>Médico</th><th>Regime</th><th>Projeto</th><th>Competência</th><th class="num">Valor</th>' +
           '<th class="num">Pago</th><th class="num">Falta</th><th>Situação</th><th>Trava</th><th></th></tr></thead><tbody>' +
           mostrar.map(function (x) {
             const c = D.centro(x.lote.centro) || {};
             const s = situacaoParcela(x.p);
+            const regime = S.regimeDoCredor(x.p.credor);
+            const exigeNf = S.regimeExigeNota(regime);
             return '<tr><td class="desc">' + U.esc(ERP.lancamento.nomeCredor(x.p.credor) || '—') + '</td>' +
+              /* O regime aparece com a MESMA cor do botão da nota:
+                 quem exige e está sem fica vermelho dos dois lados,
+                 e a linha se lê de uma vez só. "Não classificado"
+                 usa o selo de pendência porque é pendência — de
+                 cadastro, não de nota. */
+              '<td>' + (regime === 'scp'
+                ? '<span class="badge">SCP</span>'
+                : exigeNf
+                  ? '<span class="badge ' + (S.temNota(x.p) ? 'b-pago' : 'b-reprovado') + '">PJ</span>'
+                  : '<span class="badge b-pendente" title="Classifique o médico em Cadastros › Médicos. ' +
+                    'Enquanto não for, não cobra nota.">' +
+                    U.esc(regime ? S.rotuloRegime(regime) : 'Não classificado') + '</span>') + '</td>' +
               '<td class="desc">' + U.esc(c.curto || c.nome || '—') + '</td>' +
               '<td class="mono">' + U.fComp(x.lote.competencia) + '</td>' +
               '<td class="num">' + U.brl(x.p.valor) + '</td>' +
@@ -250,11 +289,28 @@ ERP.produtividade = (function () {
               '<td><span class="badge ' + s.cls + '">' + s.txt + '</span>' +
                 (x.loteTevePagamento ? '<div class="sub">colegas do mesmo fechamento já receberam</div>' : '') + '</td>' +
               '<td class="sub">' + (x.trava.length ? U.esc(x.trava.join(' · ')) : '—') + '</td>' +
-              '<td class="acoes"><button class="btn-sm" data-lp-medico="' + x.p.id + '">Plantões</button></td></tr>';
+              '<td class="acoes">' +
+                /* O botão da nota aqui é o mesmo do contas a pagar —
+                   mesma janela, mesma sugestão de retenção. Quem
+                   trabalha a produtividade não precisa trocar de
+                   módulo para anexar a nota que acabou de chegar. */
+                (exigeNf
+                  ? '<button class="btn-sm ' + (S.temNota(x.p) ? 'btn-nf-ok' : 'btn-nf-falta') +
+                    '" data-lp-nf="' + x.p.id + '">' + (S.temNota(x.p) ? 'NF ok' : 'Falta NF') + '</button> '
+                  : '<button class="btn-sm btn-nf-na" data-lp-nf="' + x.p.id + '">NF —</button> ') +
+                '<button class="btn-sm" data-lp-medico="' + x.p.id + '">Plantões</button></td></tr>';
           }).join('') + '</tbody></table>'
         : '<div class="vazio"><strong>Ninguém pendente.</strong>Toda produtividade lançada já foi paga.</div>');
     document.querySelectorAll('#pr-aba-pendentes [data-lp-medico]').forEach(function (b) {
       b.addEventListener('click', function () { detalheMedico(this.dataset.lpMedico); });
+    });
+    document.querySelectorAll('#pr-aba-pendentes [data-lp-nf]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        /* Redesenha ao fechar: a nota que acabou de entrar muda a
+           cor do botão e o lugar da linha na lista. Sem isto, a
+           pessoa anexa a nota e a tela continua dizendo que falta. */
+        ERP.contas.abrirNF(this.dataset.lpNf, function () { renderPendentes(); });
+      });
     });
     if (U.el('pp-so-atras')) U.el('pp-so-atras').addEventListener('click', function () { soFicaramParaTras = !soFicaramParaTras; renderPendentes(); });
   }
@@ -613,24 +669,55 @@ ERP.produtividade = (function () {
      escolha é pelo CONTEÚDO: a aba de plantões é a que tem a linha de
      cabeçalho com Setor, Entrada e Saída; a financeira é a que tem
      Profissional e Chave Pix. */
+  /* TODAS as abas de plantões, não a primeira.
+
+     O arquivo do hospital separa o detalhe por especialidade:
+     AMBULATÓRIO, OBSTETRICIA, USG — cada uma com a mesma estrutura,
+     cada uma com os seus médicos. A leitura pegava a PRIMEIRA que
+     casasse e parava.
+
+     No fechamento de HPM de agosto/setembro isso significava ler a
+     aba AMBULATÓRIO, com um médico, e ignorar as outras duas, com
+     dezenove. A tela oferecia "Gerar 1 lançamento" para um
+     fechamento de vinte médicos.
+
+     Não era silencioso de todo — a conferência contra a aba
+     FINANCEIRO acusava a diferença de valor. Mas acusava como
+     divergência de CENTAVOS acusaria, e a resposta certa para
+     "faltam dezenove médicos" não é um número vermelho: é ler as
+     três abas.
+
+     As abas entram em sequência, e o parser já trata cada bloco
+     ("nome do médico" seguido das linhas dele) por conta própria —
+     é a mesma coisa que uma aba só com tudo dentro. Médico que
+     aparece em duas especialidades soma as duas, que é o certo:
+     ele recebe um título com a produtividade inteira do mês. */
   function acharAbas(wb) {
-    let plantoes = null, financeiro = null;
+    let financeiro = null;
+    const plantoes = [];
+    const nomesPlantoes = [];
     wb.SheetNames.forEach(function (n) {
       const l = linhasDe(wb, n);
       const cabecalhos = l.slice(0, 20).map(function (r) {
         return r.map(function (v) { return txt(v).toLowerCase(); }).join('|');
       }).join(' ');
       if (!financeiro && /profissional/.test(cabecalhos) &&
-          /(chave pix|documento)/.test(cabecalhos)) financeiro = l;
-      else if (!plantoes && /setor/.test(cabecalhos) &&
-               /(entrada|sa[íi]da)/.test(cabecalhos)) plantoes = l;
+          /(chave pix|documento)/.test(cabecalhos)) { financeiro = l; return; }
+      if (/setor/.test(cabecalhos) && /(entrada|sa[íi]da)/.test(cabecalhos)) {
+        plantoes.push.apply(plantoes, l);
+        nomesPlantoes.push(n);
+      }
     });
     // sobrou uma aba só: ela é a de plantões
-    if (!plantoes) {
+    if (!plantoes.length) {
       const outra = wb.SheetNames.find(function (n) { return linhasDe(wb, n) !== financeiro; });
-      if (outra && wb.SheetNames.length > 1) plantoes = linhasDe(wb, outra);
+      if (outra && wb.SheetNames.length > 1) {
+        plantoes.push.apply(plantoes, linhasDe(wb, outra));
+        nomesPlantoes.push(outra);
+      }
     }
-    return { plantoes: plantoes, financeiro: financeiro };
+    return { plantoes: plantoes.length ? plantoes : null, financeiro: financeiro,
+             abasPlantoes: nomesPlantoes };
   }
   // aceita número da célula ou texto no formato brasileiro
   function valorNum(v) {
@@ -735,13 +822,50 @@ ERP.produtividade = (function () {
         }
         return;
       }
+      /* SOMA os totais, não guarda o último.
+
+         Cada aba de especialidade imprime o seu "Total da
+         produtividade" no rodapé. Lendo as três abas, atribuir em
+         vez de somar deixaria a conferência comparando o total do
+         arquivo INTEIRO com o total impresso só da ÚLTIMA aba — e
+         acusando divergência em todo fechamento que tem mais de uma
+         especialidade, justamente os que estão certos. */
       if (txt(linha[col0 + 3]).toUpperCase().indexOf('TOTAL DA PRODUTIVIDADE') > -1) {
-        totalArquivo = valorNum(g);
+        totalArquivo = Math.round((totalArquivo + valorNum(g)) * 100) / 100;
         return;
       }
       if (b.toLowerCase() === 'setor') return;                          // cabeçalho do bloco
+      /* CABEÇALHO DE ABA NÃO É MÉDICO.
+
+         Lendo várias abas em sequência, o cabeçalho da segunda e da
+         terceira ("gerado em …", "PRODUTIVIDADE MÉDICA", o período)
+         chega aqui depois de o período já ter sido achado na
+         primeira, e cai na regra de "texto sozinho na linha = nome
+         do médico". Nenhum deles chega a ganhar plantão — o nome de
+         verdade vem antes da primeira linha de plantão —, mas ficar
+         na lista de médicos faz a contagem mentir para quem vier
+         ler. */
+      if (/^gerado em\b/i.test(b) || /^PRODUTIVIDADE\b/i.test(b) ||
+          /^\d{2}\/\d{2}\/\d{4}\s*[~\-a]\s*\d{2}\/\d{2}\/\d{4}$/.test(b)) return;
       if (b && !c && !temDuracao && b.indexOf('*para validar') !== 0) { // nome do médico
-        const m = b.match(/^(.*?)\s+-+\s+(\S+)\s*$/);
+        /* O CRM PODE TER ESPAÇO DENTRO — e tem.
+
+           "Edson de Jesus Rocha  -  29213 /CE" é como o arquivo de
+           HPM escreve. Exigindo que o CRM fosse um pedaço sem
+           espaço nenhum, a separação simplesmente não acontecia: o
+           nome do médico ficava sendo a linha inteira, com o traço
+           e o CRM colados.
+
+           A consequência não era cosmética. O nome colado não casa
+           com o da aba FINANCEIRO, então aquele médico ficava sem
+           CPF, sem chave PIX e sem regime — e `garantirCredor`, não
+           achando ninguém com aquele nome, criava um cadastro NOVO
+           a cada fechamento. Um médico impagável, duplicado todo
+           mês, por causa de um espaço.
+
+           O que separa é o traço cercado de espaços; o que vem
+           depois é CRM, com espaço ou sem. */
+        const m = b.match(/^(.*?)\s+-+\s+(.+?)\s*$/);
         medico = m ? m[1].trim() : b;
         crm = m ? m[2].trim() : '';
         medicos[chaveNome(medico)] = medicos[chaveNome(medico)] || { nome: medico, crm: crm, total: 0, plantoes: 0 };
@@ -768,13 +892,24 @@ ERP.produtividade = (function () {
       const col = function (nome) { return cab.findIndex(function (v) { return v.toLowerCase().indexOf(nome) === 0; }); };
       const iNome = col('profissional'), iRazao = col('razão'), iCrm = col('crm'),
             iDoc = col('documento'), iTipo = col('tipo'), iVal = col('valor'),
+            /* A coluna que diz PJ ou SCP. Era a única da aba
+               FINANCEIRO que a importação não lia — e é a que decide
+               se o pagamento daquele médico precisa de nota. */
+            iObs = col('observa'),
             // "Chave Pix" tem "pix" no meio, não no início — col() exige início,
             // então essa coluna precisa de busca por conteúdo, não por prefixo.
             iPix = cab.findIndex(function (v) { return v.toLowerCase().indexOf('pix') > -1; });
       for (let i = cabFin + 1; i < fin.length; i++) {
         const nome = txt(fin[i][iNome]);
         if (!nome) continue;
+        const obsLinha = iObs > -1 ? txt(fin[i][iObs]) : '';
         pagto[chaveNome(nome)] = {
+          observacao: obsLinha,
+          /* O regime sai do texto por uma regra só, que mora no
+             store: a tela não pode ter a sua própria ideia de o que
+             é PJ, senão um dia a lista ordena por um critério e o
+             contas a pagar cobra por outro. */
+          regime: S.regimeDeTexto(obsLinha),
           razao_social: iRazao > -1 ? txt(fin[i][iRazao]) : '',
           crm: iCrm > -1 ? txt(fin[i][iCrm]) : '',
           documento: iDoc > -1 ? txt(fin[i][iDoc]) : '',
@@ -855,7 +990,17 @@ ERP.produtividade = (function () {
     const L = lote;
     const medicos = porMedico(L);
     const centro = centroSugerido(L.projeto);
-    const divergeArquivo = Math.abs(L.soma - L.totalArquivo) > 0.01;
+    /* TOTAL NÃO IMPRESSO NÃO É TOTAL ZERO.
+
+       Nem todo fechamento traz a linha "Total da produtividade" no
+       rodapé — o de HPM, por exemplo, não traz em nenhuma das três
+       abas. Comparando contra zero, o aviso "os totais não fecham
+       entre si" aparecia em TODO import desses arquivos, apontando
+       uma divergência que não existe. Aviso que aparece sempre é
+       aviso que se aprende a ignorar, e aí o dia em que os totais
+       realmente não fecharem passa despercebido. */
+    const temTotalImpresso = L.totalArquivo > 0;
+    const divergeArquivo = temTotalImpresso && Math.abs(L.soma - L.totalArquivo) > 0.01;
     const divergeFin = Math.abs(L.soma - L.somaFin) > 0.01;
 
     U.el('pr-saida').innerHTML =
@@ -883,7 +1028,8 @@ ERP.produtividade = (function () {
       '<div class="pr-confere">' +
         '<span>Soma dos plantões <b>' + U.brl(L.soma) + '</b></span>' +
         '<span>Aba FINANCEIRO <b class="' + (divergeFin ? 'erro' : '') + '">' + U.brl(L.somaFin) + '</b></span>' +
-        '<span>Total impresso no arquivo <b class="' + (divergeArquivo ? 'erro' : '') + '">' + U.brl(L.totalArquivo) + '</b></span>' +
+        '<span>Total impresso no arquivo <b class="' + (divergeArquivo ? 'erro' : '') + '">' +
+          (temTotalImpresso ? U.brl(L.totalArquivo) : '<span class="sub">não vem no arquivo</span>') + '</b></span>' +
         '<span>' + medicos.length + ' lançamento(s) · ' + L.linhas.length + ' linha(s) de setor/tipo</span>' +
       '</div>' +
       (divergeArquivo || divergeFin
@@ -1152,10 +1298,45 @@ ERP.produtividade = (function () {
       const refBase = [refPadrao(L), m.medico].join('|');
       const ref = (S.refJaUsada(refBase) && complementar)
         ? refBase + '|c' + S.proximoComplemento(refBase) : refBase;
+      /* O REGIME VEM DO CADASTRO, que `garantirCredor` acabou de
+         acertar — não da planilha. É a mesma fonte que a tela de
+         Cadastros edita, então corrigir lá vale para o mês que vem
+         sem depender de a planilha mudar. */
+      const regime = S.regimeDoCredor(credor);
+      const exigeNota = S.regimeExigeNota(regime);
       const r = S.criarTitulo({
         descricao: 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
                    (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
-        documento: doc, tipo_titulo: 'medicao', credor: credor,
+        /* O CAMPO DE NF NASCE VAZIO, inclusive para o PJ.
+
+           Antes ia aqui o número do FECHAMENTO ("FECH-HPM-2026-09"),
+           igual para os vinte médicos do lote. Era o mesmo campo que
+           a tela chama de "Número da NF" — então todo título de
+           produtividade já nascia parecendo ter nota, e não havia
+           como distinguir o que tinha nota do que não tinha.
+
+           O número do fechamento não se perdeu: continua na
+           `origem_ref` (que é o que impede o mesmo fechamento de
+           entrar duas vezes) e na observação do título, visível no
+           "Ver" do contas a pagar. O que ele deixa de ocupar é o
+           campo da nota, que agora fica livre para o que ele diz
+           ser — a nota do médico, quando chegar. */
+        documento: '', tipo_titulo: 'medicao', credor: credor,
+        /* NASCE MARCADO "SEM NF", e isso é o fato: não há nota
+           nenhuma no momento do fechamento, para PJ nem para SCP.
+
+           É também o que o lançamento exige — número do título ou a
+           marcação, nunca os dois em branco. A marcação cai sozinha
+           quando a nota é informada, e quem a mantém fora do alerta
+           de "pago sem NF" é a dispensa, não ela: SCP fica de fora
+           porque está dispensado, e o PJ fica dentro, que é o
+           ponto. */
+        sem_nf: true,
+        /* Dispensa é o avesso de exigir, e é o que o resto do
+           sistema já consulta (alerta de pago sem NF, filtros,
+           relatórios). SCP, "outro" e não classificado nascem
+           dispensados; PJ nasce devendo a nota. */
+        nf_dispensada: !exigeNota,
         conta: conta, centro: centro, emissao: U.hoje(),
         origem: 'produtividade', origem_ref: ref,
         itens: m.itens,
@@ -1209,13 +1390,22 @@ ERP.produtividade = (function () {
   }
 
   /* O repasse sairia na chave antiga sem ninguém saber. */
+  /* Qual campo do cadastro cada divergência conserta. O que não
+     está aqui é aviso para conferir, não valor para copiar — e por
+     isso não ganha botão. */
+  const CAMPO_DA_DIVERGENCIA = {
+    'CPF/CNPJ': 'documento',
+    'chave PIX': 'pix',
+    'regime (PJ/SCP)': 'regime'
+  };
+
   function avisarDivergencias() {
     ERP.app.modal({
       titulo: divergencias.length + ' divergência(s) de cadastro',
       corpo:
-        '<div class="ajuda erro">O arquivo trouxe dados bancários diferentes do que está no ' +
-        'cadastro. O sistema <b>não sobrescreveu nada</b> — o repasse vai sair pelo cadastro atual. ' +
-        'Confira antes de gerar a remessa.</div>' +
+        '<div class="ajuda erro">O arquivo discorda do cadastro em alguns pontos. O sistema ' +
+        '<b>não sobrescreveu nada</b> — o repasse vai sair pelo cadastro atual. Confira antes ' +
+        'de gerar a remessa.</div>' +
         '<table><thead><tr><th>Médico</th><th>Campo</th><th>No cadastro</th><th>No arquivo</th>' +
         '<th></th></tr></thead><tbody>' +
         divergencias.map(function (d, ix) {
@@ -1223,8 +1413,17 @@ ERP.produtividade = (function () {
             '<td>' + U.esc(d.campo) + '</td>' +
             '<td class="mono">' + U.esc(d.cadastro) + '</td>' +
             '<td class="mono">' + U.esc(d.arquivo) + '</td>' +
-            '<td class="acoes"><button class="btn-sm" data-div="' + ix + '">' +
-              'Usar a do arquivo</button></td></tr>';
+            /* SEM BOTÃO no que não é um valor para copiar.
+
+               "regime x documento" não compara duas versões do mesmo
+               campo: é um aviso de que o regime cadastrado não
+               combina com o tipo de documento. Não existe "usar a do
+               arquivo" para isso, e o botão genérico que existia
+               aqui gravaria o texto da observação dentro do campo de
+               CPF/CNPJ. */
+            '<td class="acoes">' + (CAMPO_DA_DIVERGENCIA[d.campo]
+              ? '<button class="btn-sm" data-div="' + ix + '">Usar a do arquivo</button>'
+              : '<span class="sub">confira o cadastro</span>') + '</td></tr>';
         }).join('') + '</tbody></table>',
       aoAbrir: function () {
         document.querySelectorAll('[data-div]').forEach(function (b) {
@@ -1232,7 +1431,21 @@ ERP.produtividade = (function () {
             const d = divergencias[+this.dataset.div];
             const c = D.credores.find(function (x) { return x.nome === d.medico; });
             if (!c) return;
-            if (d.campo === 'chave PIX') c.pix = d.arquivo; else c.documento = d.arquivo;
+            /* CADA CAMPO NO SEU LUGAR.
+
+               Isto era `if (chave PIX) c.pix = …; else c.documento = …`
+               — um "senão" que recebia tudo o que não fosse PIX. Com
+               a divergência de regime passando a existir, clicar no
+               botão dela gravaria "PJ" dentro do CPF/CNPJ do médico,
+               e o repasse sairia para um documento inválido.
+
+               O mapa resolve a classe inteira: campo que não está
+               nele não tem botão e não grava nada. */
+            const alvo = CAMPO_DA_DIVERGENCIA[d.campo];
+            if (!alvo) return;
+            c[alvo] = d.campo === 'regime (PJ/SCP)'
+              ? S.regimeDeTexto(d.arquivo)   // o rótulo volta a ser o código
+              : d.arquivo;
             S.logarCadastro('credor', c.id, 'trocou ' + d.campo + ' pela do arquivo',
               d.cadastro + ' → ' + d.arquivo);
             this.textContent = 'trocado';
@@ -1275,6 +1488,28 @@ ERP.produtividade = (function () {
         divergencias.push({ medico: c.nome, campo: 'chave PIX',
                             cadastro: c.pix, arquivo: pg.pix });
       }
+      /* REGIME: o cadastro manda, a planilha avisa.
+
+         Quem corrigiu o regime na mão uma vez não quer ver a
+         correção desfeita pela planilha do mês seguinte — a
+         planilha é digitada por outra pessoa, em outro sistema. Mas
+         também não pode mudar calado: se o arquivo passou a dizer
+         outra coisa, ou o médico virou PJ, alguém precisa olhar. */
+      if (c.regime && pg.regime && c.regime !== pg.regime) {
+        divergencias.push({ medico: c.nome, campo: 'regime (PJ/SCP)',
+                            cadastro: S.rotuloRegime(c.regime),
+                            arquivo: S.rotuloRegime(pg.regime) });
+      }
+      if (!c.regime && pg.regime) { c.regime = pg.regime; mudou.push('regime'); }
+      /* PJ pago em CPF não emite nota, e é o tipo de coisa que só
+         aparece quando a nota é cobrada e não vem. Aponta, não
+         decide: trocar um erro de cadastro por um palpite do
+         sistema torna o erro mais difícil de achar. */
+      const choque = S.regimeBateComDocumento(c.regime, c.documento || pg.documento);
+      if (choque) {
+        divergencias.push({ medico: c.nome, campo: 'regime x documento',
+                            cadastro: choque, arquivo: pg.observacao || '—' });
+      }
       if (!c.documento && pg.documento) { c.documento = pg.documento; mudou.push('CPF/CNPJ'); }
       if (!c.pix && pg.pix) { c.pix = pg.pix; c.tipo_chave = pg.tipo_chave || ''; mudou.push('chave PIX'); }
       if (!c.crm && (l.crm || pg.crm)) { c.crm = l.crm || pg.crm; mudou.push('CRM'); }
@@ -1288,6 +1523,10 @@ ERP.produtividade = (function () {
     const id = 'cr' + Date.now().toString(36) + '-' + (D.credores.length + 1);
     D.credores.push({
       id: id, nome: l.medico, tipo: 'medico', ativo: true, conta_padrao: '3.01',
+      /* Nasce com o regime que a planilha trouxe. Vazio quando ela
+         não disse nada — e vazio segue a regra do SCP, sem cobrar
+         nota, até alguém classificar. */
+      regime: pg.regime || '',
       razao_social: pg.razao_social || '', crm: l.crm || pg.crm || '',
       documento: pg.documento || '',
       pix: normalizarPix(pg).pix, tipo_chave: normalizarPix(pg).tipo_chave,
