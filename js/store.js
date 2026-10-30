@@ -10091,7 +10091,10 @@ ERP.store = (function () {
         ' · ' + U.num(qtd) + ' un · ' + U.brl(qtd * custo) +
         ' · ' + ((D.armazem(d.armazem) || {}).nome || ''));
     }
-    return { ok: true, entrada: c, medio: custoMedio(d.produto, d.armazem) };
+    /* `valor` é o que ESTA LINHA de fato lançou — com o frete e já
+       arredondado. Quem soma o lote usa este número em vez de
+       refazer a conta; ver o comentário em `entradaLote`. */
+    return { ok: true, entrada: c, valor: valorLinha, medio: custoMedio(d.produto, d.armazem) };
   }
 
   /* Saída pelo custo médio do momento — é esse valor que vai para o
@@ -10426,8 +10429,28 @@ ERP.store = (function () {
         origem: d.origem || 'manual', documento: d.documento, motivo: d.motivo,
         nota_chave: d.nota_chave, pedido_id: d.pedido_id, grupo: grupo
       });
-      if (r.ok) { n++; total += i.qtd * (i.custo || 0); entraram.push(i); }
-      else erros.push(r.erro);
+      /* O TOTAL DO LOTE É A SOMA DO QUE CADA LINHA LANÇOU, não uma
+         segunda conta sobre os mesmos dados.
+
+         Refazendo `qtd × custo` aqui, este número divergia do
+         estoque de duas maneiras, e `valor` é justamente o que vira
+         o título no contas a pagar:
+
+           1. O FRETE FICAVA DE FORA. Nota de R$ 200 em mercadoria
+              com R$ 100 de frete entrava no estoque por R$ 300 e
+              gerava título de R$ 200. Cem reais que ninguém ia
+              pagar, e um estoque valendo mais do que a nota.
+           2. CENTAVOS. Cada linha é arredondada ao gravar, como a
+              nota faz; somando em precisão cheia e arredondando só
+              no fim, 3.013,18 virava 3.013,19.
+
+         Uma regra em dois lugares dá duas respostas. Agora é uma:
+         quem grava a linha diz quanto ela valeu. */
+      if (r.ok) {
+        n++;
+        total = Math.round((total + (Number(r.valor) || 0)) * 100) / 100;
+        entraram.push(i);
+      } else erros.push(r.erro);
     });
     /* ATÔMICO sempre, não só quando há pedido: a conferência prévia
        que a v22 ganhou só existe com `pedido_id`. Sem pedido, o laço

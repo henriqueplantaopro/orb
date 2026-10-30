@@ -19,6 +19,19 @@ ERP.nfe = (function () {
 
   const so = s => String(s == null ? '' : s).replace(/\D/g, '');
   const n2 = v => Math.round((parseFloat(String(v || '0').replace(',', '.')) || 0) * 100) / 100;
+  /* O LAYOUT DA NF-e DÁ QUATRO CASAS AO UNITÁRIO — e usa.
+
+     `vUnCom` aceita até dez decimais no leiaute da SEFAZ, e o
+     fornecedor de material hospitalar se vale disso: luva a
+     0,2345, compressa a 0,0890. Lendo com `n2`, o XML chegava ao
+     sistema já errado, antes de qualquer tela: a conferência
+     contra o total da nota não tinha como fechar, porque o número
+     comparado não era mais o da nota.
+
+     Quatro casas é onde o unitário para. `vProd`, `vNF`, `vDup` —
+     tudo que é TOTAL — continua com `n2`, porque é isso que a
+     própria nota declara e é isso que se paga. */
+  const n4 = v => Math.round((parseFloat(String(v || '0').replace(',', '.')) || 0) * 10000) / 10000;
 
   function texto(ctx, tag) {
     if (!ctx) return '';
@@ -135,7 +148,7 @@ ERP.nfe = (function () {
         cest: so(texto(p, 'CEST')),
         unidade: texto(p, 'uCom'),
         qtd: parseFloat(texto(p, 'qCom') || '0') || 0,
-        valorUnit: n2(texto(p, 'vUnCom')), valor: n2(texto(p, 'vProd'))
+        valorUnit: n4(texto(p, 'vUnCom')), valor: n2(texto(p, 'vProd'))
       };
     });
 
