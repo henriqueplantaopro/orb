@@ -757,7 +757,31 @@ ERP.contas = (function () {
     /* NF fica disponível SEMPRE, inclusive em título já pago: a nota
        costuma chegar depois do pagamento, e antes não havia por onde
        informar sem reabrir o título. */
-    if (p.status !== 'cancelado') b.push(btn(S.temNota(p) ? 'NF' : 'Informar NF', '', 'nf', p.id));
+    /* O BOTÃO DA NOTA DIZ TRÊS COISAS PELA COR.
+
+       Quem olha o contas a pagar precisa saber, sem abrir nada, de
+       quem ainda falta nota. A informação existia (a dispensa está
+       gravada no título), mas só aparecia depois de pago, no alerta
+       de "pago sem NF" — tarde demais para cobrar o médico.
+
+         vermelho — exige nota e não tem. É o PJ pendente.
+         verde    — exige nota e já tem. Conferido, fecha o assunto.
+         apagado  — não exige. SCP e tudo que, por natureza, não tem
+                    nota: tarifa bancária, guia de imposto.
+
+       O botão continua clicável nos três casos: o apagado existe
+       porque alguém pode querer anexar um comprovante mesmo sem
+       obrigação, e tirar o clique seria decidir por essa pessoa.
+       E nenhum deles trava pagamento — a cor cobra, não impede. */
+    if (p.status !== 'cancelado') {
+      const temNf = S.temNota(p);
+      const exigeNf = !S.dispensaNota(p);
+      b.push(exigeNf
+        ? (temNf
+            ? btn('NF ok', 'btn-nf-ok', 'nf', p.id)
+            : btn('Falta NF', 'btn-nf-falta', 'nf', p.id))
+        : btn(temNf ? 'NF' : 'NF —', 'btn-nf-na', 'nf', p.id));
+    }
     b.push(btn('Ver', '', 'ver', p.id));
     return b.join('');
   }
@@ -770,10 +794,82 @@ ERP.contas = (function () {
      depois de pago — a nota quase sempre chega depois do pagamento).
      A marcação "Sem NF" é o que alimenta o alerta da página inicial, e
      ela cai sozinha quando o número ou o arquivo é informado. */
-  function abrirNF(id) {
+  /* `aoSalvar` existe para a produtividade, que abre esta mesma
+     janela e precisa redesenhar a SUA lista depois — a nota que
+     entra muda a cor do botão e o lugar da linha lá. */
+  function abrirNF(id, aoSalvar) {
     const p = S.parcela(id);
     if (!p) return;
     let arquivoNovo;   // undefined = não mexeu
+    /* Retenções lidas do XML anexado, quando ele traz. Ficam aqui
+       enquanto a janela está aberta e só são gravadas se a pessoa
+       mandar — sugestão que se aplica sozinha é decisão disfarçada
+       de conveniência. */
+    let retSugeridas = null;
+
+    /* POR QUE A SUGESTÃO PODE NÃO PODER SER APLICADA.
+
+       Informar retenção MUDA O VALOR da parcela (o fornecedor passa
+       a receber o líquido), e isso é impossível depois que o
+       dinheiro saiu. Como aqui o pagamento costuma sair antes da
+       nota chegar — é o caso normal, e no caso dos médicos é regra
+       —, a janela precisa saber dizer "li estas retenções e não
+       posso lançá-las", em vez de recusar no fim com um erro. */
+    const impedimentoRetencao = function () {
+      const atual = S.parcela(id);
+      if (!atual) return 'parcela não encontrada';
+      if (atual.status === 'pago') return 'a parcela já foi paga';
+      if (S.pagoDe(id) > 0.004) return 'a parcela tem baixa parcial';
+      if (!S.pode('lancar')) return 'seu perfil não informa retenção';
+      return null;
+    };
+
+    const blocoRetencao = function () {
+      const cx = U.el('nf-ret-box');
+      if (!cx) return;
+      if (!retSugeridas || !retSugeridas.length) { cx.innerHTML = ''; return; }
+      const soma = retSugeridas.reduce(function (a, r) { return Math.round((a + r.valor) * 100) / 100; }, 0);
+      const trava = impedimentoRetencao();
+      cx.innerHTML =
+        '<div class="nf-lida" style="margin-top:10px"><b>A nota traz retenção de imposto.</b>' +
+          '<div style="margin-top:4px">' + retSugeridas.map(function (r) {
+            return U.esc(r.tributo) + ' ' + U.brl(r.valor); }).join(' &nbsp;·&nbsp; ') +
+          ' &nbsp;=&nbsp; <b>' + U.brl(soma) + '</b></div>' +
+          (trava
+            ? '<div class="ajuda">Não dá para lançar agora porque ' + U.esc(trava) + '. ' +
+              'Os valores ficam aqui para conferência; a retenção se lança pelo título, ' +
+              'estornando o pagamento antes.</div>'
+            : '<label style="font-weight:400;margin-top:6px;display:flex;gap:7px;align-items:flex-start">' +
+              '<input type="checkbox" id="nf-ret-usar" style="width:auto" checked> ' +
+              'Lançar estas retenções no título. O fornecedor passa a receber ' +
+              U.brl(Math.round((p.valor - soma) * 100) / 100) + ' e o imposto fica retido.</label>') +
+        '</div>';
+    };
+
+    /* Lê o XML para saber se tem retenção. Só XML: do PDF não se
+       extrai isso com confiança, e um palpite sobre imposto retido
+       vira guia errada. */
+    const lerRetencoesDoArquivo = function (arq) {
+      if (!/\.xml$/i.test(arq.name)) { retSugeridas = null; return blocoRetencao(); }
+      const fr = new FileReader();
+      fr.onload = function () {
+        let nf = null;
+        try { nf = ERP.nfe.ler(fr.result, {}); } catch (e) { nf = null; }
+        retSugeridas = (nf && !nf.erro && (nf.retencoes || []).length)
+          ? nf.retencoes.map(function (r) { return { tributo: r.tributo, valor: r.valor }; })
+          : null;
+        /* Número e chave da própria nota, quando os campos estão
+           vazios: quem anexou o XML já disse qual é a nota, e
+           digitar de novo o que o arquivo diz é convite a erro. */
+        if (nf && !nf.erro) {
+          if (nf.numero && !U.val('nf-doc')) U.setVal('nf-doc', nf.numero);
+          if (nf.chave && !U.val('nf-chave')) U.setVal('nf-chave', nf.chave);
+        }
+        blocoRetencao();
+      };
+      fr.readAsText(arq);
+    };
+
     ERP.app.modal({
       titulo: 'Nota fiscal · ' + U.esc(S.descricaoVisivel(p)),
       fecharTxt: 'Fechar',
@@ -793,7 +889,8 @@ ERP.contas = (function () {
             '<span class="v"><button class="btn-sm btn-aprovar" id="nf-abrir">Abrir</button> ' +
             '<button class="btn-sm btn-cancelar" id="nf-remover">Remover</button></span></div>'
           : '<div class="ajuda">Nenhum arquivo anexado.</div>') +
-        '<input type="file" id="nf-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0;margin-top:6px">',
+        '<input type="file" id="nf-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0;margin-top:6px">' +
+        '<div id="nf-ret-box"></div>',
       acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
         const salvar = function () {
           const r = S.informarNF(id, {
@@ -802,11 +899,24 @@ ERP.contas = (function () {
             arquivo: arquivoNovo === undefined ? undefined : arquivoNovo
           });
           if (ERP.app.erroDoRetorno(r)) return;
+          /* A RETENÇÃO VAI DEPOIS DA NOTA, e o que der errado nela
+             não desfaz a nota: são dois fatos independentes, e
+             perder o anexo por causa de uma retenção recusada
+             obrigaria a anexar tudo de novo. O recado é separado. */
+          let avisoRet = '';
+          const usar = U.el('nf-ret-usar');
+          if (usar && usar.checked && retSugeridas && retSugeridas.length) {
+            const rr = S.informarRetencao(id, { retencoes: retSugeridas });
+            avisoRet = rr.erro
+              ? ' A nota foi salva, mas a retenção não: ' + rr.erro
+              : ' Retenção lançada — o fornecedor recebe ' + U.brl(rr.parcela ? rr.parcela.valor : 0) + '.';
+          }
           ERP.app.fecharModal();
           ERP.app.atualizarContadores();
           render();
-          ERP.app.aviso(S.pagoSemNota(r.parcela) ? 'Salvo — o título continua no alerta de pago sem NF.'
-            : 'Dados da nota salvos.', 'ok');
+          if (typeof aoSalvar === 'function') aoSalvar();
+          ERP.app.aviso((S.pagoSemNota(r.parcela) ? 'Salvo — o título continua no alerta de pago sem NF.'
+            : 'Dados da nota salvos.') + avisoRet, 'ok');
         };
         const arq = U.el('nf-arq').files && U.el('nf-arq').files[0];
         if (!arq) return salvar();
@@ -818,7 +928,17 @@ ERP.contas = (function () {
         if (U.el('nf-abrir')) U.el('nf-abrir').addEventListener('click', function () { verNota(p); });
         if (U.el('nf-remover')) U.el('nf-remover').addEventListener('click', function () {
           arquivoNovo = null;
+          retSugeridas = null;
+          blocoRetencao();
           this.closest('.resumo-linha').innerHTML = '<span class="sub">arquivo será removido ao salvar</span>';
+        });
+        /* A leitura é na ESCOLHA do arquivo, não no salvar: a
+           retenção que a nota traz tem de aparecer antes de a
+           pessoa decidir, senão não é sugestão, é surpresa. */
+        if (U.el('nf-arq')) U.el('nf-arq').addEventListener('change', function () {
+          const a = this.files && this.files[0];
+          if (a) lerRetencoesDoArquivo(a);
+          else { retSugeridas = null; blocoRetencao(); }
         });
       }
     });
@@ -1991,5 +2111,9 @@ ERP.contas = (function () {
   /* Chamado pelo menu: "Pago" é esta mesma tela na aba das pagas. */
   function abrirAba(aba) { estadoDaAba(aba); render(); }
 
-  return { montar, render, preFiltrar, verDetalhe: abrirDetalhe, saldoBancarioResumoHTML, abrirAba };
+  /* A produtividade abre a MESMA janela de nota fiscal, em vez de
+     ter uma cópia sua. Duas janelas para o mesmo ato acabariam
+     divergindo — e é nesta que a sugestão de retenção mora. */
+  return { montar, render, preFiltrar, verDetalhe: abrirDetalhe, saldoBancarioResumoHTML, abrirAba,
+           abrirNF: abrirNF };
 })();

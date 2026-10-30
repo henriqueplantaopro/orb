@@ -11018,9 +11018,30 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v136 — titulo parcelado e recusado, em vez de rateio chutado',
     /if \(irmas\.length\) \{/.test(sto) && /nao da para adivinhar de qual|não dá para adivinhar de qual/.test(sto), '');
   /* Nas DUAS telas por onde se mexe num titulo que ja existe. */
+  /* TRES caminhos desde a v139, e a conta continua exata de
+     proposito: o numero sobe quando se ACRESCENTA um caminho, e
+     cair significa que um sumiu. Os dois ids garantem que os dois
+     originais (Editar e Efetivar) sao justamente os que ficaram. */
   verificar('v136 — o campo esta no Editar e no Efetivar previsao',
     /id="ed-ret-tem"/.test(cts) && /id="ef-ret-tem"/.test(cts) &&
-    (cts.match(/S\.informarRetencao\(/g) || []).length === 2, '');
+    (cts.match(/S\.informarRetencao\(/g) || []).length === 3, '');
+  /* v139: a janela da nota fiscal le a retencao do XML e oferece.
+     A sugestao NAO pode se aplicar sozinha — informar retencao muda
+     o valor que o fornecedor recebe, e isso e decisao de quem
+     lanca, nao efeito colateral de anexar um arquivo. */
+  verificar('v139 — a janela da NF sugere a retencao lida do XML',
+    /id="nf-ret-box"/.test(cts) && /let retSugeridas = null;/.test(cts) &&
+    /ERP\.nfe\.ler\(fr\.result/.test(cts), '');
+  verificar('v139 — e so lanca a retencao se a pessoa marcar',
+    /usar && usar\.checked && retSugeridas/.test(cts) &&
+    /id="nf-ret-usar"[^>]*checked/.test(cts), '');
+  /* Pago antes da nota e o caso NORMAL aqui: a retencao nao tem
+     como entrar, e a janela precisa dizer isso em vez de recusar
+     com erro depois que a pessoa ja marcou. */
+  verificar('v139 — e avisa quando a parcela ja paga impede a retencao',
+    /impedimentoRetencao = function/.test(cts) &&
+    /atual\.status === 'pago'\) return/.test(cts) &&
+    /S\.pagoDe\(id\) > 0\.004\) return/.test(cts), '');
   /* Ver o liquido ANTES de salvar e o que impede alguem informar a
      retencao achando que o fornecedor continua recebendo o cheio. */
   verificar('v136 — e a tela mostra o liquido antes de salvar',
