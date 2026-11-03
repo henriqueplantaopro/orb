@@ -322,7 +322,7 @@ ERP.faturamento = (function () {
           pend.map(function (p) {
             const i = p.item;
             const ret = Math.round((i.retencoes || []).reduce(function (a, r) { return a + r.valor; }, 0) * 100) / 100;
-            return '<tr' + (p.falta.length ? ' style="background:#fff4f2"' : '') + '>' +
+            return '<tr' + (p.falta.length ? ' class="atrasada"' : '') + '>' +
               '<td class="desc">' + U.esc(i.grupo ? 'Nota única · ' + i.grupo : (D.centro(i.centro) || {}).curto || '') +
                 '<div class="sub">' + U.esc(String(i.discriminacao).slice(0, 70)) + '</div></td>' +
               '<td class="desc">' + U.esc(i.tomador_nome || '—') + '</td>' +
@@ -566,26 +566,37 @@ ERP.faturamento = (function () {
         '<th class="num col-parado">Parado</th><th class="col-acoes"></th></tr></thead><tbody>' +
         (lista.length ? lista.map(function (l) {
           const atrasado = l.etapa !== 'faturado' && l.dias > 15;
-          return '<tr' + (atrasado ? ' style="background:#fff4f2"' : '') + '>' +
+          return '<tr' + (atrasado ? ' class="atrasada"' : '') + '>' +
+            /* UMA LINHA DE APOIO, não duas. O emitente nasceu na v141
+               numa linha própria embaixo do nome, e com isso TODA
+               linha da esteira passou a ocupar três alturas de
+               texto: a tabela inteira cresceu um terço para dizer,
+               em quase todas as linhas, a mesma coisa ("HJM
+               Matriz"). Unidade e emitente cabem na mesma linha. */
             '<td class="desc">' +
               (l.eh_grupo
                 ? '<button class="btn-ghost" data-est-exp="' + U.esc(l.grupo + '|' + l.competencia) + '" ' +
                     'title="ver especialidades">' + (expandidos[l.grupo + '|' + l.competencia] ? '▾' : '▸') + '</button> ' +
-                  U.esc(l.projeto.curto) + '<div class="sub">faturamento global · ' +
-                  (l.total_especialidades || l.especialidades.length) + ' especialidades' +
-                  (l.especialidades.length < (l.total_especialidades || 0)
-                    ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '</div>'
-                : U.esc(l.projeto.curto || l.projeto.nome) +
-                  '<div class="sub">' + U.esc(l.projeto.unidade || '') + '</div>') +
+                  U.esc(l.projeto.curto)
+                : U.esc(l.projeto.curto || l.projeto.nome)) +
               /* POR QUAL CNPJ ESTA NOTA SAI.
 
-                 Fica embaixo do nome do projeto, e não numa coluna
-                 nova: a tabela já tem oito colunas e a regra da casa
-                 é não rolar de lado. Aqui aparece em toda linha,
-                 que é o que faltava — antes o CNPJ emitente não
-                 estava escrito em lugar nenhum da tela e a nota
-                 saía pela matriz sem ninguém ter decidido isso. */
-              linhaEmitente(l) + '</td>' +
+                 Antes o CNPJ emitente não estava escrito em lugar
+                 nenhum da tela e a nota saía pela matriz sem
+                 ninguém ter decidido isso. */
+              '<div class="sub">' + [
+                /* Texto curto de propósito: a linha de apoio divide
+                   o espaço com o emitente, e passando de uma linha
+                   a esteira inteira volta a crescer. O detalhe
+                   completo fica no `title`. */
+                l.eh_grupo
+                  ? '<span title="faturamento global do grupo' +
+                    (l.especialidades.length < (l.total_especialidades || 0)
+                      ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '">global · ' +
+                    (l.total_especialidades || l.especialidades.length) + ' especialidades</span>'
+                  : U.esc(l.projeto.unidade || ''),
+                linhaEmitente(l)
+              ].filter(Boolean).join(' · ') + '</div></td>' +
             '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
             /* Em que pé está a produtividade, e o valor que corresponde
                a esse estágio — sem misturar estimativa com o que já é
@@ -606,7 +617,13 @@ ERP.faturamento = (function () {
             passo(l, 'confirmado') + passo(l, 'autorizado') + passo(l, 'liberado') + passo(l, 'faturado') +
             '<td class="num' + (atrasado ? ' erro' : ' sub') + '">' +
               (l.etapa === 'faturado' ? '—' : l.dias + ' dias') + '</td>' +
-            '<td class="acoes">' + acoesEsteira(l) + '</td></tr>' +
+            /* A célula dos botões ancorada à direita, como no contas
+               a pagar: `<td class="col-acoes"><div class="acoes">`.
+               Era `<td class="acoes">`, e a classe num `td` aplica
+               `display:flex` — a célula deixava de ser célula e
+               aparecia deslocada da própria linha, como um retângulo
+               branco solto. */
+            '<td class="col-acoes"><div class="acoes">' + acoesEsteira(l) + '</div></td></tr>' +
             /* As especialidades do grupo aparecem como filhas: a
                produtividade de cada uma continua visível, mas nenhuma
                delas fatura sozinha. */
@@ -665,6 +682,13 @@ ERP.faturamento = (function () {
       });
     const totalEspecialidades = especialidadesDoGrupo
       .reduce(function (t, e) { return Math.round((t + (e.valor || 0)) * 100) / 100; }, 0);
+    /* O texto da nota COMO ESTÁ AGORA, e o que o sistema monta
+       sozinho agora. Capturados na abertura de propósito: o padrão
+       inclui o protocolo, e se a comparação fosse feita depois de
+       gravar a autorização, o texto automático pareceria ter sido
+       escrito à mão — e congelaria. */
+    const discInicial = S.discriminacaoDaNota(par[0], par[1], grupo, '');
+    const discPadrao = S.discriminacaoPadrao(par[0], par[1], grupo, '');
     ERP.app.modal({
       titulo: 'Confirmar valor e autorizar · ' + U.esc(grupo || (l.projeto || {}).curto || ''),
       fecharTxt: 'Cancelar',
@@ -713,11 +737,33 @@ ERP.faturamento = (function () {
               '<div><label>Protocolo / referência do órgão</label>' +
                 '<input id="es-conf-prot" placeholder="ex.: Ofício 55/2026 — medição agosto"></div>' +
             '</div>') +
-        '<label>Descrição / observação da nota</label>' +
-        '<textarea id="es-conf-obs" rows="5" placeholder="texto que vai na discriminação da NF: competência, ' +
-          'ofício, medição, plantões, o que o tomador exige ver na nota"></textarea>' +
-        '<div class="ajuda">Ao autorizar, o faturamento já fica liberado para o RPS em lote — não precisa ' +
-          'de uma segunda pessoa.</div>',
+        /* A DISCRIMINAÇÃO JÁ VEM PREENCHIDA com o que vai sair se
+           ninguém escrever nada. Em branco, a pessoa não tinha como
+           saber que o sistema escreveria um texto por ela. */
+        '<label>Discriminação — o texto que vai na NF</label>' +
+        '<textarea id="es-conf-obs" rows="5" placeholder="competência, ofício, medição, plantões, ' +
+          'o que o tomador exige ver na nota">' + U.esc(discInicial) + '</textarea>' +
+        /* OS DOCUMENTOS QUE VÃO JUNTO. A AF do órgão e o relatório
+           de escala chegam agora, junto com o valor — e não no dia
+           de montar o e-mail para o cliente.
+
+           Só para quem MOVIMENTA faturamento, que é a mesma regra
+           que o servidor aplica ao arquivo: um campo oferecido a
+           quem o banco vai recusar é um campo que mente. */
+        (S.podeMover('faturamento')
+          ? '<div class="row2" style="margin-top:8px">' +
+              '<div><label>Anexar documento do faturamento</label>' +
+                '<input type="file" id="es-conf-arq" style="border:none;padding:0"></div>' +
+              '<div><label>O que é este arquivo</label><select id="es-conf-arq-tipo">' +
+                TIPOS_ANEXO_FAT.map(function (x) {
+                  return '<option value="' + x[0] + '">' + U.esc(x[1]) + '</option>';
+                }).join('') + '</select></div>' +
+            '</div>'
+          : '') +
+        '<div class="ajuda" id="es-conf-aviso">A AF do órgão, o relatório de escala e a medição vão ' +
+          'junto com a nota no envio ao cliente — guardados aqui, saem daqui. Dá para anexar mais ' +
+          'depois, em <b>Ver / editar</b>. Ao autorizar, o faturamento já fica liberado para o RPS ' +
+          'em lote — não precisa de uma segunda pessoa.</div>',
       acoes: [
         { txt: 'Só confirmar o valor', cls: 'btn-sm', fn: function () { aplicar(false); } },
         { txt: 'Confirmar e autorizar', cls: 'btn-aprovar', fn: function () { aplicar(true); } }
@@ -745,15 +791,37 @@ ERP.faturamento = (function () {
         });
     }
 
-    function aplicar(autorizar) {
+    /* O TEXTO DA NOTA E O ANEXO, depois que o valor passou. Nesta
+       ordem de propósito: se o valor for recusado, não fica anexo
+       órfão nem texto gravado para um faturamento que não existe.
+
+       O texto só é gravado quando é DIFERENTE do que o sistema
+       monta sozinho — assim a frase automática continua
+       acompanhando o protocolo e a composição em vez de congelar. */
+    async function gravarTextoEAnexo() {
+      const escrito = U.val('es-conf-obs').trim();
+      const intocado = escrito === String(discInicial).trim();
+      const eraDoSistema = String(discInicial).trim() === String(discPadrao).trim();
+      S.definirDiscriminacao(par[0], par[1], intocado && eraDoSistema ? '' : escrito);
+      const campo = U.el('es-conf-arq');
+      const file = campo && campo.files && campo.files[0];
+      if (!file) return { ok: true };
+      const sub = await subirArquivo(file, par[0] + '-' + par[1], 'es-conf-aviso');
+      if (sub.erro) return { aviso: 'Valor gravado, mas o anexo não subiu: ' + sub.erro };
+      const r = S.anexarAoFaturamento(par[0], par[1],
+        Object.assign({ tipo: U.val('es-conf-arq-tipo') || 'outro' }, sub.anexo));
+      if (r.erro) return { aviso: 'Valor gravado, mas o anexo não entrou: ' + r.erro };
+      return { ok: true, anexou: file.name };
+    }
+
+    async function aplicar(autorizar) {
       /* No grupo, a confirmação é das SETE de uma vez — e ou passam
          todas ou não passa nenhuma. Depois dela, a autorização
          continua sendo o caminho de sempre, por uma especialidade:
          a etapa é do conjunto. */
       if (grupo) {
         const partes = lerEspecialidades();
-        const r = S.confirmarFaturamentoEspecialidades(grupo, par[1], partes,
-          { observacao: U.val('es-conf-obs') });
+        const r = S.confirmarFaturamentoEspecialidades(grupo, par[1], partes, {});
         if (ERP.app.erroDoRetorno(r)) return;
         if (autorizar) {
           /* Autoriza por uma especialidade COM VALOR: a etapa do
@@ -761,18 +829,20 @@ ERP.faturamento = (function () {
              em zero não moveria o grupo. */
           const comValor = (r.partes || [])[0];
           const a = S.autorizarFaturamento((comValor || {}).centro || par[0], par[1],
-            { protocolo: U.val('es-conf-prot'), observacao: U.val('es-conf-obs'),
-              sem_produtividade: true });
+            { protocolo: U.val('es-conf-prot'), sem_produtividade: true });
           if (a.erro) {
             ERP.app.aviso('Valores confirmados, mas a autorização não passou: ' + a.erro, 'erro');
             ERP.app.fecharModal(); renderEsteira(); return;
           }
         }
+        const extra = await gravarTextoEAnexo();
         ERP.app.fecharModal();
         renderEsteira();
         ERP.receber.render();
         ERP.app.aviso((autorizar ? 'Autorizado. ' : '') + 'Total do grupo ' + U.brl(r.total) +
-          ' em ' + r.partes.length + ' especialidade(s).', 'ok');
+          ' em ' + r.partes.length + ' especialidade(s).' +
+          (extra.anexou ? ' ' + extra.anexou + ' anexado.' : '') +
+          (extra.aviso ? ' ' + extra.aviso : ''), extra.aviso ? 'erro' : 'ok');
         return;
       }
       const r = S.confirmarEAutorizarFaturamento({
@@ -780,15 +850,18 @@ ERP.faturamento = (function () {
         faturamento: U.parseValor(U.val('es-valor')),
         autorizar: autorizar,
         confirmar_sem_produtividade: U.el('es-sem-prod') ? U.el('es-sem-prod').checked : true,
-        protocolo: U.val('es-conf-prot'), observacao: U.val('es-conf-obs')
+        protocolo: U.val('es-conf-prot')
       });
       if (ERP.app.erroDoRetorno(r)) return;
+      const extra = await gravarTextoEAnexo();
       ERP.app.fecharModal();
       renderEsteira();
       ERP.receber.render();
-      ERP.app.aviso(autorizar
+      ERP.app.aviso((autorizar
         ? 'Valor confirmado e faturamento autorizado — já liberado para o RPS em lote.'
-        : 'Valor confirmado.', 'ok');
+        : 'Valor confirmado.') +
+        (extra.anexou ? ' ' + extra.anexou + ' anexado.' : '') +
+        (extra.aviso ? ' ' + extra.aviso : ''), extra.aviso ? 'erro' : 'ok');
     }
   }
 
@@ -802,13 +875,13 @@ ERP.faturamento = (function () {
     const excecao = origem === 'escolhido nesta competência';
     const podeTrocar = l.etapa !== 'faturado' &&
       (S.pode('faturar') || S.pode('autorizar_faturamento') || S.pode('admin'));
-    return '<div class="sub" title="origem: ' + U.esc(origem) + '">emite: ' +
+    return '<span title="origem: ' + U.esc(origem) + '">emite: ' +
       '<b' + (excecao ? ' class="erro"' : '') + '>' + U.esc(S.apelidoEmpresa(emp)) + '</b>' +
       (excecao ? ' <span class="badge b-aguardando">exceção do mês</span>' : '') +
       (podeTrocar
         ? ' <button class="btn-ghost" data-est-emp="' + U.esc(l.centro + '|' + l.competencia) +
           '" title="trocar o CNPJ que emite esta nota">trocar</button>'
-        : '') + '</div>';
+        : '') + '</span>';
   }
 
   /* Trocar o emitente de UMA competência. O cadastro do cliente
@@ -892,53 +965,383 @@ ERP.faturamento = (function () {
           '<div><label>Chave de acesso</label><input id="nfe-chave" placeholder="se houver"></div>' +
         '</div>' +
         '<label>Discriminação (como saiu na nota)</label>' +
-        '<textarea id="nfe-disc" rows="3" placeholder="o texto que consta no documento"></textarea>' +
+        '<textarea id="nfe-disc" rows="3" placeholder="o texto que consta no documento">' +
+          U.esc(S.discriminacaoDaNota(par[0], par[1], grupo, '')) + '</textarea>' +
         '<label style="margin-top:8px">Arquivo da nota (PDF ou XML) *</label>' +
         '<input type="file" id="nfe-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0">' +
-        '<div class="ajuda">O valor sugerido é o que a esteira confirmou. Se a nota saiu por outro ' +
+        '<div class="ajuda" id="nfe-aviso">O valor sugerido é o que a esteira confirmou. Se a nota saiu por outro ' +
           'valor, informe o da nota — é ele que vai para o contas a receber.</div>',
-      acoes: [{ txt: 'Anexar e fechar o faturamento', cls: 'btn-aprovar', fn: function () {
-        const gravar = function () {
-          const r = S.anexarNotaEmitida({
-            centro: par[0], competencia: par[1],
-            numero: U.val('nfe-num'), serie: U.val('nfe-serie'),
-            emissao: U.val('nfe-emissao'), vencimento: U.val('nfe-venc'),
-            valor: U.parseValor(U.val('nfe-valor')), chave: U.val('nfe-chave'),
-            discriminacao: U.val('nfe-disc'), arquivo: arquivo
-          });
-          if (ERP.app.erroDoRetorno(r)) return;
-          ERP.app.fecharModal();
-          renderEsteira();
-          atualizarAlertaFat();
-          ERP.receber.render();
-          ERP.app.aviso('NF ' + r.receber.numero + ' anexada — faturamento fechado (' +
-            U.brl(r.receber.valor_bruto) + ').' + (r.aviso ? ' ' + r.aviso : ''), 'ok');
-        };
+      acoes: [{ txt: 'Anexar e fechar o faturamento', cls: 'btn-aprovar', fn: async function () {
         const arq = U.el('nfe-arq').files && U.el('nfe-arq').files[0];
-        if (!arq) return gravar();   // o store recusa e explica por quê
-        const fr = new FileReader();
-        fr.onload = function () { arquivo = { nome: arq.name, dados: fr.result }; gravar(); };
-        fr.readAsDataURL(arq);
+        if (arq) {
+          /* O arquivo vai para o balde privado, como todo documento
+             do sistema. Na v141 ele era gravado em base64 dentro do
+             próprio título do a receber: funcionava, e carregava um
+             PDF inteiro em toda abertura do contas a receber. */
+          const sub = await subirArquivo(arq, par[0] + '-' + par[1], 'nfe-aviso');
+          if (sub.erro) return ERP.app.aviso(sub.erro, 'erro');
+          arquivo = sub.anexo;
+        }
+        const r = S.anexarNotaEmitida({
+          centro: par[0], competencia: par[1],
+          numero: U.val('nfe-num'), serie: U.val('nfe-serie'),
+          emissao: U.val('nfe-emissao'), vencimento: U.val('nfe-venc'),
+          valor: U.parseValor(U.val('nfe-valor')), chave: U.val('nfe-chave'),
+          discriminacao: U.val('nfe-disc'), arquivo: arquivo
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        renderEsteira();
+        atualizarAlertaFat();
+        ERP.receber.render();
+        ERP.app.aviso('NF ' + r.receber.numero + ' anexada — faturamento fechado (' +
+          U.brl(r.receber.valor_bruto) + ').' + (r.aviso ? ' ' + r.aviso : ''), 'ok');
       } }]
     });
   }
 
+  /* ── o arquivo vai para o balde privado ──────────────────
+     Mesma mecânica dos anexos de contrato e do cofre de
+     habilitação: balde privado, link assinado de curta duração,
+     nada público. O registro guarda o caminho, nunca o arquivo. */
+  const BALDE_FAT = 'faturamento';
+  async function subirArquivo(file, pasta, idAviso) {
+    const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+    if (!cli) {
+      return { erro: 'Sem conexão com o banco — o arquivo precisa do servidor para ser guardado.' };
+    }
+    const aviso = idAviso ? U.el(idAviso) : null;
+    if (aviso) aviso.textContent = 'enviando ' + file.name + '…';
+    /* Nome limpo: acento, espaço e barra em nome de objeto no balde
+       são fonte certa de arquivo que sobe e não abre. */
+    const limpo = file.name.replace(/[^\w.\-]+/g, '_').slice(-80);
+    const caminho = String(pasta).replace(/[^\w.\-]+/g, '_') + '/' +
+      Date.now() + '-' + Math.random().toString(36).slice(2, 6) + '-' + limpo;
+    const sub = await cli.storage.from(BALDE_FAT)
+      .upload(caminho, file, { contentType: file.type || 'application/octet-stream' });
+    if (sub.error) {
+      if (aviso) aviso.textContent = '';
+      return { erro: 'Não enviou: ' + sub.error.message };
+    }
+    return { anexo: { nome: file.name, path: caminho, tamanho: file.size,
+      tipo_arquivo: file.type || '' } };
+  }
+
+  /* ── ver e editar o faturamento antes de emitir ──────────
+     A gestora, a diretoria e quem responde pela produtividade
+     lançam o valor, escrevem o texto da nota e autorizam — tudo
+     dentro de modais que fecham. Desta tela em diante, o que foi
+     lançado se olha de novo, inteiro, e se corrige.
+
+     O que ela mostra é exatamente o que vai sair: a discriminação
+     daqui é a mesma que o gerador de RPS escreve no arquivo. */
+  const TIPOS_ANEXO_FAT = [
+    ['af', 'Autorização de fornecimento (AF)'],
+    ['escala', 'Relatório de escala'],
+    ['medicao', 'Medição / relatório do órgão'],
+    ['oficio', 'Ofício / e-mail de autorização'],
+    ['outro', 'Outro documento']
+  ];
+
+  function revisarFaturamento(ref) {
+    const par = String(ref).split('|');
+    const d = S.dossieFaturamento(par[0], par[1]);
+    if (d.erro) return ERP.app.aviso(d.erro, 'erro');
+    const edita = d.pode_editar;
+    const naoEdita = !edita
+      ? (d.travado_por_nota
+          ? 'A nota já foi emitida: o que está escrito aqui é o que foi para o documento. ' +
+            'Para mudar, cancele a nota.'
+          : 'Seu perfil vê o faturamento, mas não altera o que vai na nota.')
+      : '';
+
+    const linha = (rotulo, valor) =>
+      '<div class="resumo-linha"><span>' + rotulo + '</span><span class="v">' + valor + '</span></div>';
+    const carimbo = (rotulo, em, por) =>
+      '<div class="resumo-linha"><span>' + rotulo + '</span><span class="v">' +
+        (em ? U.fData(em) + (por ? ' <span class="sub">por ' + U.esc(String(por).split(' ')[0]) +
+          '</span>' : '') : '<span class="sub">—</span>') + '</span></div>';
+
+    ERP.app.modal({
+      titulo: 'Faturamento · ' + U.esc(d.grupo || d.projeto.curto || d.projeto.nome || '') +
+        ' · ' + U.fComp(d.competencia),
+      fecharTxt: 'Fechar',
+      corpo:
+        (naoEdita ? '<div class="ajuda">' + naoEdita + '</div>' : '') +
+        linha('Cliente', U.esc(d.cliente ? d.cliente.nome : '— sem cliente amarrado —')) +
+        linha('Emite esta nota', '<b>' + U.esc(d.empresa_apelido) + '</b> <span class="sub">(' +
+          U.esc(d.empresa_origem) + ')</span>') +
+        linha('Etapa', U.esc(ETAPAS_NOME[d.etapa] || d.etapa)) +
+        linha('Valor a faturar', '<b>' + U.brl(d.valor) + '</b>') +
+        linha('Produtividade lançada', d.lotes
+          ? U.brl(d.produtividade) + ' <span class="sub">em ' + d.lotes + ' fechamento(s)</span>'
+          : '<span class="erro">nenhuma</span>') +
+
+        /* A COMPOSIÇÃO. No grupo é o que mais se procura aqui: qual
+           especialidade entrou com quanto nesta nota única. */
+        (d.grupo
+          ? '<div class="parcelas" style="margin-top:10px">' +
+              '<div class="cab" style="grid-template-columns:1fr 130px 130px">' +
+                '<span>Especialidade</span><span class="num">A faturar</span>' +
+                '<span class="num">Produtividade</span></div>' +
+              d.partes.map(function (p) {
+                return '<div class="lin" style="grid-template-columns:1fr 130px 130px">' +
+                  '<span>' + U.esc(p.projeto.curto || p.projeto.nome || '') +
+                    (p.valor > 0 ? '' : ' <span class="sub">sem faturamento no mês</span>') + '</span>' +
+                  '<span class="num">' + U.brl(p.valor) + '</span>' +
+                  '<span class="num sub">' + (p.produtividade ? U.brl(p.produtividade) : '—') + '</span>' +
+                  '</div>';
+              }).join('') +
+              '<div class="rodape"><span class="sub">a nota é única — este é o total dela</span>' +
+                '<span class="dif ok">' + U.brl(d.valor) + '</span></div>' +
+            '</div>' +
+            '<div class="ajuda">Para corrigir um destes valores, use <b>Corrigir valor</b> na esteira: ' +
+              'o valor tem caminho próprio, com as travas da produtividade confirmada.</div>'
+          : '') +
+
+        /* O TEXTO QUE VAI NA NOTA. É a pergunta que ele fez: "o que
+           foi escrito para descrição da NF?". */
+        '<label style="margin-top:12px">Discriminação — o texto que vai na NF</label>' +
+        '<textarea id="rv-disc" rows="5"' + (edita ? '' : ' readonly') + ' placeholder="' +
+          'competência, ofício, medição, plantões — o que o tomador exige ver na nota">' +
+          U.esc(d.discriminacao) + '</textarea>' +
+        '<div class="ajuda">' +
+          (d.discriminacao_escrita
+            ? 'Este texto foi <b>escrito à mão</b> e é o que sai no arquivo de RPS.'
+            : 'Ninguém escreveu nada ainda: este é o texto que o <b>sistema monta sozinho</b>. ' +
+              'O que for digitado aqui passa a valer no lugar dele.') +
+          (edita && d.discriminacao_escrita
+            ? ' <button class="btn-ghost" id="rv-padrao">voltar ao texto do sistema</button>' : '') +
+        '</div>' +
+
+        '<div class="row2" style="margin-top:8px">' +
+          '<div><label>Protocolo / referência do órgão</label>' +
+            '<input id="rv-prot"' + (edita ? '' : ' readonly') + ' value="' + U.esc(d.protocolo) +
+            '" placeholder="ex.: Ofício 55/2026 — medição agosto"></div>' +
+          '<div><label>Vencimento previsto</label>' +
+            '<input type="date" id="rv-venc"' + (edita ? '' : ' readonly') + ' value="' +
+            U.esc(d.vencimento || '') + '"></div>' +
+        '</div>' +
+
+        (d.retencoes.length
+          ? '<div class="ajuda">Retenções previstas: ' + d.retencoes.map(function (r) {
+              return U.esc(r.tributo) + ' ' + U.num(r.aliquota) + '% (' + U.brl(r.valor) + ')';
+            }).join(' · ') + '</div>'
+          : '<div class="ajuda">Sem retenção cadastrada para este tomador.</div>') +
+
+        /* OS DOCUMENTOS QUE VÃO JUNTO COM A NOTA. */
+        '<div style="margin-top:12px;padding-top:8px;border-top:1px solid #e6e9ee">' +
+          '<b>Documentos deste faturamento</b>' +
+          (S.podeMover('faturamento')
+            ? ' <button class="btn-sm" id="rv-anexar">+ anexar</button>' : '') +
+          (d.anexos.length || d.documentos.length
+            ? ' <button class="btn-sm" id="rv-baixar">Baixar tudo</button>' : '') +
+          '<div class="ajuda">A nota não vai sozinha para o cliente: a AF do órgão, o relatório de ' +
+            'escala e a medição vão junto. Guardados aqui, saem daqui — ninguém precisa procurar no ' +
+            'e-mail de quem montou o envio.</div>' +
+          (d.documentos.length
+            ? '<ul class="historico">' + d.documentos.map(function (doc) {
+                return '<li><span class="badge b-pago">NF ' + U.esc(doc.numero || '') + '</span> ' +
+                  (doc.arquivo && doc.arquivo.path
+                    ? '<span class="mono">' + U.esc(doc.arquivo.nome) + '</span> ' +
+                      '<button class="btn-sm" data-rv-ver="' + U.esc(doc.arquivo.path) + '|' +
+                      U.esc(doc.arquivo.nome) + '">Ver</button>'
+                    : '<span class="sub">emitida pelo sistema — sem arquivo anexado</span>') +
+                  ' <span class="sub">· ' + U.brl(doc.valor) + '</span></li>';
+              }).join('') + '</ul>'
+            : '') +
+          (d.anexos.length
+            ? '<ul class="historico">' + d.anexos.map(function (an) {
+                return '<li><span class="badge b-aguardando">' + U.esc(S.nomeTipoAnexoFat(an.tipo)) +
+                  '</span> <span class="mono">' + U.esc(an.nome) + '</span>' +
+                  (an.em ? ' <span class="sub">· ' + U.fData(String(an.em).slice(0, 10)) +
+                    (an.por ? ' por ' + U.esc(String(an.por).split(' ')[0]) : '') + '</span>' : '') +
+                  ' <button class="btn-sm" data-rv-ver="' + U.esc(an.path) + '|' + U.esc(an.nome) +
+                  '">Ver</button>' +
+                  (S.podeMover('faturamento') && !d.travado_por_nota
+                    ? ' <button class="btn-sm btn-cancelar" data-rv-del="' + U.esc(an.id) +
+                      '">Remover</button>' : '') + '</li>';
+              }).join('') + '</ul>'
+            : '<div class="sub">Nenhum documento anexado.</div>') +
+        '</div>' +
+
+        '<div style="margin-top:12px;padding-top:8px;border-top:1px solid #e6e9ee">' +
+          '<b>Quem fez o quê</b>' +
+          carimbo('Valor confirmado', d.confirmado_em, d.confirmado_por) +
+          carimbo('Autorizado pelo órgão', d.autorizado_em, d.autorizado_por) +
+          carimbo('Liberado para faturar', d.liberado_em, d.liberado_por) +
+        '</div>' +
+        (d.historico.length
+          ? '<div style="margin-top:10px"><b>Histórico</b><ul class="historico">' +
+              d.historico.slice(0, 12).map(function (e) {
+                /* `e.em` é um Date, e `String(Date).slice(0,10)` dá
+                   "Tue Nov 03" — data em inglês, no formato errado,
+                   numa casa em que data é sempre dd/mm/aaaa.
+                   `dataLocal` converte antes de formatar. */
+                return '<li><span class="sub">' + U.fData(U.dataLocal(e.em)) + '</span> ' +
+                  U.esc(e.acao) + ' <span class="sub">— ' + U.esc(e.usuario || '') +
+                  (e.detalhe ? ' · ' + U.esc(String(e.detalhe).slice(0, 110)) : '') + '</span></li>';
+              }).join('') + '</ul></div>'
+          : ''),
+      acoes: edita
+        ? [{ txt: 'Gravar alterações', cls: 'btn-aprovar', fn: function () {
+            const r = S.editarFaturamento({
+              centro: par[0], competencia: par[1],
+              /* Texto igual ao que o sistema monta sozinho não vira
+                 texto escrito: senão, a frase do sistema congelaria
+                 na previsão e pararia de acompanhar o protocolo e a
+                 composição quando eles mudassem. */
+              discriminacao: U.val('rv-disc').trim() === String(d.discriminacao_padrao).trim()
+                ? '' : U.val('rv-disc').trim(),
+              protocolo: U.val('rv-prot'),
+              vencimento: U.val('rv-venc')
+            });
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal();
+            renderEsteira();
+            ERP.receber.render();
+            ERP.app.aviso(r.mudou.length
+              ? 'Gravado: ' + r.mudou.join(', ') + '.'
+              : 'Nada mudou.', 'ok');
+          } }]
+        : [],
+      aoAbrir: function () { ligarRevisao(par, d); }
+    });
+  }
+
+  function ligarRevisao(par, d) {
+    const padrao = U.el('rv-padrao');
+    if (padrao) {
+      padrao.addEventListener('click', function () {
+        const t = U.el('rv-disc');
+        if (t) { t.value = d.discriminacao_padrao; t.focus(); }
+      });
+    }
+    document.querySelectorAll('[data-rv-ver]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const p = this.dataset.rvVer.split('|');
+        ERP.app.verDocumento({ bucket: BALDE_FAT, path: p[0], nome: p[1],
+          titulo: 'Faturamento · ' + U.fComp(par[1]) });
+      });
+    });
+    document.querySelectorAll('[data-rv-del]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.rvDel;
+        const an = (d.anexos || []).find(function (x) { return x.id === id; });
+        ERP.app.modal({
+          titulo: 'Remover documento',
+          fecharTxt: 'Voltar',
+          corpo: '<p>Remover <b>' + U.esc((an || {}).nome || '') + '</b> deste faturamento?</p>' +
+            '<div class="ajuda">O arquivo sai do faturamento e do servidor. Se ele for a única cópia ' +
+            'da AF, não há como recuperá-la depois.</div>',
+          acoes: [{ txt: 'Remover', cls: 'btn-cancelar', fn: async function () {
+            const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+            if (cli && an && an.path) await cli.storage.from(BALDE_FAT).remove([an.path]);
+            const r = S.removerAnexoDoFaturamento(par[0], par[1], id);
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal();
+            revisarFaturamento(par.join('|'));
+            ERP.app.aviso('Documento removido.', 'ok');
+          } }]
+        });
+      });
+    });
+    const anexar = U.el('rv-anexar');
+    if (anexar) {
+      anexar.addEventListener('click', function () { anexarAoFaturamento(par); });
+    }
+    const baixar = U.el('rv-baixar');
+    if (baixar) {
+      baixar.addEventListener('click', function () { baixarPacote(par); });
+    }
+  }
+
+  function anexarAoFaturamento(par) {
+    ERP.app.modal({
+      titulo: 'Anexar ao faturamento · ' + U.fComp(par[1]),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="row2">' +
+          '<div><label>O que é este arquivo *</label><select id="ax-tipo">' +
+            TIPOS_ANEXO_FAT.map(function (x) {
+              return '<option value="' + x[0] + '">' + U.esc(x[1]) + '</option>';
+            }).join('') + '</select></div>' +
+          '<div><label>Arquivo *</label><input type="file" id="ax-arq"></div>' +
+        '</div>' +
+        '<div class="ajuda" id="ax-aviso">O arquivo fica em pasta privada no servidor: abre por link ' +
+          'temporário, para quem tem o módulo de Faturamento. É o que vai junto com a nota no envio ' +
+          'ao cliente.</div>',
+      acoes: [{ txt: 'Anexar', cls: 'btn-aprovar', fn: async function () {
+        const campo = U.el('ax-arq');
+        const file = campo && campo.files && campo.files[0];
+        if (!file) return ERP.app.aviso('Escolha um arquivo.', 'erro');
+        const sub = await subirArquivo(file, par[0] + '-' + par[1], 'ax-aviso');
+        if (sub.erro) return ERP.app.aviso(sub.erro, 'erro');
+        const r = S.anexarAoFaturamento(par[0], par[1],
+          Object.assign({ tipo: U.val('ax-tipo') || 'outro' }, sub.anexo));
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        revisarFaturamento(par.join('|'));
+        ERP.app.aviso('Documento anexado ao faturamento.', 'ok');
+      } }]
+    });
+  }
+
+  /* BAIXAR O PACOTE: a nota mais o que vai junto com ela. Um link
+     assinado por peça, abertos em sequência — é o que o navegador
+     permite sem pedir ao servidor que monte um .zip. */
+  async function baixarPacote(par) {
+    const p = S.pacoteDoFaturamento(par[0], par[1]);
+    if (ERP.app.erroDoRetorno(p)) return;
+    if (!p.pecas.length) {
+      return ERP.app.aviso('Não há arquivo para baixar neste faturamento' +
+        (p.nota_sem_arquivo ? ' — a nota foi emitida pelo sistema e não tem PDF anexado.' : '.'), 'erro');
+    }
+    const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+    if (!cli) return ERP.app.aviso('Sem conexão com o banco — os arquivos ficam no servidor.', 'erro');
+    let n = 0;
+    for (const peca of p.pecas) {
+      const r = await cli.storage.from(BALDE_FAT).createSignedUrl(peca.path, 900);
+      if (r.error || !r.data) continue;
+      const url = r.data.signedUrl +
+        (r.data.signedUrl.indexOf('?') > -1 ? '&' : '?') + 'download=' + encodeURIComponent(peca.nome);
+      const a = document.createElement('a');
+      a.href = url; a.download = peca.nome; a.style.display = 'none';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      n++;
+    }
+    ERP.app.aviso(n + ' arquivo(s) baixado(s)' +
+      (p.nota_sem_arquivo ? ' — a nota emitida pelo sistema não tem PDF anexado.' : '.'), n ? 'ok' : 'erro');
+  }
+
   function acoesEsteira(l) {
     const ref = l.centro + '|' + l.competencia;
+    /* VER E EDITAR O QUE FOI LANÇADO, em toda linha e em toda etapa.
+       Era o que faltava: o valor dava para ver na esteira, mas a
+       descrição que vai na nota, o protocolo, a composição por
+       especialidade e os documentos tinham sido digitados dentro de
+       um modal que fechou e não abria mais. */
+    const rever = '<button class="btn-sm" data-est-rev="' + ref + '" ' +
+      'title="ver tudo que foi lançado neste faturamento">Ver / editar</button>';
     /* Quem cuida de produtividade e faturamento digita o valor e
        autoriza no mesmo gesto — e a liberação vai junto. */
     if (l.etapa === 'previsao' && S.pode('autorizar_faturamento')) {
-      return '<button class="btn-sm btn-aprovar" data-est-conf="' + ref + '">Confirmar valor e autorizar</button>';
+      return rever +
+        ' <button class="btn-sm btn-aprovar" data-est-conf="' + ref + '">Confirmar valor e autorizar</button>';
     }
     if (l.etapa === 'confirmado' && S.pode('autorizar_faturamento')) {
-      return '<button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar faturamento</button>' +
-        ' <button class="btn-sm" data-est-conf="' + ref + '">Corrigir valor</button>';
+      return rever +
+        ' <button class="btn-sm" data-est-conf="' + ref + '">Corrigir valor</button>' +
+        ' <button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar</button>';
     }
     if (l.etapa === 'autorizado') {
-      return (S.pode('liberar_faturamento')
-        ? '<button class="btn-sm btn-aprovar" data-est-lib="' + l.centro + '|' + l.competencia + '">Liberar</button>' : '') +
+      return rever +
         (S.pode('autorizar_faturamento')
-          ? ' <button class="btn-sm" data-est-des="autorizado|' + l.centro + '|' + l.competencia + '">Desfazer</button>' : '');
+          ? ' <button class="btn-sm" data-est-des="autorizado|' + ref + '">Desfazer</button>' : '') +
+        (S.pode('liberar_faturamento')
+          ? ' <button class="btn-sm btn-aprovar" data-est-lib="' + ref + '">Liberar</button>' : '');
     }
     if (l.etapa === 'liberado') {
       /* NOTA EMITIDA FORA entra por aqui. A do Ceará sai pelo
@@ -946,15 +1349,20 @@ ERP.faturamento = (function () {
          sem este caminho o faturamento ficava parado em "liberado"
          para sempre, dizendo que falta emitir o que já foi
          emitido. */
-      return '<span class="sub">pronto para faturar</span>' +
-        (S.pode('faturar')
-          ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + l.centro + '|' + l.competencia +
-            '">Anexar NF emitida</button>' : '') +
+      /* A situação vira ETIQUETA. Como frase solta dentro da célula
+         dos botões, "pronto para faturar" era espremida em três
+         linhas e esticava a altura da linha inteira. */
+      return '<span class="badge b-pago">pronto p/ faturar</span>' + rever +
         (S.pode('liberar_faturamento')
-          ? ' <button class="btn-sm" data-est-des="liberado|' + l.centro + '|' + l.competencia + '">Desfazer</button>' : '');
+          ? ' <button class="btn-sm" data-est-des="liberado|' + ref + '">Desfazer</button>' : '') +
+        (S.pode('faturar')
+          ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + ref + '">Anexar NF emitida</button>' : '');
     }
-    if (l.etapa === 'previsao') return '<span class="sub">aguarda o fechamento da produtividade</span>';
-    return '';
+    if (l.etapa === 'previsao') {
+      return rever + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
+        'aguarda produtividade</span>';
+    }
+    return rever;
   }
 
   function ligarEsteira() {
@@ -964,6 +1372,9 @@ ERP.faturamento = (function () {
     });
     box.querySelectorAll('[data-est-nf]').forEach(function (b) {
       b.addEventListener('click', function () { anexarNFEmitida(this.dataset.estNf); });
+    });
+    box.querySelectorAll('[data-est-rev]').forEach(function (b) {
+      b.addEventListener('click', function () { revisarFaturamento(this.dataset.estRev); });
     });
     box.querySelectorAll('[data-est-exp]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -999,6 +1410,9 @@ ERP.faturamento = (function () {
       b.addEventListener('click', function () {
         const par = this.dataset.estAut.split('|');
         const l = S.esteiraFaturamento({ centro: par[0], competencia: par[1] })[0] || {};
+        const gr = (D.centro(par[0]) || {}).grupo_faturamento || null;
+        const discInicial = S.discriminacaoDaNota(par[0], par[1], gr, '');
+        const discPadrao = S.discriminacaoPadrao(par[0], par[1], gr, '');
         ERP.app.modal({
           titulo: 'Autorização do órgão · ' + U.esc((l.projeto || {}).curto || ''),
           fecharTxt: 'Cancelar',
@@ -1011,13 +1425,18 @@ ERP.faturamento = (function () {
               '<div><label>Data da autorização</label><input type="date" id="es-data" value="' + U.hoje() + '"></div></div>' +
             /* Aqui entra o texto que vai na DISCRIMINAÇÃO da nota, e
                às vezes é longo: competência, ofício, medição, relação
-               de plantões. Campo de uma linha não servia. */
-            '<label>Descrição / observação da nota</label>' +
-            '<textarea id="es-obs" rows="5" placeholder="texto que vai na discriminação da NF"></textarea>',
+               de plantões. Campo de uma linha não servia — e, vazio,
+               não dizia que o sistema escreveria um texto no lugar. */
+            '<label>Discriminação — o texto que vai na NF</label>' +
+            '<textarea id="es-obs" rows="5">' + U.esc(discInicial) + '</textarea>',
           acoes: [{ txt: 'Registrar autorização', cls: 'btn-aprovar', fn: function () {
+            const escrito = U.val('es-obs').trim();
+            const intocado = escrito === String(discInicial).trim();
+            const eraDoSistema = String(discInicial).trim() === String(discPadrao).trim();
             const r = S.autorizarFaturamento(par[0], par[1], { protocolo: U.val('es-prot'),
-              data: U.val('es-data'), observacao: U.val('es-obs') });
+              data: U.val('es-data') });
             if (ERP.app.erroDoRetorno(r)) return;
+            S.definirDiscriminacao(par[0], par[1], intocado && eraDoSistema ? '' : escrito);
             ERP.app.fecharModal(); renderEsteira(); atualizarAlertaFat();
             ERP.app.aviso('Autorização registrada — já liberado para o RPS em lote.', 'ok');
           } }]

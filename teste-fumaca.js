@@ -11136,4 +11136,95 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /const jaDiz = \/\\\(previsto\\\)\\s\*\$\/\.test\(quem\);/.test(sto), '');
 })();
 
+// ── v142: o faturamento ANTES de virar nota ──
+(function () {
+  const fsE = require('fs');
+  const sto = fsE.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const fat = fsE.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const css = fsE.readFileSync(__dirname + '/css/erp.css', 'utf8');
+
+  S.setUsuario('u2');
+  const comp = '2081-05';
+  const centro = 'pj01';
+  S.confirmarFaturamentoProdutividade({ centro: centro, competencia: comp,
+    faturamento: 90000, produtividade: 0, forcar: true });
+
+  /* O TEXTO DIGITADO CHEGA NA NOTA. Era gravado e descartado: o
+     gerador do RPS montava a discriminacao por template. */
+  const padrao = S.discriminacaoDaNota(centro, comp, null, '');
+  verificar('v142 — sem ninguem escrever, o sistema monta o texto da nota',
+    /Servi.os m.dicos prestados/.test(padrao), padrao.slice(0, 40));
+  S.definirDiscriminacao(centro, comp, 'TEXTO DA GESTORA — medicao de maio');
+  verificar('v142 — o texto escrito passa a valer',
+    S.discriminacaoDaNota(centro, comp, null, '') === 'TEXTO DA GESTORA — medicao de maio', '');
+  S.autorizarFaturamento(centro, comp, { protocolo: 'QA-142', sem_produtividade: true });
+  const item = S.itensParaRPS(comp).find(i => i.centro === centro);
+  verificar('v142 — e o ARQUIVO DE RPS sai com ele, nao com o template',
+    item && item.discriminacao === 'TEXTO DA GESTORA — medicao de maio',
+    item ? item.discriminacao.slice(0, 40) : '(sem item)');
+  S.definirDiscriminacao(centro, comp, '');
+  verificar('v142 — apagando, volta o texto do sistema com o protocolo',
+    /Autoriza..o: QA-142/.test(S.discriminacaoDaNota(centro, comp, null, '')), '');
+  verificar('v142 — e o gerador pergunta num lugar so',
+    /discriminacao: discriminacaoDaNota\(d\.centro, d\.competencia, d\.grupo, d\.detalhe\)/.test(sto), '');
+
+  /* O DOSSIE: ver tudo que foi lancado. */
+  const d = S.dossieFaturamento(centro, comp);
+  verificar('v142 — o dossie traz valor, etapa, protocolo e carimbos',
+    d.valor === 90000 && d.etapa === 'liberado' && d.protocolo === 'QA-142' && !!d.autorizado_por,
+    JSON.stringify({ v: d.valor, e: d.etapa, p: d.protocolo }));
+  verificar('v142 — e separa o texto escrito a mao do texto do sistema',
+    d.discriminacao_escrita === '' && d.discriminacao === d.discriminacao_padrao, '');
+
+  /* A EDICAO, com as duas travas. */
+  const ed = S.editarFaturamento({ centro: centro, competencia: comp, protocolo: '' });
+  verificar('v142 — apagar o protocolo de competencia autorizada e recusado',
+    !!ed.erro && S.dossieFaturamento(centro, comp).protocolo === 'QA-142', ed.erro || '(aceitou)');
+  const ok = S.editarFaturamento({ centro: centro, competencia: comp,
+    discriminacao: 'corrigido pela diretoria', protocolo: 'QA-142-B' });
+  verificar('v142 — e a edicao legitima grava e diz o que mudou',
+    ok.ok && ok.mudou.length === 2, JSON.stringify(ok.mudou || ok.erro));
+
+  /* OS DOCUMENTOS QUE VAO JUNTO. */
+  verificar('v142 — anexo sem arquivo no servidor e recusado',
+    !!S.anexarAoFaturamento(centro, comp, { nome: 'af.pdf', tipo: 'af' }).erro, '');
+  S.anexarAoFaturamento(centro, comp, { nome: 'af.pdf', tipo: 'af', path: 'qa/af.pdf' });
+  S.anexarAoFaturamento(centro, comp, { nome: 'escala.xlsx', tipo: 'escala', path: 'qa/esc.xlsx' });
+  const pac = S.pacoteDoFaturamento(centro, comp);
+  verificar('v142 — a AF e a escala entram e saem juntas no pacote do cliente',
+    pac.pecas.length === 2 && pac.pecas.every(p => !!p.path), String(pac.pecas.length));
+  verificar('v142 — e quem so consulta nao anexa (mesma regra do balde)',
+    (function () { S.setUsuario('u4');
+      const r = S.anexarAoFaturamento(centro, comp, { nome: 'x.pdf', path: 'qa/x.pdf' });
+      S.setUsuario('u2'); return !!r.erro; })(), '');
+  verificar('v142 — o store pergunta pelo nivel do modulo, nao por uma lista propria',
+    /if \(!podeMover\('faturamento'\)\) \{/.test(sto), '');
+
+  /* O GRUPO: uma nota, um texto, um conjunto de documentos. */
+  const g = D.centros.find(c => c.grupo_faturamento);
+  if (g) {
+    const ids = S.projetosDoGrupo(g.grupo_faturamento);
+    const ancoras = ids.map(id => S.centroAncoraDoFaturamento(id));
+    verificar('v142 — no grupo o texto e os documentos tem uma ancora so',
+      ancoras.every(a => a === ancoras[0]), ancoras[0]);
+  }
+
+  /* A TELA. */
+  verificar('v142 — toda linha da esteira oferece ver/editar',
+    /data-est-rev="' \+ ref \+ '"/.test(fat), '');
+  verificar('v142 — a celula de acoes da esteira e celula, com div dentro',
+    /<td class="col-acoes"><div class="acoes">' \+ acoesEsteira\(l\)/.test(fat), '');
+  verificar('v142 — e a regra geral conserta as outras tabelas do sistema',
+    /td\.acoes\{display:table-cell;/.test(css), '');
+  verificar('v142 — a linha de alerta e pintada na CELULA, nao no <tr>',
+    /tbody tr\.atrasada td\{background:#fff4f2;\}/.test(css) &&
+    !/style="background:#fff4f2"/.test(fat), '');
+  verificar('v142 — a data do historico sai em dd/mm/aaaa, nao em ingles',
+    /U\.fData\(U\.dataLocal\(e\.em\)\)/.test(fat), '');
+  verificar('v142 — o arquivo da nota vai para o balde, nao para dentro do registro',
+    /if \(!d\.arquivo\.path\) \{/.test(sto) &&
+    /cli\.storage\.from\(BALDE_FAT\)/.test(fat), '');
+  S.setUsuario('u8');
+})();
+
 concluir();

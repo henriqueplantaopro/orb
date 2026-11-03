@@ -4140,22 +4140,14 @@ ERP.store = (function () {
   }
 
   function montarItemRPS(d) {
-    const c = D.centro(d.centro) || {};
     const cli = D.clienteDoCentro(d.centro) || {};
-    const pv = previsaoDe(d.centro, d.competencia);
     /* Quem manda nas retenções é o CADASTRO DO CLIENTE: cada tomador
        retém de um jeito, e alguns retêm ISS e outros não. Na falta de
        cadastro, cai para os impostos do projeto — que é como o a
        receber já calculava o líquido. */
-    const ret = [];
-    const põe = (t, pct) => { if (pct > 0) ret.push({ tributo: t, valor: Math.round(d.valor * pct) / 100 }); };
-    if ((cli.retencoes || []).length) {
-      cli.retencoes.forEach(function (r) { põe(r.tributo, r.aliquota); });
-    } else {
-      const imp = c.impostos || {};
-      põe('IRRF', imp.irpj); põe('CSLL', imp.csll);
-      if (imp.pis_cofins > 0) { põe('PIS', 0.65); põe('COFINS', 3); }
-    }
+    const ret = retencoesPrevistas(d.centro, d.valor).map(function (r) {
+      return { tributo: r.tributo, valor: r.valor };
+    });
     return {
       referencia: d.referencia, grupo: d.grupo || null, centro: d.centro,
       competencia: d.competencia, data: U.hoje(), quantidade: 1,
@@ -4167,11 +4159,10 @@ ERP.store = (function () {
       tomador_cidade: cli.cidade || '', tomador_uf: cli.uf || '',
       tomador_cep: cli.cep || '', tomador_ibge: cli.codigo_ibge || '',
       tomador_email: cli.email || '',
-      discriminacao: (d.grupo
-        ? 'Serviços médicos prestados no ' + d.grupo + ' — competência ' + U.fComp(d.competencia) +
-          '. Composição por especialidade: ' + d.detalhe
-        : 'Serviços médicos prestados — ' + (c.curto || '') + ' — competência ' + U.fComp(d.competencia)) +
-        (pv && pv.autorizacao_protocolo ? '. Autorização: ' + pv.autorizacao_protocolo : '')
+      /* O TEXTO QUE A PESSOA ESCREVEU, quando ela escreveu um.
+         Aqui havia um template fixo: a tela pedia a discriminação,
+         gravava, e o arquivo saía com outra coisa. */
+      discriminacao: discriminacaoDaNota(d.centro, d.competencia, d.grupo, d.detalhe)
     };
   }
 
@@ -15877,6 +15868,14 @@ ERP.store = (function () {
       return { erro: 'Anexe o arquivo da nota (PDF ou XML). É ele que fecha o faturamento: ' +
         'sem o documento, a nota continua existindo só fora do sistema.' };
     }
+    /* O ARQUIVO VAI PARA O BALDE PRIVADO, como todo documento do
+       sistema — aqui fica só o caminho. Na v141 ele era gravado
+       inteiro, em base64, dentro do próprio registro: um PDF de 2 MB
+       virava 2,7 MB de texto que o contas a receber carregava em
+       TODA abertura de tela, para nada. */
+    if (!d.arquivo.path) {
+      return { erro: 'O arquivo da nota não chegou ao servidor — tente anexar de novo.' };
+    }
     const c = D.centro(d.centro);
     if (!c) return { erro: 'Projeto não encontrado.' };
     if (!d.competencia) return { erro: 'Informe a competência.' };
@@ -15907,7 +15906,9 @@ ERP.store = (function () {
         grupo: c.grupo_faturamento, competencia: d.competencia,
         numero: d.numero, emissao: d.emissao, vencimento: d.vencimento,
         valor: Math.round(Number(d.valor) * 100) / 100,
-        discriminacao: d.discriminacao, arquivo: d.arquivo, origem: 'nota'
+        discriminacao: d.discriminacao ||
+          discriminacaoDaNota(d.centro, d.competencia, c.grupo_faturamento, ''),
+        arquivo: d.arquivo, origem: 'nota'
       });
       if (g.erro) return g;
       marcar(g.receber);
@@ -15927,7 +15928,7 @@ ERP.store = (function () {
       cliente_doc: cli ? cli.documento : null,
       cliente_nome: cli ? cli.nome : (c.unidade || c.curto || ''),
       empresa: d.empresa || empresaEmissora(d.centro, d.competencia),
-      discriminacao: d.discriminacao || ('Serviços — ' + (c.curto || '') + ' · ' + U.fComp(d.competencia)),
+      discriminacao: d.discriminacao || discriminacaoDaNota(d.centro, d.competencia, null, ''),
       origem: 'nota', arquivo: d.arquivo
     });
     if (r.erro) return r;
@@ -15937,6 +15938,349 @@ ERP.store = (function () {
       ' · ' + U.brl(d.valor) + ' · ' + apelidoEmpresa(r.receber.emitida_por_empresa));
     return { ok: true, receber: r.receber, aviso: r.aviso };
   }
+
+  /* ── o faturamento ANTES de virar nota ───────────────────
+     Entre "confirmei o valor" e "a nota saiu" existe um intervalo em
+     que alguém precisa olhar o que foi lançado e corrigir. Até aqui
+     esse intervalo era cego: o valor dava para ver na esteira, e o
+     resto — o texto que vai na discriminação, o protocolo, o
+     vencimento, a composição por especialidade — tinha sido digitado
+     dentro de um modal que fechou e não abria mais.
+
+     O caso que trouxe isto: a gestora digita a descrição da nota ao
+     confirmar o faturamento e, no dia de emitir, não tem como
+     conferir o que escreveu. */
+
+  /* A NOTA DO GRUPO É UMA SÓ, e o que é dela — discriminação,
+     protocolo da autorização, anexos — tem de morar num lugar só.
+     Espalhado pelas sete especialidades, cada uma responderia uma
+     coisa; preso à especialidade "que tem valor", mudaria de dono
+     quando o valor mudasse. Então mora sempre na mesma: a primeira
+     do grupo em ordem de id, que não depende de valor nenhum. */
+  function centroAncoraDoFaturamento(centro) {
+    const g = grupoDe(centro);
+    if (!g) return centro;
+    const ids = projetosDoGrupo(g).slice().sort();
+    return ids[0] || centro;
+  }
+
+  function previsaoAncora(centro, competencia) {
+    return previsaoDe(centroAncoraDoFaturamento(centro), competencia);
+  }
+
+  /* O texto que o sistema escreve sozinho quando ninguém escreveu
+     nada. Continua sendo o de antes — o que muda é ele ter deixado
+     de ser a ÚNICA resposta possível. */
+  function discriminacaoPadrao(centro, competencia, grupo, detalhe) {
+    const c = D.centro(centro) || {};
+    const pv = previsaoAncora(centro, competencia);
+    return (grupo
+      ? 'Serviços médicos prestados no ' + grupo + ' — competência ' + U.fComp(competencia) +
+        (detalhe ? '. Composição por especialidade: ' + detalhe : '')
+      : 'Serviços médicos prestados — ' + (c.curto || '') + ' — competência ' + U.fComp(competencia)) +
+      (pv && pv.autorizacao_protocolo ? '. Autorização: ' + pv.autorizacao_protocolo : '');
+  }
+
+  /* A DISCRIMINAÇÃO DA NOTA, NUM LUGAR SÓ.
+
+     Era onde o sistema mentia calado: a tela pedia "texto que vai na
+     discriminação da NF", guardava o que foi digitado na previsão —
+     e o gerador do RPS montava a discriminação por template,
+     ignorando o campo. A pessoa escrevia, o sistema gravava, e a
+     nota saía com outra coisa. Quem conferisse a nota depois não
+     teria como saber por quê.
+
+     Agora quem pergunta "o que vai na nota?" — a tela de revisão, o
+     RPS, a nota anexada de fora — pergunta aqui. */
+  function discriminacaoDaNota(centro, competencia, grupo, detalhe) {
+    const pv = previsaoAncora(centro, competencia);
+    const escrito = pv ? String(pv.discriminacao || '').trim() : '';
+    return escrito || discriminacaoPadrao(centro, competencia, grupo, detalhe);
+  }
+
+  function definirDiscriminacao(centro, competencia, texto) {
+    if (!pode('autorizar_faturamento') && !pode('admin')) {
+      return { erro: 'Só quem responde pelo faturamento escreve o que vai na nota.' };
+    }
+    const r = garantirPrevisaoAncora(centro, competencia);
+    if (r.erro) return r;
+    const antes = String(r.previsao.discriminacao || '');
+    r.previsao.discriminacao = String(texto || '');
+    if (antes !== r.previsao.discriminacao) {
+      logar('previsao', r.previsao.id, 'escreveu a discriminação da nota',
+        (D.centro(centro) || {}).curto + ' · ' + U.fComp(competencia) +
+        (r.previsao.discriminacao ? '' : ' · (apagou — volta ao texto padrão)'));
+    }
+    return { ok: true, previsao: r.previsao };
+  }
+
+  /* A previsão âncora pode não existir ainda (grupo cuja primeira
+     especialidade não lançou nada no mês). Criar uma em branco é
+     seguro: sem valor e sem etapa, ela continua lendo como "sem
+     previsão" em todo o resto do sistema. O que NÃO é seguro é
+     passar por `salvarPrevisao` com faturamento 0 numa previsão que
+     já existe — isso apagaria o valor confirmado. */
+  function garantirPrevisaoAncora(centro, competencia) {
+    const c = D.centro(centro);
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    if (!competencia) return { erro: 'Informe a competência.' };
+    const id = centroAncoraDoFaturamento(centro);
+    const achada = previsaoDe(id, competencia);
+    if (achada) return { ok: true, previsao: achada };
+    const r = salvarPrevisao({ centro: id, competencia: competencia,
+      faturamento: 0, produtividade: 0 });
+    if (r.erro) return r;
+    return { ok: true, previsao: r.previsao };
+  }
+
+  /* As retenções que o tomador vai fazer. Mora aqui porque três
+     telas perguntam a mesma coisa — o RPS, a revisão e a conferência
+     do a receber — e perguntando cada uma do seu jeito elas
+     responderiam diferente. */
+  function retencoesPrevistas(centro, valor) {
+    const c = D.centro(centro) || {};
+    const cli = D.clienteDoCentro(centro) || {};
+    const ret = [];
+    const põe = function (t, pct) {
+      if (pct > 0) ret.push({ tributo: t, aliquota: pct, valor: Math.round(valor * pct) / 100 });
+    };
+    if ((cli.retencoes || []).length) {
+      cli.retencoes.forEach(function (r) { põe(r.tributo, r.aliquota); });
+      return ret;
+    }
+    const imp = c.impostos || {};
+    põe('IRRF', imp.irpj); põe('CSLL', imp.csll);
+    if (imp.pis_cofins > 0) { põe('PIS', 0.65); põe('COFINS', 3); }
+    return ret;
+  }
+
+  /* TUDO QUE FOI LANÇADO NESTE FATURAMENTO, numa resposta só.
+     É o que a tela de revisão mostra, e o que ela edita volta pelos
+     caminhos de sempre (confirmar valor, autorizar, anexar). */
+  function dossieFaturamento(centro, competencia) {
+    const c = D.centro(centro);
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    if (!competencia) return { erro: 'Informe a competência.' };
+    const grupo = grupoDe(centro);
+    const ids = grupo ? projetosDoGrupo(grupo) : [centro];
+    const pvAncora = previsaoAncora(centro, competencia);
+
+    const partes = ids.map(function (id) {
+      const pv = previsaoDe(id, competencia);
+      const prod = statusProdutividade(id, competencia);
+      return { centro: id, projeto: D.centro(id) || { id: id, curto: id },
+        valor: pv ? pv.faturamento : 0,
+        status: pv ? pv.status : null,
+        etapa: etapaDaPrevisao(pv),
+        produtividade: prod.valor, produtividade_status: prod.status,
+        lotes: fechamentosVivosDe(id, competencia).map(function (l) {
+          return { id: l.id, valor: l.valor, medicos: l.medicos || 0, arquivo: l.arquivo || '',
+            lancado_em: l.criado_em || null, lancado_por: l.criado_por || '' };
+        }) };
+    }).sort(function (a, b) {
+      return String(a.projeto.curto || '').localeCompare(String(b.projeto.curto || ''), 'pt-BR');
+    });
+
+    const valor = partes.reduce(function (t, p) {
+      return Math.round((t + (p.valor || 0)) * 100) / 100; }, 0);
+    const detalhe = partes.filter(function (p) { return p.valor > 0; })
+      .map(function (p) { return (p.projeto.curto || '') + ': ' + U.brl(p.valor); }).join(' | ');
+
+    const docs = st.receber.filter(function (r) {
+      return ids.indexOf(r.centro) > -1 && r.competencia === competencia &&
+        ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0;
+    });
+    const linha = esteiraFaturamento({ centro: centro, competencia: competencia, sem_agrupar: true })[0] || {};
+    const cli = D.clienteDoCentro(centro);
+    const emp = empresaEmissora(centro, competencia);
+    const idsPrevisao = ids.map(function (id) {
+      const pv = previsaoDe(id, competencia); return pv ? pv.id : null;
+    }).filter(Boolean);
+    const historico = st.eventos.filter(function (e) {
+      return (e.entidade === 'previsao' && idsPrevisao.indexOf(e.entidade_id) > -1) ||
+        (e.entidade === 'conta_receber' && docs.some(function (r) { return r.id === e.entidade_id; }));
+    }).slice().sort(function (a, b) { return String(b.em).localeCompare(String(a.em)); });
+
+    return {
+      ok: true,
+      centro: centro, grupo: grupo || null, competencia: competencia,
+      projeto: c, cliente: cli || null,
+      empresa: emp, empresa_apelido: apelidoEmpresa(emp),
+      empresa_origem: origemDaEmpresaEmissora(centro, competencia),
+      etapa: linha.etapa || etapaDaPrevisao(pvAncora),
+      valor: valor, partes: partes,
+      produtividade: partes.reduce(function (t, p) {
+        return Math.round((t + (p.produtividade || 0)) * 100) / 100; }, 0),
+      lotes: partes.reduce(function (t, p) { return t + p.lotes.length; }, 0),
+      /* O QUE VAI NA NOTA — e, ao lado, o texto que foi escrito à
+         mão e o que o sistema escreveria sozinho. Vendo os três, a
+         pessoa sabe se está lendo a sua frase ou a do sistema. */
+      discriminacao: discriminacaoDaNota(centro, competencia, grupo, detalhe),
+      discriminacao_escrita: pvAncora ? String(pvAncora.discriminacao || '') : '',
+      discriminacao_padrao: discriminacaoPadrao(centro, competencia, grupo, detalhe),
+      protocolo: pvAncora ? (pvAncora.autorizacao_protocolo || '') : '',
+      vencimento: pvAncora ? pvAncora.data : vencimentoPrevistoDe(competencia, centro),
+      retencoes: retencoesPrevistas(centro, valor),
+      anexos: (pvAncora ? pvAncora.anexos || [] : []).slice().sort(function (x, y) {
+        return String(y.em || '').localeCompare(String(x.em || ''));
+      }),
+      documentos: docs.map(function (r) {
+        return { id: r.id, numero: r.numero, serie: r.serie || '', emissao: r.emissao,
+          valor: r.valor_bruto, arquivo: r.arquivo || null, emitida_fora: !!r.emitida_fora,
+          discriminacao: r.discriminacao || '' };
+      }),
+      confirmado_em: pvAncora && pvAncora.confirmado_em ? U.dataLocal(pvAncora.confirmado_em) : linha.confirmado_em,
+      confirmado_por: (pvAncora && pvAncora.confirmado_por) || linha.confirmado_por || '',
+      autorizado_em: pvAncora ? pvAncora.autorizado_em : null,
+      autorizado_por: pvAncora ? pvAncora.autorizado_por : '',
+      liberado_em: pvAncora ? pvAncora.liberado_em : null,
+      liberado_por: pvAncora ? pvAncora.liberado_por : '',
+      historico: historico,
+      travado_por_nota: docs.length > 0,
+      pode_editar: (pode('autorizar_faturamento') || pode('admin')) && !docs.length
+    };
+  }
+
+  /* A EDIÇÃO do que vai na nota: discriminação, protocolo e
+     vencimento. O VALOR não passa por aqui de propósito — ele tem
+     caminho próprio (confirmar o valor), com as travas da
+     produtividade confirmada, e uma segunda porta para o mesmo
+     número seria uma segunda resposta para a mesma pergunta. */
+  function editarFaturamento(d) {
+    d = d || {};
+    if (!pode('autorizar_faturamento') && !pode('admin')) {
+      return { erro: 'Só quem responde pelo faturamento edita o que vai na nota.' };
+    }
+    const c = D.centro(d.centro);
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    if (!d.competencia) return { erro: 'Informe a competência.' };
+    const ids = grupoDe(d.centro) ? projetosDoGrupo(grupoDe(d.centro)) : [d.centro];
+    /* NOTA JÁ EMITIDA não se edita por aqui: o papel que está com o
+       cliente passaria a discordar do que o sistema mostra. */
+    const docs = st.receber.filter(function (r) {
+      return ids.indexOf(r.centro) > -1 && r.competencia === d.competencia &&
+        ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0;
+    });
+    if (docs.length) {
+      return { erro: 'Esta competência já tem a nota ' +
+        docs.map(function (r) { return r.numero; }).filter(Boolean).join(', ') +
+        ' emitida. Cancele o documento antes de mudar o que vai nela.' };
+    }
+    const g = garantirPrevisaoAncora(d.centro, d.competencia);
+    if (g.erro) return g;
+    const pv = g.previsao;
+    const mudou = [];
+
+    if (d.discriminacao !== undefined &&
+        String(d.discriminacao) !== String(pv.discriminacao || '')) {
+      pv.discriminacao = String(d.discriminacao || '');
+      mudou.push('discriminação');
+    }
+    if (d.protocolo !== undefined &&
+        String(d.protocolo) !== String(pv.autorizacao_protocolo || '')) {
+      /* Protocolo em branco numa competência JÁ AUTORIZADA apagaria
+         a prova da autorização e deixaria a etapa de pé, dizendo que
+         o órgão autorizou sem dizer onde isso está escrito. */
+      if (pv.autorizado_em && !String(d.protocolo || '').trim()) {
+        return { erro: 'O protocolo é o que prova a autorização do órgão — não pode ficar em branco ' +
+          'numa competência já autorizada. Para tirá-lo, desfaça a autorização.' };
+      }
+      pv.autorizacao_protocolo = String(d.protocolo || '').trim();
+      mudou.push('protocolo');
+    }
+    if (d.vencimento !== undefined && d.vencimento && d.vencimento !== pv.data) {
+      pv.data = d.vencimento;
+      mudou.push('vencimento');
+      /* O título do a receber acompanha: a data é dele. */
+      if (pv.faturamento > 0) criarReceberPrevisto(pv);
+    }
+    if (!mudou.length) return { ok: true, previsao: pv, mudou: [] };
+    pv.atualizado_em = new Date();
+    pv.atualizado_por = usuario().nome;
+    logar('previsao', pv.id, 'editou o faturamento antes da emissão',
+      (grupoDe(d.centro) || c.curto || '') + ' · ' + U.fComp(d.competencia) + ' · ' + mudou.join(', '));
+    return { ok: true, previsao: pv, mudou: mudou };
+  }
+
+  /* ── os documentos que vão JUNTO com a nota ──────────────
+     A AF do órgão, o relatório de escala, a medição assinada. O
+     cliente não aceita a nota sozinha: ela vai acompanhada, e até
+     aqui esse acompanhamento vivia no e-mail de quem montou o envio.
+
+     O arquivo mora no balde privado do servidor, como os anexos de
+     contrato e o cofre de habilitação — aqui ficam só o nome, o
+     caminho e quem anexou. */
+  const TIPOS_ANEXO_FAT = ['af', 'escala', 'medicao', 'oficio', 'nf', 'outro'];
+
+  function anexarAoFaturamento(centro, competencia, anexo) {
+    /* A MESMA REGRA QUE GOVERNA O BALDE. O arquivo é aceito pelo
+       servidor por `tem_nivel('faturamento','M')`; perguntar aqui
+       por outra coisa produziria um botão que promete e um envio
+       que o banco recusa, com mensagem que ninguém entende. */
+    if (!podeMover('faturamento')) {
+      return { erro: 'Seu perfil vê o faturamento, mas não movimenta — anexar documento é movimentar.' };
+    }
+    anexo = anexo || {};
+    if (!anexo.nome) return { erro: 'Escolha o arquivo.' };
+    if (!anexo.path) {
+      return { erro: 'O arquivo não chegou ao servidor — tente anexar de novo. ' +
+        'Os documentos do faturamento ficam em pasta privada no servidor, nunca dentro do registro.' };
+    }
+    const g = garantirPrevisaoAncora(centro, competencia);
+    if (g.erro) return g;
+    const pv = g.previsao;
+    pv.anexos = (pv.anexos || []).concat([{
+      id: novoId('ax'),
+      tipo: TIPOS_ANEXO_FAT.indexOf(anexo.tipo) > -1 ? anexo.tipo : 'outro',
+      nome: anexo.nome, path: anexo.path, tamanho: anexo.tamanho || 0,
+      em: new Date().toISOString(), por: (usuario() || {}).nome || ''
+    }]);
+    logar('previsao', pv.id, 'anexou documento ao faturamento',
+      (grupoDe(centro) || (D.centro(centro) || {}).curto || '') + ' · ' +
+      U.fComp(competencia) + ' · ' + anexo.nome);
+    return { ok: true, previsao: pv, anexos: pv.anexos };
+  }
+
+  function removerAnexoDoFaturamento(centro, competencia, anexoId) {
+    if (!podeMover('faturamento')) {
+      return { erro: 'Seu perfil vê o faturamento, mas não movimenta — remover documento é movimentar.' };
+    }
+    const pv = previsaoAncora(centro, competencia);
+    if (!pv) return { erro: 'Não há faturamento lançado nesta competência.' };
+    const an = (pv.anexos || []).find(function (x) { return x.id === anexoId; });
+    if (!an) return { erro: 'Anexo não encontrado.' };
+    pv.anexos = (pv.anexos || []).filter(function (x) { return x.id !== anexoId; });
+    logar('previsao', pv.id, 'removeu documento do faturamento',
+      (D.centro(centro) || {}).curto + ' · ' + U.fComp(competencia) + ' · ' + an.nome);
+    return { ok: true, anexo: an, anexos: pv.anexos };
+  }
+
+  /* O PACOTE QUE VAI PARA O CLIENTE: a nota mais os documentos que a
+     acompanham, numa lista só. Quem envia não tem de lembrar de
+     juntar as peças de dois lugares diferentes. */
+  function pacoteDoFaturamento(centro, competencia) {
+    const d = dossieFaturamento(centro, competencia);
+    if (d.erro) return d;
+    const pecas = [];
+    d.documentos.forEach(function (doc) {
+      if (doc.arquivo && doc.arquivo.path) {
+        pecas.push({ tipo: 'nf', rotulo: 'NF ' + (doc.numero || ''),
+          nome: doc.arquivo.nome, path: doc.arquivo.path });
+      }
+    });
+    d.anexos.forEach(function (an) {
+      pecas.push({ tipo: an.tipo, rotulo: nomeTipoAnexoFat(an.tipo), nome: an.nome, path: an.path });
+    });
+    return { ok: true, pecas: pecas, nota_sem_arquivo: d.documentos.some(function (doc) {
+      return !(doc.arquivo && doc.arquivo.path); }) };
+  }
+
+  const NOMES_ANEXO_FAT = { af: 'Autorização de fornecimento (AF)', escala: 'Relatório de escala',
+    medicao: 'Medição / relatório do órgão', oficio: 'Ofício / e-mail de autorização',
+    nf: 'Nota fiscal', outro: 'Outro documento' };
+  const nomeTipoAnexoFat = t => NOMES_ANEXO_FAT[t] || 'Outro documento';
 
   /* ── importação de NFS-e por XML ────────────────────────
      O XML da nota de serviço que a empresa emitiu vira título no
@@ -19255,6 +19599,9 @@ ERP.store = (function () {
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,
     dadosDaEmpresaParaRps, empresaDoLoteRps, anexarNotaEmitida,
+    dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
+    definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
+    anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,

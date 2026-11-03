@@ -28,7 +28,7 @@ ERP.saldo = (function () {
         '<th class="num">Saldo informado</th><th class="num">Diferença</th><th>Prova real</th>' +
         '<th></th></tr></thead><tbody>' +
       linhas.map(function (l) {
-        return '<tr' + (Math.abs(l.diferenca) > 0.004 && l.informado !== null ? ' style="background:#fff4f2"' : '') + '>' +
+        return '<tr' + (Math.abs(l.diferenca) > 0.004 && l.informado !== null ? ' class="atrasada"' : '') + '>' +
           '<td class="desc">' + U.esc(l.banco.apelido || l.banco.nome || l.banco.id) +
             (l.banco.agencia || l.banco.conta
               ? '<div class="sub">ag. ' + U.esc(l.banco.agencia || '—') + ' · c/c ' + U.esc(l.banco.conta || '—') + '</div>'
