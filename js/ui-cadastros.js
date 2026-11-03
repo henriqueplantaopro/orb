@@ -1346,6 +1346,24 @@ ERP.cadastros = (function () {
           U.esc(c ? c.documento : '') + '"></div>' +
         '<div><label>Prazo (dias)</label><input id="cl-prazo" type="number" min="0" max="365" value="' +
           (c && c.prazo_dias ? c.prazo_dias : '') + '" placeholder="herda do projeto"></div></div>' +
+        /* POR QUAL CNPJ ESTE CLIENTE É FATURADO.
+
+           O grupo tem três, e até agora a nota saía sempre pela
+           matriz porque ninguém tinha onde dizer o contrário. É
+           aqui que a informação nasce: quem contratou com a filial
+           recebe nota da filial todo mês, sem decidir de novo. A
+           esteira mostra o que saiu daqui e deixa abrir exceção
+           numa competência, sem mexer neste cadastro. */
+        '<div class="row2" style="margin-top:8px">' +
+          '<div><label for="cl-empresa">Nota emitida por</label><select id="cl-empresa">' +
+            '<option value="">— segue o cadastro do projeto —</option>' +
+            D.empresas.filter(function (e) { return e.ativo !== false; }).map(function (e) {
+              return '<option value="' + e.id + '"' + (c && c.empresa === e.id ? ' selected' : '') + '>' +
+                U.esc(e.apelido + ' · ' + e.cnpj) + '</option>';
+            }).join('') + '</select></div>' +
+          '<div class="ajuda" style="align-self:end">Vale para todas as notas deste cliente. Na esteira dá ' +
+            'para trocar só numa competência, quando for exceção.</div>' +
+        '</div>' +
         '<label>Projeto</label><select id="cl-centro"><option value="">Nenhum</option>' +
           Object.keys(porUni).sort().map(function (u) {
             return '<optgroup label="' + U.esc(u) + '">' + porUni[u].map(function (x) {
@@ -1376,7 +1394,11 @@ ERP.cadastros = (function () {
           email: U.val('cl-email'),
           /* marcar o projeto aqui grava o vínculo no projeto; os outros
              projetos do mesmo cliente continuam como estão */
-          prazo_dias: parseInt(U.val('cl-prazo'), 10) || null, retencoes: retencoes
+          prazo_dias: parseInt(U.val('cl-prazo'), 10) || null, retencoes: retencoes,
+          /* Vazio volta a seguir o cadastro do projeto — e precisa
+             gravar o vazio, não ignorá-lo, senão desfazer a escolha
+             seria impossível. */
+          empresa: U.val('cl-empresa') || null
         };
         if (c) Object.keys(dados).forEach(function (k) { c[k] = dados[k]; });
         else {

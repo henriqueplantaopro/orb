@@ -149,11 +149,20 @@ ERP.administracao = (function () {
      prefeitura recusa primeiro. Os valores que vêm de fábrica são
      razoáveis para serviços médicos e servem para testar a emissão; o
      definitivo sai da NF-e que a empresa já emite. */
+  /* A INSCRIÇÃO MUNICIPAL E O CÓDIGO IBGE SAÍRAM DAQUI.
+
+     Eram editáveis nesta tela E em Cadastros › Empresas, em dois
+     lugares distintos da memória — e o arquivo de RPS lia um deles.
+     Corrigir no lugar errado não mudava nada no arquivo, e o
+     sintoma era a prefeitura recusar o lote inteiro com "inscrição
+     do prestador não encontrada", sem nada no sistema apontando
+     para a tela certa.
+
+     Além disso, esses dois campos são de CADA EMPRESA do grupo — a
+     matriz, a filial do Ceará e a Novaped têm inscrições
+     diferentes —, e esta tela só conhece a matriz. Os códigos que
+     sobraram aqui são do serviço prestado, iguais para as três. */
   const CAMPOS_FISCAIS = [
-    { id: 'inscricao_municipal', nome: 'Inscrição municipal', onde: 'empresa',
-      ajuda: 'sem ponto e sem traço — está no cabeçalho do portal' },
-    { id: 'codigo_ibge', nome: 'Código IBGE do município', onde: 'empresa',
-      ajuda: 'Barueri = 3505708' },
     { id: 'codigo_servico', nome: 'Código do serviço prestado', onde: 'rps',
       ajuda: 'aparece impresso em qualquer NF-e já emitida pela empresa' },
     { id: 'serie', nome: 'Série do RPS', onde: 'rps', ajuda: 'normalmente "RPS"' },
@@ -172,6 +181,10 @@ ERP.administracao = (function () {
     const valor = c => (c.onde === 'rps' ? (e.rps || {})[c.id] : e[c.id]) || '';
     return '<h2>Parâmetros fiscais da NF-e<span class="sub">o que vai dentro do arquivo de RPS ' +
         'enviado à prefeitura</span></h2>' + avisoPerfil() +
+      '<div class="ajuda erro"><b>A inscrição municipal e o código IBGE mudaram de lugar:</b> ' +
+        'agora ficam em <b>Cadastros › Empresas</b>, um por empresa do grupo — a matriz, a filial ' +
+        'do Ceará e a Novaped têm inscrições diferentes, e é de lá que o arquivo de RPS lê. ' +
+        'Enquanto estavam aqui também, corrigir numa tela não mudava o arquivo gerado pela outra.</div>' +
       '<div class="ajuda">Os valores abaixo vêm preenchidos com uma sugestão para serviços médicos, ' +
         'o suficiente para testar a emissão. O definitivo sai de uma NF-e que a empresa já emitiu ' +
         '(código do serviço) e da contabilidade (os códigos de IBS/CBS). Trocar aqui vale para os ' +

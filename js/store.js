@@ -1339,6 +1339,163 @@ ERP.store = (function () {
     return (c && c.empresa) || EMPRESA_PADRAO;
   }
 
+  /* ── QUEM EMITE A NOTA ───────────────────────────────────
+
+     O grupo tem três CNPJs, e a nota de cada cliente sai por um
+     deles. Até aqui isso não era escolha de ninguém: a emissão
+     usava sempre a matriz, e quem fatura só descobria o CNPJ
+     errado depois da nota emitida — quando o conserto é cancelar
+     e refazer.
+
+     A ordem abaixo é a resposta inteira, e existe num lugar só
+     porque a tela de faturamento, a esteira e o arquivo de RPS
+     precisam dizer a MESMA coisa:
+
+       1. o que alguém escolheu na esteira para aquela competência
+          — é a exceção do mês, e exceção escolhida à mão ganha de
+          tudo;
+       2. o cadastro do CLIENTE — é de onde a informação vem por
+          natureza: quem contrata com a filial recebe nota da
+          filial, todo mês, sem ninguém decidir de novo;
+       3. o cadastro do PROJETO, que já existia e continua valendo
+          para o que não tem cliente amarrado;
+       4. a matriz.
+
+     Devolve sempre um id de empresa, nunca vazio: tela nenhuma
+     precisa decidir o que fazer com "não sei". */
+  function empresaEmissora(centroId, competencia) {
+    if (competencia) {
+      const pv = previsaoDe(centroId, competencia);
+      if (pv && pv.empresa_emissora) return pv.empresa_emissora;
+    }
+    const cli = D.clienteDoCentro(centroId);
+    if (cli && cli.empresa) return cli.empresa;
+    return empresaDoCentro(centroId);
+  }
+
+  /* De onde o CNPJ veio, em palavras — a tela precisa dizer isso
+     para quem olha saber se é regra ou exceção. */
+  function origemDaEmpresaEmissora(centroId, competencia) {
+    if (competencia) {
+      const pv = previsaoDe(centroId, competencia);
+      if (pv && pv.empresa_emissora) return 'escolhido nesta competência';
+    }
+    const cli = D.clienteDoCentro(centroId);
+    if (cli && cli.empresa) return 'do cadastro do cliente';
+    const c = D.centro(centroId);
+    if (c && c.empresa) return 'do cadastro do projeto';
+    return 'padrão (matriz)';
+  }
+
+  const apelidoEmpresa = id => (D.empresaPor(id) || {}).apelido || id || '—';
+
+  /* ── A EMPRESA QUE VAI NO ARQUIVO DE RPS ─────────────────
+
+     Havia DOIS lugares com os dados da empresa, e o arquivo lia o
+     errado:
+
+       `D.empresas[]` — a lista que a tela de Cadastros › Empresas
+       edita, com CNPJ, município e INSCRIÇÃO MUNICIPAL de cada uma
+       das três empresas do grupo;
+
+       `D.empresa` — um objeto solto, escrito à mão no código, com
+       os mesmos campos da matriz MAIS o endereço e os parâmetros
+       fiscais do RPS. Era esse que o gerador recebia.
+
+     A consequência apareceu num arquivo recusado pela prefeitura
+     com o erro 101, "inscrição do prestador não encontrada": a
+     inscrição podia ser corrigida na tela e o arquivo continuaria
+     saindo com a antiga, porque a tela grava num lugar e o arquivo
+     lê do outro. Nenhuma mensagem apontaria para isso — o sistema
+     diria que salvou, e a prefeitura diria que não conhece o
+     emitente.
+
+     Agora o cadastro manda no que ele tem (quem é a empresa) e o
+     objeto fixo entra só com o que só ele tem (endereço e
+     parâmetros fiscais do RPS, que ainda não têm tela). Quando
+     ganharem tela, saem daqui também. */
+  function dadosDaEmpresaParaRps(empresaId) {
+    const base = D.empresa || {};
+    const cad = D.empresaPor(empresaId || EMPRESA_PADRAO);
+    if (!cad) return base;
+    return Object.assign({}, base, {
+      id: cad.id,
+      nome: cad.nome || base.nome,
+      cnpj: cad.cnpj || base.cnpj,
+      municipio: cad.municipio || base.municipio,
+      uf: cad.uf || base.uf,
+      codigo_ibge: cad.codigo_ibge || base.codigo_ibge,
+      /* SEM `||` DE SEGURANÇA AQUI, de propósito: inscrição vazia
+         no cadastro tem de chegar vazia ao gerador, que já recusa
+         com "falta a inscrição municipal". Caindo na do objeto
+         fixo, o arquivo sairia com a inscrição da matriz em nome de
+         outra empresa — e seria aceito pela prefeitura errada. */
+      inscricao_municipal: cad.inscricao_municipal || ''
+    });
+  }
+
+  /* Qual empresa emite um LOTE de RPS. Um arquivo é de UM prestador
+     — cabeçalho único, uma inscrição — então lote com emitentes
+     diferentes não é um arquivo, são dois. */
+  function empresaDoLoteRps(itens) {
+    const ids = (itens || []).map(function (i) {
+      return i.empresa || empresaEmissora(i.centro, i.competencia); })
+      .filter(function (v, ix, a) { return v && a.indexOf(v) === ix; });
+    return { empresa: ids[0] || EMPRESA_PADRAO, empresas: ids, misturado: ids.length > 1 };
+  }
+
+  /* A exceção do mês. Fica na PREVISÃO porque é lá que mora tudo o
+     que é por projeto e competência; gravar no cliente mudaria o
+     mês que vem junto, que não é o pedido.
+
+     No grupo de faturamento a escolha vale para o conjunto: a nota
+     é única, e duas especialidades do mesmo grupo emitindo por
+     CNPJs diferentes não é um caso que exista. */
+  function definirEmpresaEmissora(centroId, competencia, empresaId) {
+    if (!pode('faturar') && !pode('autorizar_faturamento') && !pode('admin')) {
+      return { erro: 'Seu perfil não altera o CNPJ que emite a nota.' };
+    }
+    const c = D.centro(centroId);
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    if (!competencia) return { erro: 'Informe a competência.' };
+    /* Vazio = volta a seguir o cadastro. É o desfazer da exceção, e
+       precisa existir: sem ele, escolher errado uma vez prenderia
+       aquela competência à escolha errada. */
+    if (empresaId && !D.empresaPor(empresaId)) return { erro: 'Empresa não encontrada.' };
+    const alvos = c.grupo_faturamento ? projetosDoGrupo(c.grupo_faturamento) : [centroId];
+    const faturados = alvos.filter(function (id) {
+      return st.receber.some(function (r) {
+        return r.centro === id && r.competencia === competencia &&
+          ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+          ['cancelado', 'substituido'].indexOf(r.status) < 0;
+      });
+    });
+    /* NOTA JÁ EMITIDA NÃO MUDA DE CNPJ por um clique numa tela: o
+       documento saiu com um emitente, e trocar aqui faria o sistema
+       dizer uma coisa e o papel do cliente outra. O caminho é
+       cancelar e refazer. */
+    if (faturados.length) {
+      return { erro: 'Já existe nota ou fatura emitida nesta competência' +
+        (c.grupo_faturamento ? ' no grupo ' + c.grupo_faturamento : '') +
+        '. Para mudar o CNPJ emitente, cancele o documento e emita de novo.' };
+    }
+    let n = 0;
+    alvos.forEach(function (id) {
+      const atual = previsaoDe(id, competencia);
+      const pv = atual || (salvarPrevisao({ centro: id, competencia: competencia,
+        faturamento: 0, produtividade: 0, forcar: true }) || {}).previsao;
+      if (!pv) return;
+      if (empresaId) pv.empresa_emissora = empresaId;
+      else delete pv.empresa_emissora;
+      n++;
+    });
+    logar('previsao', centroId, 'definiu o CNPJ emitente da nota',
+      (c.curto || '') + ' · ' + U.fComp(competencia) + ' · ' +
+      (empresaId ? apelidoEmpresa(empresaId) : 'volta a seguir o cadastro') +
+      (alvos.length > 1 ? ' · ' + n + ' especialidade(s) do grupo' : ''));
+    return { ok: true, empresa: empresaId || null, n: n };
+  }
+
   /* A empresa de um título: quem recebe segue o projeto (a nota é
      emitida por aquele CNPJ); quem paga segue a conta que pagou, e na
      falta dela o projeto. */
@@ -14987,8 +15144,14 @@ ERP.store = (function () {
            distinguir, ele se confundia com quem já tem previsão e
            aguarda a etapa seguinte. `estimado` traz o valor do
            cadastro, que serve de ponto de partida. */
-        sem_previsao: !pv,
-        estimado: pv ? null : (c.prev_faturamento || 0),
+        /* "SEM PREVISÃO" É SOBRE O NÚMERO, não sobre existir um
+           registro. Desde que escolher o CNPJ emitente passou a
+           gravar na previsão, um projeto podia ter registro e
+           continuar sem número nenhum lançado — e sumia do estado
+           mais acionável da tela, que é justamente "falta lançar".
+           O que conta é não haver valor nem etapa vencida. */
+        sem_previsao: !pv || (!pv.faturamento && !pv.confirmado_em && !pv.autorizado_em),
+        estimado: (pv && pv.faturamento) ? null : (c.prev_faturamento || 0),
         prod: statusProdutividade(centro, competencia),
         valor: docs.length ? Math.round(docs.reduce(function (a, r) { return a + r.valor_bruto; }, 0) * 100) / 100
           : (pv ? pv.faturamento : 0),
@@ -15097,33 +15260,26 @@ ERP.store = (function () {
     if (f.centro) lista = lista.filter(function (l) { return l.centro === f.centro; });
     if (f.etapa) lista = lista.filter(function (l) { return l.etapa === f.etapa; });
     if (f.pendentes) lista = lista.filter(function (l) { return l.etapa !== 'faturado'; });
-    /* Ordem: quem está mais atrás na esteira e parado há mais tempo vem
-       primeiro; faturado fecha a lista. */
-    /* Ordem pedida por quem usa a tela todo dia:
-         1. o que já dá para autorizar (produtividade lançada, valor
-            ainda não confirmado) — é a fila de trabalho;
-         2. o que já teve o valor confirmado e espera autorização;
-         3. o resto, do mais atrasado para o menos;
-         4. faturado, no fim. */
-    /* Ordem pedida pela operação: primeiro o que está MAIS ADIANTADO e
-       ainda pede ação — pronto para faturar, depois esperando
-       autorização, depois com valor a confirmar. O que já faturou, e o
-       que ainda não tem nada, ficam no fim. */
-    const prioridade = function (l) {
-      if (l.etapa === 'faturado') return 8;
-      if (l.etapa === 'liberado') return 1;      // só falta emitir a nota
-      if (l.etapa === 'autorizado') return 2;    // falta liberar
-      if (l.etapa === 'confirmado') return 3;    // falta a autorização do órgão
-      const centros = l.eh_grupo
-        ? l.especialidades.map(function (e) { return e.centro; }) : [l.centro];
-      const temProd = centros.some(function (c2) {
-        return fechamentosVivosDe(c2, l.competencia).length; });
-      if (temProd) return 4;                     // produtividade lançada, falta confirmar o valor
-      return 5;                                  // só previsão
-    };
+    /* ORDEM ALFABÉTICA, SEMPRE.
+
+       A lista já foi ordenada por etapa, depois por "o que pede ação
+       primeiro", depois por dias parado — cada versão com uma boa
+       razão, e todas com o mesmo defeito: o projeto MUDAVA DE LUGAR
+       de um dia para o outro, porque a etapa dele mudou. Quem usa a
+       tela não procura "o que está na etapa 3": procura um cliente
+       pelo nome, e precisa achá-lo onde estava ontem.
+
+       A etapa não se perdeu — ela está na coluna, na contagem do
+       topo, no filtro de etapa e na cor da linha atrasada. O que
+       sai é só o uso dela para EMBARALHAR a lista.
+
+       Ordena pelo que a tela mostra (`curto`), com `localeCompare`
+       em pt-BR: sem ele, "Ângela" cai depois de "Zilda" porque o
+       acento vem depois na tabela de caracteres. */
     return lista.sort(function (a, b) {
-      return prioridade(a) - prioridade(b) || a.indice - b.indice || b.dias - a.dias ||
-        String(a.projeto.curto).localeCompare(String(b.projeto.curto), 'pt-BR');
+      return String(a.projeto.curto || a.projeto.nome || '')
+        .localeCompare(String(b.projeto.curto || b.projeto.nome || ''), 'pt-BR') ||
+        String(a.competencia).localeCompare(String(b.competencia));
     });
   }
 
@@ -15204,6 +15360,88 @@ ERP.store = (function () {
     logar('previsao', grupo, 'confirmou faturamento global do grupo',
       grupo + ' · ' + U.fComp(competencia) + ' · ' + U.brl(valor) + ' em ' + partes.length + ' especialidade(s)');
     return { ok: true, grupo: grupo, valor: valor, partes: partes };
+  }
+
+  /* ── VALOR POR ESPECIALIDADE, NO GRUPO ──────────────────
+
+     O GHC-HGB tem sete especialidades e UMA nota. Até aqui a tela
+     pedia só o total do grupo, e o sistema repartia entre as
+     especialidades por um peso adivinhado — a previsão anterior, a
+     média dos últimos três meses, ou parelho quando não havia nem
+     isso.
+
+     O palpite servia para o rateio existir, mas não é o número: o
+     que vale é o que foi negociado por setor, e é disso que saem o
+     resultado por projeto e o DRE. Dividir R$ 2 milhões por peso
+     histórico e chamar aquilo de faturamento da cardiologia é
+     inventar o dado mais consultado da empresa.
+
+     Aqui quem fatura informa cada uma. O total continua sendo o
+     que vai para a nota — só que agora ele é a SOMA, e não a
+     origem.
+
+     DECIDE TUDO ANTES DE MUDAR QUALQUER COISA: são sete gravações,
+     e recusar a quarta deixaria três especialidades confirmadas e
+     quatro não, num grupo que só faz sentido inteiro. */
+  function confirmarFaturamentoEspecialidades(grupo, competencia, partes, opcoes) {
+    opcoes = opcoes || {};
+    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
+      return { erro: 'Seu perfil não confirma valor de faturamento.' };
+    }
+    if (!competencia) return { erro: 'Informe a competência.' };
+    const ids = projetosDoGrupo(grupo);
+    if (!ids.length) return { erro: 'Nenhum projeto no grupo de faturamento ' + grupo + '.' };
+
+    const limpas = (partes || []).map(function (p) {
+      return { centro: p.centro, valor: Math.round((Number(p.valor) || 0) * 100) / 100 };
+    });
+    const forasteiro = limpas.find(function (p) { return ids.indexOf(p.centro) < 0; });
+    if (forasteiro) {
+      return { erro: 'O projeto ' + ((D.centro(forasteiro.centro) || {}).curto || forasteiro.centro) +
+        ' não é do grupo ' + grupo + '.' };
+    }
+    const invalida = limpas.find(function (p) { return !isFinite(p.valor) || p.valor < 0; });
+    if (invalida) {
+      return { erro: 'Valor inválido em ' + ((D.centro(invalida.centro) || {}).curto || invalida.centro) + '.' };
+    }
+    const total = limpas.reduce(function (a, p) { return Math.round((a + p.valor) * 100) / 100; }, 0);
+    if (!(total > 0)) {
+      return { erro: 'Informe o valor de ao menos uma especialidade do grupo ' + grupo + '.' };
+    }
+    /* Nota já emitida no grupo: mexer no valor agora faria a nota e
+       a previsão discordarem. */
+    const jaFaturado = ids.filter(function (id) {
+      return st.receber.some(function (r) {
+        return r.centro === id && r.competencia === competencia &&
+          ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+          ['cancelado', 'substituido'].indexOf(r.status) < 0;
+      });
+    });
+    if (jaFaturado.length && !opcoes.forcar) {
+      return { erro: 'O grupo ' + grupo + ' já tem nota ou fatura emitida em ' + U.fComp(competencia) +
+        '. Cancele o documento antes de mudar os valores.' };
+    }
+
+    const feitas = [];
+    limpas.forEach(function (p) {
+      if (p.valor > 0) {
+        const r = confirmarFaturamentoProdutividade({
+          centro: p.centro, competencia: competencia, faturamento: p.valor,
+          observacao: opcoes.observacao || '', lote: opcoes.lote || null, forcar: true
+        });
+        if (r.ok) feitas.push(p);
+      } else {
+        /* Zero também é resposta: a especialidade não faturou neste
+           mês. Gravar o zero é o que apaga um valor confirmado antes
+           — sem isso, corrigir para baixo deixaria o número velho. */
+        salvarPrevisao({ centro: p.centro, competencia: competencia, faturamento: 0,
+          produtividade: (previsaoDe(p.centro, competencia) || {}).produtividade || 0, forcar: true });
+      }
+    });
+    logar('previsao', grupo, 'confirmou faturamento por especialidade',
+      grupo + ' · ' + U.fComp(competencia) + ' · ' + U.brl(total) +
+      ' em ' + feitas.length + ' especialidade(s)');
+    return { ok: true, grupo: grupo, total: total, partes: feitas };
   }
 
   function confirmarEAutorizarFaturamento(d) {
@@ -15363,6 +15601,11 @@ ERP.store = (function () {
     const cli = D.clienteDoCentro(pv.centro);
     const ret = (c.retencao_pct || 0) * pv.faturamento / 100;
     const dados = {
+      /* QUEM VAI EMITIR, decidido já na previsão. O campo existe na
+         tabela desde sempre e nunca era preenchido aqui: a previsão
+         chegava ao a receber sem emitente, e a emissão caía na
+         matriz por omissão. */
+      empresa: empresaEmissora(pv.centro, pv.competencia),
       valor_bruto: Math.round(pv.faturamento * 100) / 100,
       valor_retido: Math.round(ret * 100) / 100,
       valor_liquido: Math.round((pv.faturamento - ret) * 100) / 100,
@@ -15525,6 +15768,10 @@ ERP.store = (function () {
       emissao: d.emissao || U.hoje(), cliente_doc: cli ? cli.documento : null,
       cliente_nome: cli ? cli.nome : (c.unidade || c.curto || ''),
       centro: d.centro, competencia: d.competencia,
+      /* A fatura sai pelo mesmo CNPJ que a esteira mostrou. Quem
+         confere a tela antes de emitir precisa que o documento
+         concorde com ela. */
+      empresa: d.empresa || empresaEmissora(d.centro, d.competencia),
       vencimento: d.vencimento || dataPrevista(d.competencia, pz.dias),
       valor_bruto: bruto, retencoes: [], retencao_origem: 'manual',
       origem: 'fatura', status: 'faturado',
@@ -15596,6 +15843,99 @@ ERP.store = (function () {
       d.grupo + ' · ' + U.fComp(d.competencia) + ' · ' + U.brl(d.valor) + ' · ' +
       partes.length + ' projeto(s)');
     return { ok: true, receber: r.receber, partes: partes };
+  }
+
+  /* ── NOTA EMITIDA FORA DO SISTEMA ───────────────────────
+
+     Nem toda nota sai daqui. A do Ceará é emitida pela filial, no
+     portal da prefeitura de lá; o RPS em lote deste sistema fala o
+     layout de Barueri e só serve para a matriz. Até agora, para
+     essas, o faturamento ficava parado em "liberado" para sempre —
+     a nota existia no mundo e não existia no sistema, e a esteira
+     ficava dizendo que faltava emitir algo que já tinha sido
+     emitido.
+
+     Isto fecha o ciclo pelo outro lado: quem emitiu à mão traz o
+     documento, informa os dados e o faturamento vira "faturado",
+     igual ao que sai daqui. O que muda é só a procedência, que
+     fica registrada — `emitida_fora` — porque um dia alguém vai
+     perguntar por que esta nota não tem RPS.
+
+     A LIBERAÇÃO CONTINUA VALENDO. Anexar não é atalho para pular a
+     esteira: se o valor não foi confirmado, autorizado e liberado,
+     a nota não entra. O caminho é o mesmo, só o emissor é outro. */
+  function anexarNotaEmitida(d) {
+    d = d || {};
+    if (!pode('faturar')) return { erro: 'Seu perfil não lança contas a receber.' };
+    if (!d.numero) return { erro: 'Informe o número da nota emitida.' };
+    if (!(Number(d.valor) > 0)) return { erro: 'Informe o valor da nota.' };
+    if (!d.emissao) return { erro: 'Informe a data de emissão da nota.' };
+    /* O ARQUIVO É O PONTO. Sem ele isto seria só marcar como
+       faturado — e o documento continuaria existindo só fora do
+       sistema, que é o problema que esta tela resolve. */
+    if (!d.arquivo) {
+      return { erro: 'Anexe o arquivo da nota (PDF ou XML). É ele que fecha o faturamento: ' +
+        'sem o documento, a nota continua existindo só fora do sistema.' };
+    }
+    const c = D.centro(d.centro);
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    if (!d.competencia) return { erro: 'Informe a competência.' };
+
+    const marcar = function (rec) {
+      if (!rec) return;
+      /* O ARQUIVO SE GRAVA AQUI, não no `criarReceber` — ele não
+         tem esse campo e descartava o anexo sem dizer nada. O
+         `emitirFatura` já fazia assim; passando adiante, a nota
+         entrava "anexada" e sem anexo nenhum, que é o avesso do
+         que esta função existe para fazer. */
+      rec.arquivo = d.arquivo;
+      rec.emitida_fora = true;
+      rec.emitida_por_empresa = d.empresa || empresaEmissora(d.centro, d.competencia);
+      rec.serie = d.serie || '';
+      rec.nf_chave = d.chave || null;
+      if (d.observacao) {
+        rec.observacao = (rec.observacao ? rec.observacao + ' · ' : '') + d.observacao;
+      }
+    };
+
+    /* No grupo a nota é uma só e o rateio entre as especialidades
+       já tem dono: `faturarGrupo`, o mesmo caminho da emissão
+       daqui. Duplicar o rateio aqui seria a segunda resposta para
+       a mesma pergunta. */
+    if (c.grupo_faturamento) {
+      const g = faturarGrupo({
+        grupo: c.grupo_faturamento, competencia: d.competencia,
+        numero: d.numero, emissao: d.emissao, vencimento: d.vencimento,
+        valor: Math.round(Number(d.valor) * 100) / 100,
+        discriminacao: d.discriminacao, arquivo: d.arquivo, origem: 'nota'
+      });
+      if (g.erro) return g;
+      marcar(g.receber);
+      logar('conta_receber', g.receber.id, 'anexou nota emitida fora do sistema',
+        c.grupo_faturamento + ' · ' + U.fComp(d.competencia) + ' · nº ' + d.numero +
+        ' · ' + U.brl(d.valor) + ' · ' + apelidoEmpresa(g.receber.emitida_por_empresa));
+      return { ok: true, receber: g.receber, partes: g.partes };
+    }
+
+    const cli = D.clienteDoCentro(d.centro);
+    const pz = prazoDe(d.centro, cli ? cli.documento : null);
+    const r = criarReceber({
+      numero: d.numero, serie: d.serie || '', nf_chave: d.chave || null,
+      emissao: d.emissao, competencia: d.competencia, centro: d.centro,
+      vencimento: d.vencimento || dataPrevista(d.competencia, pz.dias),
+      valor_bruto: Math.round(Number(d.valor) * 100) / 100,
+      cliente_doc: cli ? cli.documento : null,
+      cliente_nome: cli ? cli.nome : (c.unidade || c.curto || ''),
+      empresa: d.empresa || empresaEmissora(d.centro, d.competencia),
+      discriminacao: d.discriminacao || ('Serviços — ' + (c.curto || '') + ' · ' + U.fComp(d.competencia)),
+      origem: 'nota', arquivo: d.arquivo
+    });
+    if (r.erro) return r;
+    marcar(r.receber);
+    logar('conta_receber', r.receber.id, 'anexou nota emitida fora do sistema',
+      (c.curto || '') + ' · ' + U.fComp(d.competencia) + ' · nº ' + d.numero +
+      ' · ' + U.brl(d.valor) + ' · ' + apelidoEmpresa(r.receber.emitida_por_empresa));
+    return { ok: true, receber: r.receber, aviso: r.aviso };
   }
 
   /* ── importação de NFS-e por XML ────────────────────────
@@ -18886,6 +19226,7 @@ ERP.store = (function () {
     receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento, confirmarFaturamentoGrupo,
+    confirmarFaturamentoEspecialidades,
     statusProdutividade, NOME_STATUS_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
     editarEstimativaEsteira, desfazerEtapaFaturamento, esteiraFaturamento, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
     residuoPrevisao, marcarPrevisoes, marcarParcial, salvarPrevisaoDespesa, previsoesDespesa,
@@ -18912,6 +19253,8 @@ ERP.store = (function () {
     substituirFechamento, fechamentosVivosDe, compararFechamento,
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
+    empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,
+    dadosDaEmpresaParaRps, empresaDoLoteRps, anexarNotaEmitida,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
