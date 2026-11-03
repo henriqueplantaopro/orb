@@ -331,6 +331,21 @@ ERP.util = (function () {
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'sem-nome';
 
+  /* ORDEM ALFABÉTICA DE GENTE, num lugar só.
+
+     Toda lista de funcionário saía na ordem em que o cadastro foi
+     feito — que para quem procura um nome numa folha de duzentas
+     linhas é o mesmo que ordem nenhuma. Em português a comparação
+     tem de ser com locale: sem ele "Ávila" cai depois de "Zuleica",
+     porque o código do "Á" é maior que o do "Z". `sensitivity:
+     'base'` faz "ÁVILA", "Ávila" e "avila" ficarem juntos em vez de
+     em três blocos. */
+  const porNome = (a, b) => String((a && a.nome) || '')
+    .localeCompare(String((b && b.nome) || ''), 'pt-BR', { sensitivity: 'base' });
+  /* Devolve CÓPIA ordenada: ordenar no lugar mudaria a ordem do
+     array do cadastro, e com ele o que a sincronização compara. */
+  const emOrdemDeNome = lista => (lista || []).slice().sort(porNome);
+
   /* Liga um campo de DATA a uma ação, sem atrapalhar quem digita.
 
      O navegador avisa de mudança assim que a data fica válida — e,
@@ -547,6 +562,7 @@ ERP.util = (function () {
     PRAZO_CARGA: PRAZO_CARGA,
     comPrazo: comPrazo, avisarCarga: avisarCarga, andamento: andamento,
     slug,
+    porNome: porNome, emOrdemDeNome: emOrdemDeNome,
     mesesEntre,
     diasUteis, brl, num, numUnit, brlUnit, CASAS_UNIT, parseValor, valorValido, encaixarTabelas, hoje, mesAtual, dataLocal, fData, fDataHora, pct, fComp, addMeses, addDias, compDe, diasEntre, el, val, setVal, esc, baixar, tabelaParaCSV, so, cnpj,
     cnpjValido, cpfValido, documentoNormalizado };

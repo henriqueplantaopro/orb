@@ -322,6 +322,55 @@ ERP.contratos = (function () {
     });
   }
 
+  /* ── EXCLUIR CONTRATO ────────────────────────────────────
+
+     A função existia no store desde sempre, só para a administração,
+     e não tinha botão em lugar nenhum da tela: um contrato lançado
+     por engano — na aba errada, em duplicidade, com o número de
+     outro — ficava no sistema para sempre. Antes de excluir, a tela
+     diz o que vai embora junto: os anexos saem do servidor, e isso
+     não volta. Título gerado o store recusa, e aí a saída é trocar o
+     lado em vez de excluir. */
+  function excluir(id) {
+    const c = S.contrato(id);
+    if (!c) return;
+    const anexos = (c.anexos || []).filter(function (a) { return a.path; });
+    const presos = S.titulosDoContrato(id) || [];
+    ERP.app.modal({
+      titulo: 'Excluir contrato ' + U.esc(c.numero || ''),
+      fecharTxt: 'Cancelar',
+      corpo: '<p>Excluir o contrato <b>' + U.esc(c.numero || '') + '</b> — ' +
+          U.esc(nomeContraparte(c)) + '?</p>' +
+        (presos.length
+          ? '<div class="ajuda erro">Este contrato já gerou <b>' + presos.length +
+            ' título(s)</b> no contas a pagar. Cancele os títulos primeiro. Se o problema é só o ' +
+            'lado em que ele foi cadastrado, use <b>Este contrato é</b> no formulário em vez de ' +
+            'excluir — o histórico se mantém.</div>'
+          : '<div class="ajuda">Sai o contrato, as linhas de projeto, o cronograma e o histórico de ' +
+            'aditivos.' + (anexos.length
+              ? ' Os <b>' + anexos.length + ' arquivo(s) anexados saem também do servidor</b> — se o ' +
+                'PDF assinado só existir aqui, não há como recuperá-lo.'
+              : '') + ' Não há como desfazer.</div>' +
+            '<div class="ajuda">Se o problema é só o lado em que ele foi cadastrado (cliente x ' +
+            'fornecedor), use <b>Este contrato é</b> no formulário: o contrato troca de aba e o ' +
+            'histórico se mantém.</div>'),
+      acoes: presos.length ? [] : [{ txt: 'Excluir', cls: 'btn-cancelar', fn: async function () {
+        /* O store decide ANTES de apagar arquivo nenhum: recusado,
+           os anexos continuam onde estão. */
+        const r = S.excluirContrato(id);
+        if (ERP.app.erroDoRetorno(r)) return;
+        const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
+        if (cli && anexos.length) {
+          try { await cli.storage.from('contratos').remove(anexos.map(function (a) { return a.path; })); }
+          catch (e) { ERP.app.aviso('Contrato excluído, mas os arquivos continuam no servidor.', 'erro'); }
+        }
+        ERP.app.fecharModal();
+        render();
+        ERP.app.aviso('Contrato ' + (c.numero || '') + ' excluído.', 'ok');
+      } }]
+    });
+  }
+
   function blocoExemplos(todos) {
     const ex = todos.filter(function (c) { return c.exemplo; });
     if (!ex.length) return '';
@@ -361,6 +410,10 @@ ERP.contratos = (function () {
   function lerRascunho() {
     lerItens();
     return {
+      /* O LADO ENTRA NO RASCUNHO. Sem isso, trocar de cliente para
+         fornecedor redesenhava o formulário com o lado antigo de
+         volta — a troca não tinha como acontecer. */
+      parte: U.el('ct-parte-sel') ? U.val('ct-parte-sel') : null,
       numero: U.val('ct-num'), tipo: U.val('ct-tipo'), processo: U.val('ct-proc'),
       cliente: U.el('ct-cli') ? U.val('ct-cli') : '',
       fornecedor: U.el('ct-forn') ? U.val('ct-forn') : '',
@@ -408,8 +461,12 @@ ERP.contratos = (function () {
 
   function editar(id, rascunho) {
     idEmEdicao = id;
-    // contrato novo herda a aba aberta; contrato existente manda no que é
-    const fornec = id ? (S.contrato(id) || {}).parte === 'fornecedor' : parte === 'fornecedor';
+    /* Contrato novo herda a aba aberta; contrato existente manda no
+       que é — a menos que a administração esteja justamente trocando
+       o lado, e aí vale o que está escolhido no formulário. */
+    const fornec = (rascunho && rascunho.parte)
+      ? rascunho.parte === 'fornecedor'
+      : (id ? (S.contrato(id) || {}).parte === 'fornecedor' : parte === 'fornecedor');
     const base = S.contrato(id);
     const c = rascunho ? Object.assign({}, base || {}, rascunho) : base;
     itens = (c && c.itens && c.itens.length)
@@ -430,6 +487,23 @@ ERP.contratos = (function () {
               U.esc(D.TIPOS_CONTRATO[k]) + '</option>';
           }).join('') + '</select></div>' +
         '<div><label>Processo / edital</label><input id="ct-proc" value="' + U.esc(c ? (c.processo || '') : '') + '"></div></div>' +
+        /* CONTRATO CADASTRADO DO LADO ERRADO.
+
+           O responsável por contratos lançou um contrato de
+           FORNECEDOR dentro da aba de clientes. Até aqui o lado vinha
+           da aba aberta e nunca mais mudava: o contrato ficava para
+           sempre do lado errado, sem edição e sem exclusão. A troca é
+           da administração, porque muda de que lado o dinheiro anda
+           — e o store recusa a troca se o contrato já gerou título. */
+        (id && S.pode('admin')
+          ? '<div style="margin-top:8px"><label for="ct-parte-sel">Este contrato é</label>' +
+            '<select id="ct-parte-sel">' +
+              '<option value="cliente"' + (fornec ? '' : ' selected') + '>com CLIENTE — a empresa fatura (a receber)</option>' +
+              '<option value="fornecedor"' + (fornec ? ' selected' : '') + '>com FORNECEDOR — a empresa paga (a pagar)</option>' +
+            '</select>' +
+            '<span class="sub">Trocar o lado troca a contraparte: o cliente (ou o fornecedor e a ' +
+              'natureza da despesa) do lado antigo é apagado, e o formulário pede o do lado novo.</span></div>'
+          : '') +
         (fornec
           /* Contrato de fornecedor: a contraparte é um credor e a
              despesa precisa de natureza (plano de contas) pra cair no
@@ -550,7 +624,9 @@ ERP.contratos = (function () {
         (c ? '<label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-weight:400">' +
              '<input type="checkbox" id="ct-enc" style="width:auto"' + (c.encerrado ? ' checked' : '') + '> ' +
              'contrato encerrado</label>' : ''),
-      acoes: [{ txt: idEmEdicao ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
+      acoes: (idEmEdicao && S.pode('admin')
+        ? [{ txt: 'Excluir contrato', cls: 'btn-cancelar', fn: function () { excluir(idEmEdicao); } }]
+        : []).concat([{ txt: idEmEdicao ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         lerItens();
         lerParcelas();
         const r = S.salvarContrato({
@@ -581,7 +657,17 @@ ERP.contratos = (function () {
         });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
-        ERP.app.aviso('Contrato salvo: ' + U.brl(r.contrato.valor_mensal) + '/mês.', 'ok');
+        /* Trocou de lado: o contrato sai da aba aberta e vai para a
+           outra. Sem dizer isso, a tela parece ter perdido o
+           contrato que acabou de ser salvo. */
+        const mudouDeLado = (r.contrato.parte || 'cliente') !== (fornec ? 'fornecedor' : 'cliente') ||
+          (c && (c.parte || 'cliente') !== (r.contrato.parte || 'cliente'));
+        ERP.app.aviso('Contrato salvo: ' + U.brl(r.contrato.valor_mensal) + '/mês.' +
+          (mudouDeLado
+            ? ' Agora é contrato com ' + (r.contrato.parte === 'fornecedor' ? 'FORNECEDOR' : 'CLIENTE') +
+              ' — ele está na outra aba.'
+            : ''), 'ok');
+        if (mudouDeLado) { parte = r.contrato.parte === 'fornecedor' ? 'fornecedor' : 'cliente'; }
         render();
         /* O contrato dizia quanto e até quando, e nada disso chegava
            ao financeiro. Agora pergunta na hora — e não gera sozinho,
@@ -591,7 +677,7 @@ ERP.contratos = (function () {
             !S.titulosDoContrato(r.contrato.id).length) {
           oferecerGeracao(r.contrato.id);
         }
-      } }],
+      } }]),
       aoAbrir: function () {
         renderItens();
         renderCronograma();
@@ -612,6 +698,14 @@ ERP.contratos = (function () {
            ['ct-ini', 'vigencia_ini'], ['ct-fim', 'vigencia_fim'], ['ct-reaj', 'reajuste_mes']
           ].forEach(function (par) {
             if (U.el(par[0]) && rascunho[par[1]] !== undefined && rascunho[par[1]] !== '') U.setVal(par[0], rascunho[par[1]]);
+          });
+        }
+        /* Trocar o lado redesenha o formulário: o campo de cliente e
+           o par fornecedor+natureza são blocos diferentes, e o que
+           for digitado até aqui é preservado pelo rascunho. */
+        if (U.el('ct-parte-sel')) {
+          U.el('ct-parte-sel').addEventListener('change', function () {
+            editar(idEmEdicao, lerRascunho());
           });
         }
         // no contrato de fornecedor não existe o botão de cadastrar cliente

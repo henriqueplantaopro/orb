@@ -61,8 +61,8 @@ ERP.dp = (function () {
   /* ══════════════════ FUNCIONÁRIOS ══════════════════ */
   function renderFuncionarios() {
     const box = U.el('dp-aba-funcionarios');
-    const ativos = D.funcionarios.filter(function (f) { return f.ativo; });
-    const desligados = D.funcionarios.filter(function (f) { return !f.ativo; });
+    const ativos = D.funcionarios.filter(function (f) { return f.ativo; }).sort(U.porNome);
+    const desligados = D.funcionarios.filter(function (f) { return !f.ativo; }).sort(U.porNome);
 
     const linha = f => {
       const cg = D.cargo(f.cargo) || {};
@@ -575,21 +575,34 @@ ERP.dp = (function () {
        fechar a folha sem perceber que estavam ausentes. VT e VR viram
        campo editável direto na tabela, junto de HE/faltas, em vez de
        escondidos no "+". */
+    /* A GRADE INTEIRA NA TELA, sem rolar de lado.
+
+       Eram dezesseis colunas num `overflow-x:auto;display:block` —
+       quem fecha a folha digitava hora extra numa ponta e conferia o
+       líquido na outra, arrastando a barra a cada linha. As colunas
+       agora têm largura fixa em porcentagem (`tab-folha`), os
+       títulos longos foram abreviados e o nome trunca com "..."
+       guardando o nome inteiro no `title`. Truncar um nome é menos
+       pior que esconder o líquido. */
     box.innerHTML =
-      '<table class="parcelas" style="overflow-x:auto;display:block"><thead><tr><th>Funcionário</th><th class="num">Salário base</th>' +
-        '<th class="num" style="width:80px">HE 50% (h)</th><th class="num" style="width:80px">HE 100% (h)</th>' +
+      '<table class="parcelas tab-folha"><thead><tr><th style="width:12%">Funcionário</th>' +
+        '<th class="num cv">Sal. base</th>' +
+        '<th class="num ce">HE 50%</th><th class="num ce">HE 100%</th>' +
         /* ADICIONAL NOTURNO NA GRADE. Existia só dentro de "Mais
            ajustes", um funcionário por vez: numa folha com vinte e
            um plantonistas, isso são vinte e uma janelas. Aqui ele é
            digitado na linha, como a hora extra. */
-        '<th class="num" style="width:90px" title="horas de relógio trabalhadas entre 22h e 5h — ' +
+        '<th class="num ce" title="horas de relógio trabalhadas entre 22h e 5h — ' +
           'a conversão da hora noturna reduzida é do sistema">Not. (h)</th>' +
-        '<th class="num" style="width:70px">Faltas (d)</th>' +
-        '<th class="num">Insalubridade/Pericul.</th><th class="num">Salário-família</th>' +
-        '<th class="num" style="width:100px">Desc. VT (R$)</th><th class="num" style="width:100px">Desc. VR (R$)</th>' +
-        '<th class="num">Pensão</th><th class="num">Crédito trab.</th>' +
-        '<th class="num">Proventos</th><th class="num">Descontos</th>' +
-        '<th class="num">Líquido</th><th></th></tr></thead><tbody>' +
+        '<th class="num ce" title="faltas em dias">Faltas</th>' +
+        '<th class="num cv" title="Insalubridade / periculosidade">Insal/Peric</th>' +
+        '<th class="num cv" title="Salário-família">Sal.-fam.</th>' +
+        '<th class="num ce" title="Desconto de vale-transporte (R$)">VT</th>' +
+        '<th class="num ce" title="Desconto de vale-refeição (R$)">VR</th>' +
+        '<th class="num cv">Pensão</th>' +
+        '<th class="num cv" title="Crédito do trabalhador">Créd. trab.</th>' +
+        '<th class="num cv">Proventos</th><th class="num cv">Descontos</th>' +
+        '<th class="num cv">Líquido</th><th style="width:7%"></th></tr></thead><tbody>' +
         linhas.map(function (x) {
           const insalPericul = somaCodigos(x.h.proventos, ['105', '106']);
           const vtDesconto = somaCodigos(x.h.descontos, ['903']);
@@ -598,7 +611,7 @@ ERP.dp = (function () {
           const credito = somaCodigos(x.h.descontos, ['906']);
           const ajusteAtual = ajustesFolha[x.f.id] || {};
           return '<tr>' +
-            '<td>' + U.esc(x.f.nome) + '</td>' +
+            '<td class="nome" title="' + U.esc(x.f.nome) + '">' + U.esc(x.f.nome) + '</td>' +
             '<td class="num">' + U.brl(x.f.salario_base) + '</td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he50_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he50_horas || 0) + '"></td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he100_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he100_horas || 0) + '"></td>' +
@@ -795,7 +808,12 @@ ERP.dp = (function () {
   function abrirDetalheFolha(id) {
     const fl = S.folhas().find(function (x) { return x.id === id; });
     if (!fl) return;
-    const linhas = (fl.holerites || []).map(function (h) { return { f: D.funcionario(h.funcionario) || { nome: '(funcionário removido)' }, h: h }; });
+    /* ORDEM DE NOME AQUI TAMBÉM, e não só na origem: a folha nova
+       nasce ordenada, mas as que já foram fechadas guardaram os
+       holerites na ordem do cadastro. Ordenar na leitura é o que põe
+       as folhas antigas em ordem sem reescrever o que foi fechado. */
+    const linhas = (fl.holerites || []).map(function (h) { return { f: D.funcionario(h.funcionario) || { nome: '(funcionário removido)' }, h: h }; })
+      .sort(function (a, b) { return U.porNome(a.f, b.f); });
     ERP.app.modal({
       titulo: 'Folha de ' + U.fComp(fl.competencia) +
         (fl.cancelada ? ' — cancelada' : fl.cancelada_parcial ? ' — cancelada em parte' : ''),
@@ -884,7 +902,8 @@ ERP.dp = (function () {
 
   function renderPrevia13(ano, parcela, idBox) {
     const box = U.el(idBox);
-    const ativos = D.funcionarios.filter(function (f) { return f.ativo && f.admissao <= (ano + '-12-31'); });
+    const ativos = D.funcionarios.filter(function (f) { return f.ativo && f.admissao <= (ano + '-12-31'); })
+      .sort(U.porNome);
     if (!ativos.length) { box.innerHTML = '<div class="ajuda">Nenhum funcionário ativo neste ano.</div>'; return; }
     let totalLiquido = 0;
     const linhas = ativos.map(function (f) {
@@ -956,7 +975,8 @@ ERP.dp = (function () {
       return (S.todasParcelas() || []).find(function (p) { return p.titulo_id === tid; });
     }).find(Boolean);
     const venc = primeiraParcela ? primeiraParcela.venc : (d.parcela === 1 ? d.ano + '-11-30' : d.ano + '-12-20');
-    const linhas = (d.calculos || []).map(function (c) { return { f: D.funcionario(c.funcionario) || { nome: '(funcionário removido)' }, c: c }; });
+    const linhas = (d.calculos || []).map(function (c) { return { f: D.funcionario(c.funcionario) || { nome: '(funcionário removido)' }, c: c }; })
+      .sort(function (a, b) { return U.porNome(a.f, b.f); });
     ERP.app.modal({
       titulo: d.parcela + 'ª parcela do 13º de ' + d.ano + (d.cancelado ? ' — cancelada' : d.cancelado_parcial ? ' — cancelada em parte' : ''),
       corpo:
@@ -1222,7 +1242,9 @@ ERP.dp = (function () {
     const linhas = D.funcionarios.map(function (f) {
       const t = S.st.titulos.find(function (x) { return x.origem === 'rescisao' && x.origem_ref === 'rescisao-' + f.id; });
       return t ? { f: f, t: t } : null;
-    }).filter(Boolean).sort(function (a, b) { return b.t.emissao.localeCompare(a.t.emissao); });
+    }).filter(Boolean).sort(function (a, b) {
+      return b.t.emissao.localeCompare(a.t.emissao) || U.porNome(a.f, b.f);
+    });
     if (!linhas.length) { box.innerHTML = '<div class="ajuda">Nenhuma rescisão lançada ainda.</div>'; return; }
     box.innerHTML = '<table class="parcelas"><thead><tr><th>Funcionário</th><th>Data</th><th>Motivo</th>' +
       '<th class="num">Líquido</th><th>Situação</th><th></th></tr></thead><tbody>' +
@@ -1430,7 +1452,13 @@ ERP.dp = (function () {
      entre eles e uma linha de corte tracejada. */
   function exportarPdfRelatorioFolha(fl) {
     const empresa = D.empresa || {};
-    const holerites = (fl.holerites || []).filter(function (h) { return !h.erro; });
+    /* Os holerites saem em ordem de nome: o maço impresso é separado
+       à mão, e procurar um nome num maço fora de ordem é folhear
+       tudo. Vale também para as folhas fechadas antes desta versão. */
+    const holerites = (fl.holerites || []).filter(function (h) { return !h.erro; })
+      .sort(function (a, b) {
+        return U.porNome(D.funcionario(a.funcionario) || {}, D.funcionario(b.funcionario) || {});
+      });
     if (!holerites.length) return ERP.app.aviso('Esta folha não tem holerites pra exportar.', 'erro');
 
     const d = ERP.pdf.doc({ orientacao: 'retrato', margem: 34 });
@@ -1537,7 +1565,7 @@ ERP.dp = (function () {
         vt: somaCodigos(h.descontos, ['903']),
         vr: somaCodigos(h.descontos, ['907'])
       };
-    });
+    }).sort(function (a, b) { return U.porNome(a.f, b.f); });
     const box = U.el('dp-rl-saida');
     /* Cada coluna carrega junto como extrair o valor da linha (x) e
        como somar o total (a soma sempre lê da MESMA linha, não de um
@@ -1572,7 +1600,9 @@ ERP.dp = (function () {
   }
 
   function exportarCsvRelatorioFolha(fl) {
-    const linhas = (fl.holerites || []).map(function (h) {
+    const linhas = (fl.holerites || []).slice().sort(function (a, b) {
+      return U.porNome(D.funcionario(a.funcionario) || {}, D.funcionario(b.funcionario) || {});
+    }).map(function (h) {
       const f = D.funcionario(h.funcionario) || { nome: '(funcionário removido)' };
       return [
         f.nome, h.total_proventos, h.valor_inss, h.valor_irrf || 0,
@@ -1600,7 +1630,7 @@ ERP.dp = (function () {
     const box = U.el('dp-aba-custos');
     const de = U.el('dp-cu-de') ? U.val('dp-cu-de') : U.mesAtual();
     const ate = U.el('dp-cu-ate') ? U.val('dp-cu-ate') : U.mesAtual();
-    const todos = D.funcionarios;
+    const todos = U.emOrdemDeNome(D.funcionarios);
 
     box.innerHTML =
       '<h2>Custos por funcionário<span class="sub">o que cada folha fechada já calculou, somado no período</span></h2>' +

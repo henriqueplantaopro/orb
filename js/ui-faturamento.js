@@ -492,7 +492,15 @@ ERP.faturamento = (function () {
      as competências junta o que está fechado com o que está em
      andamento, e o número que a pessoa olha deixa de querer dizer
      alguma coisa. */
-  let fEst = { pendentes: true, competencia: U.hoje().slice(0, 7), etapa: '' };
+  /* A ESTEIRA ABRE NO MÊS ANTERIOR, e não no corrente: dia 3 de
+     novembro não há o que faturar de novembro — o que está em cima
+     da mesa é outubro. Abrindo no mês corrente, a tela abria quase
+     vazia e a primeira ação de todo dia era trocar a competência. */
+  let fEst = { pendentes: true, competencia: '', etapa: '',
+    sem_doc: false, anteriores: false };
+  /* Quantas competências para trás contam como ATRASADO. Dia 01/11,
+     com 2, é setembro para trás. */
+  const COMPETENCIAS_DE_ATRASO = 2;
   const ETAPAS_NOME = { previsao: 'Previsão', confirmado: 'Valor confirmado',
     autorizado: 'Autorizado pelo órgão', liberado: 'Liberado p/ faturar', faturado: 'Faturado' };
   /* Versão curta para o cabeçalho da esteira, que tem oito colunas e
@@ -502,10 +510,32 @@ ERP.faturamento = (function () {
   const ORDEM_ETAPAS = ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado'];
 
   function renderEsteira() {
-    const lista = S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia, etapa: fEst.etapa });
+    if (!fEst.competencia) fEst.competencia = S.competenciaDeslocada(1);
     const todas = S.esteiraFaturamento({});
+
+    /* O QUE ESTÁ NA TELA, antes do filtro de etapa — é sobre ESTE
+       conjunto que as contagens falam. Contando sobre todas as
+       competências, o número da etiqueta prometia uma coisa e o
+       clique entregava outra: "Previsão (71)" com setenta e um de
+       todos os meses, e a lista mostrando os quatro do mês aberto. */
+    const base = fEst.anteriores
+      ? S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO,
+          sem_documento: fEst.sem_doc })
+      : S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia,
+          sem_documento: fEst.sem_doc });
     const conta = {};
-    ORDEM_ETAPAS.forEach(function (e) { conta[e] = todas.filter(function (l) { return l.etapa === e; }).length; });
+    ORDEM_ETAPAS.forEach(function (e) {
+      conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
+    });
+    const lista = fEst.etapa
+      ? base.filter(function (l) { return l.etapa === fEst.etapa; }) : base;
+
+    /* As duas contagens que ela pediu, e que não dependem do mês
+       aberto: o que está confirmado sem documento, e o que ficou
+       para trás de duas competências sem fechar. */
+    const semDoc = todas.filter(function (l) { return l.sem_documento; }).length;
+    const atrasadas = S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO }).length;
+    const limiteAtraso = S.competenciaDeslocada(COMPETENCIAS_DE_ATRASO);
 
     const comps = todas.map(function (l) { return l.competencia; })
       .filter(function (c, i, a) { return a.indexOf(c) === i; }).sort().reverse();
@@ -524,7 +554,8 @@ ERP.faturamento = (function () {
     U.el('fa-aba-esteira').innerHTML =
       '<h2>Esteira do faturamento<span class="sub">confirmar o valor não é autorizar, e autorizar não é liberar</span></h2>' +
       '<div class="filtros">' +
-        '<div class="f"><label for="es-comp">Competência</label><select id="es-comp">' +
+        '<div class="f"><label for="es-comp">Competência</label><select id="es-comp"' +
+          (fEst.anteriores ? ' disabled' : '') + '>' +
           /* Sem a opção "Todas": uma competência por vez, sempre. E
              o mês corrente entra na lista mesmo quando ainda não
              tem nada lançado — senão a tela abriria vazia e sem
@@ -534,18 +565,44 @@ ERP.faturamento = (function () {
               return '<option value="' + c + '"' + (fEst.competencia === c ? ' selected' : '') + '>' +
                 U.fComp(c) + '</option>';
             }).join('') + '</select></div>' +
-        '<div class="f"><label for="es-etapa">Etapa</label><select id="es-etapa">' +
-          '<option value="">Todas</option>' + ORDEM_ETAPAS.map(function (e) {
-            return '<option value="' + e + '"' + (fEst.etapa === e ? ' selected' : '') + '>' +
-              ETAPAS_NOME[e] + ' (' + conta[e] + ')</option>';
-          }).join('') + '</select></div>' +
         '<label style="align-self:flex-end;font-weight:400"><input type="checkbox" id="es-pend" style="width:auto"' +
-          (fEst.pendentes ? ' checked' : '') + '> esconder os já faturados</label>' +
+          (fEst.pendentes ? ' checked' : '') + (fEst.anteriores ? ' disabled' : '') +
+          '> esconder os já faturados</label>' +
       '</div>' +
-      '<div class="pr-confere">' + ORDEM_ETAPAS.map(function (e) {
-        return '<span>' + ETAPAS_NOME[e] + ' <b' + (conta[e] && e !== 'faturado' ? ' class="erro"' : '') + '>' +
-          conta[e] + '</b></span>';
-      }).join('') + '</div>' +
+      /* AS ETAPAS LADO A LADO, e não num menu suspenso. Elas são
+         seis: cabem numa linha, e escolher entre seis coisas
+         visíveis é um clique, contra três num menu que esconde as
+         opções até ser aberto. A contagem que antes só decorava
+         virou o próprio botão. */
+      '<div class="es-chips">' +
+        '<button class="chip' + (!fEst.etapa ? ' sel' : '') + '" data-es-etapa="">Todas' +
+          '<b>' + base.length + '</b></button>' +
+        ORDEM_ETAPAS.map(function (e) {
+          return '<button class="chip' + (fEst.etapa === e ? ' sel' : '') +
+            '" data-es-etapa="' + e + '" title="' + ETAPAS_NOME[e] + '">' +
+            ETAPAS_CURTO[e] + '<b' + (conta[e] && e !== 'faturado' ? ' class="erro"' : '') + '>' +
+            conta[e] + '</b></button>';
+        }).join('') +
+        '<span class="es-sep"></span>' +
+        /* AS DUAS PENDÊNCIAS QUE ELA PEDIU. Atravessam o filtro de
+           competência de propósito: são justamente o que escapa de
+           olhar um mês por vez. */
+        '<button class="chip chip-falta' + (fEst.sem_doc ? ' sel' : '') + '" data-es-semdoc ' +
+          'title="valor confirmado, nenhum documento anexado e ninguém marcou que este caso não tem">' +
+          'Sem documento<b>' + semDoc + '</b></button>' +
+        '<button class="chip chip-atraso' + (fEst.anteriores ? ' sel' : '') + '" data-es-atraso ' +
+          'title="não fechados de ' + U.fComp(limiteAtraso) + ' para trás">' +
+          'Anteriores<b>' + atrasadas + '</b></button>' +
+      '</div>' +
+      (fEst.anteriores
+        ? '<div class="ajuda erro">Mostrando o que ficou para trás: faturamentos de <b>' +
+          U.fComp(limiteAtraso) + ' para trás</b> que ainda não fecharam. A competência fica ' +
+          'desligada enquanto esta visão está ativa.</div>'
+        : '') +
+      (fEst.sem_doc
+        ? '<div class="ajuda">Mostrando só os que estão <b>sem documento</b>. Anexe a AF ou a escala, ' +
+          'ou marque que este faturamento não tem documento — aí ele sai desta conta.</div>'
+        : '') +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
         /* Cabeçalhos curtos e colunas de etapa estreitas: eram quatro
            títulos longos ("Autorizado pelo órgão", "Liberado p/
@@ -589,11 +646,16 @@ ERP.faturamento = (function () {
                    o espaço com o emitente, e passando de uma linha
                    a esteira inteira volta a crescer. O detalhe
                    completo fica no `title`. */
+                /* "global" saiu daqui também: o que é único no grupo
+                   é a NOTA, não o valor. Dizer "global" ao lado de um
+                   total que é soma de setores é a confusão que fez
+                   alguém digitar o valor negociado inteiro numa
+                   especialidade só. */
                 l.eh_grupo
-                  ? '<span title="faturamento global do grupo' +
+                  ? '<span title="nota única do grupo — o valor é a soma dos setores' +
                     (l.especialidades.length < (l.total_especialidades || 0)
-                      ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '">global · ' +
-                    (l.total_especialidades || l.especialidades.length) + ' especialidades</span>'
+                      ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '">nota única · ' +
+                    (l.total_especialidades || l.especialidades.length) + ' setores</span>'
                   : U.esc(l.projeto.unidade || ''),
                 linhaEmitente(l)
               ].filter(Boolean).join(' · ') + '</div></td>' +
@@ -607,12 +669,27 @@ ERP.faturamento = (function () {
                confirmado, o valor deixa de ser estimativa e só muda
                pelo caminho da confirmação. */
             '<td class="num">' +
-              (podeEditarEstimativa() && !l.confirmado_em && l.etapa !== 'faturado'
-                ? '<input class="num est-inline" data-est-val="' + U.esc(l.centro + '|' + l.competencia) +
-                    '" inputmode="decimal" value="' + U.num(l.valor || 0) + '" ' +
-                    'title="estimativa — Enter para salvar">'
-                : U.brl(l.valor)) +
-              (l.eh_grupo ? '<div class="sub">global do grupo</div>' : '') +
+              /* NO GRUPO NÃO SE DIGITA O TOTAL.
+
+                 Esta célula era um campo também na linha do grupo —
+                 e o campo gravava em `l.centro`, que é UMA
+                 especialidade (a primeira com valor). Quem digitava
+                 o valor negociado do GHC inteiro jogava os dois
+                 milhões na cardiologia e lia embaixo, em letra
+                 miúda, "global do grupo". O valor do grupo é a SOMA
+                 dos setores: aqui ele só se lê, e cada setor se
+                 digita na sua própria linha (botão ▸). */
+              (l.eh_grupo
+                ? '<b>' + U.brl(l.valor) + '</b>'
+                : (podeEditarEstimativa() && !l.confirmado_em && l.etapa !== 'faturado'
+                    ? '<input class="num est-inline" data-est-val="' + U.esc(l.centro + '|' + l.competencia) +
+                        '" inputmode="decimal" value="' + U.num(l.valor || 0) + '" ' +
+                        'title="estimativa — Enter para salvar">'
+                    : U.brl(l.valor))) +
+              (l.eh_grupo
+                ? '<div class="sub">soma de ' + (l.total_especialidades || l.especialidades.length) +
+                  ' setores</div>'
+                : '') +
               (l.documentos.length ? '<div class="sub">' + U.esc(l.documentos.join(', ')) + '</div>' : '') + '</td>' +
             passo(l, 'confirmado') + passo(l, 'autorizado') + passo(l, 'liberado') + passo(l, 'faturado') +
             '<td class="num' + (atrasado ? ' erro' : ' sub') + '">' +
@@ -629,13 +706,23 @@ ERP.faturamento = (function () {
                delas fatura sozinha. */
             (l.eh_grupo && expandidos[l.grupo + '|' + l.competencia]
               ? l.especialidades.map(function (e) {
+                  /* O VALOR DO SETOR SE DIGITA AQUI. Era só leitura,
+                     e a única caixa de digitar ficava na linha do
+                     grupo — isto é, não havia caminho nenhum para
+                     informar quanto foi negociado por setor sem
+                     abrir o modal de confirmação. */
                   return '<tr class="sub-linha"><td class="desc" style="padding-left:28px">' +
                     '<span class="sub">' + U.esc(e.projeto.curto) + '</span></td>' +
                     '<td class="mono sub">' + U.fComp(e.competencia) + '</td>' +
-                    '<td class="num sub">' + U.brl(e.valor) + '</td>' +
+                    '<td class="num">' +
+                      (podeEditarEstimativa() && !e.confirmado_em && e.etapa !== 'faturado'
+                        ? '<input class="num est-inline" data-est-val="' +
+                            U.esc(e.centro + '|' + e.competencia) + '" inputmode="decimal" value="' +
+                            U.num(e.valor || 0) + '" title="valor deste setor — Enter para salvar">'
+                        : '<span class="sub">' + U.brl(e.valor) + '</span>') + '</td>' +
                     '<td colspan="4" class="sub">' + U.esc(ETAPAS_NOME[e.etapa] || e.etapa) + '</td>' +
                     '<td class="num sub">' + (e.etapa === 'faturado' ? '—' : e.dias + ' dias') + '</td>' +
-                    '<td class="sub">faturado no grupo</td></tr>';
+                    '<td class="sub">soma no grupo</td></tr>';
                 }).join('')
               : '');
         }).join('')
@@ -1057,6 +1144,10 @@ ERP.faturamento = (function () {
     const d = S.dossieFaturamento(par[0], par[1]);
     if (d.erro) return ERP.app.aviso(d.erro, 'erro');
     const edita = d.pode_editar;
+    /* Quem altera o VALOR tem guarda própria (é medição, não texto):
+       a mesma do store, para a tela não oferecer o que ele recusa. */
+    const editaSetor = !!d.grupo && !d.travado_por_nota &&
+      (S.pode('faturar') || S.pode('lancar') || S.pode('produtividade'));
     const naoEdita = !edita
       ? (d.travado_por_nota
           ? 'A nota já foi emitida: o que está escrito aqui é o que foi para o documento. ' +
@@ -1088,24 +1179,41 @@ ERP.faturamento = (function () {
 
         /* A COMPOSIÇÃO. No grupo é o que mais se procura aqui: qual
            especialidade entrou com quanto nesta nota única. */
+        /* O VALOR DE CADA SETOR, DIGITÁVEL AQUI.
+
+           Esta grade era só leitura, e embaixo dela dizia "para
+           corrigir, use Corrigir valor na esteira" — onde o único
+           campo que existia era o do TOTAL do grupo. Quem abria para
+           repartir os dois milhões do GHC por setor não tinha,
+           em nenhuma das duas telas, onde digitar o valor de um
+           setor. O total do grupo deixou de ser campo: é a soma
+           que aparece no rodapé, acompanhando a digitação. */
         (d.grupo
           ? '<div class="parcelas" style="margin-top:10px">' +
               '<div class="cab" style="grid-template-columns:1fr 130px 130px">' +
-                '<span>Especialidade</span><span class="num">A faturar</span>' +
+                '<span>Setor</span><span class="num">A faturar</span>' +
                 '<span class="num">Produtividade</span></div>' +
               d.partes.map(function (p) {
                 return '<div class="lin" style="grid-template-columns:1fr 130px 130px">' +
-                  '<span>' + U.esc(p.projeto.curto || p.projeto.nome || '') +
-                    (p.valor > 0 ? '' : ' <span class="sub">sem faturamento no mês</span>') + '</span>' +
-                  '<span class="num">' + U.brl(p.valor) + '</span>' +
+                  '<span>' + U.esc(p.projeto.curto || p.projeto.nome || '') + '</span>' +
+                  (editaSetor
+                    ? '<span class="num"><input class="num" data-rv-setor="' + U.esc(p.centro) +
+                      '" inputmode="decimal" value="' + U.num(p.valor || 0) + '" ' +
+                      'title="valor negociado deste setor"></span>'
+                    : '<span class="num">' + U.brl(p.valor) + '</span>') +
                   '<span class="num sub">' + (p.produtividade ? U.brl(p.produtividade) : '—') + '</span>' +
                   '</div>';
               }).join('') +
-              '<div class="rodape"><span class="sub">a nota é única — este é o total dela</span>' +
-                '<span class="dif ok">' + U.brl(d.valor) + '</span></div>' +
+              '<div class="rodape"><span class="sub">a nota é única — o total dela é a soma dos setores' +
+                '</span><span class="dif ok" id="rv-setor-total">' + U.brl(d.valor) + '</span></div>' +
             '</div>' +
-            '<div class="ajuda">Para corrigir um destes valores, use <b>Corrigir valor</b> na esteira: ' +
-              'o valor tem caminho próprio, com as travas da produtividade confirmada.</div>'
+            '<div class="ajuda">' + (editaSetor
+              ? 'O valor é negociado por setor: digite cada um e o total da nota se forma pela soma. ' +
+                'Não existe campo para o valor global — ele seria repartido por palpite, e é esse ' +
+                'número que vai para o resultado de cada projeto.'
+              : (d.travado_por_nota
+                  ? 'A nota já foi emitida: para mudar o valor de um setor, cancele a nota primeiro.'
+                  : 'Seu perfil vê a composição, mas não altera o valor dos setores.')) + '</div>'
           : '') +
 
         /* O TEXTO QUE VAI NA NOTA. É a pergunta que ele fez: "o que
@@ -1218,6 +1326,22 @@ ERP.faturamento = (function () {
           : ''),
       acoes: edita
         ? [{ txt: 'Gravar alterações', cls: 'btn-aprovar', fn: function () {
+            /* O VALOR POR SETOR PRIMEIRO, e tudo-ou-nada: se ele for
+               recusado (nota emitida, setor fora do grupo), nada mais
+               é gravado — senão o texto da nota ficaria descrevendo
+               uma composição que não passou. */
+            if (editaSetor) {
+              const setores = Array.prototype.slice.call(document.querySelectorAll('[data-rv-setor]'))
+                .map(function (e) { return { centro: e.dataset.rvSetor, valor: U.parseValor(e.value) }; });
+              const mudou = setores.some(function (x) {
+                const p = (d.partes || []).find(function (y) { return y.centro === x.centro; });
+                return !p || Math.abs(x.valor - (p.valor || 0)) > 0.004;
+              });
+              if (mudou) {
+                const rs = S.valoresPorSetor(d.grupo, par[1], setores, {});
+                if (ERP.app.erroDoRetorno(rs)) return;
+              }
+            }
             const r = S.editarFaturamento({
               centro: par[0], competencia: par[1],
               /* Texto igual ao que o sistema monta sozinho não vira
@@ -1233,9 +1357,9 @@ ERP.faturamento = (function () {
             ERP.app.fecharModal();
             renderEsteira();
             ERP.receber.render();
-            ERP.app.aviso(r.mudou.length
-              ? 'Gravado: ' + r.mudou.join(', ') + '.'
-              : 'Nada mudou.', 'ok');
+            const dpois = S.dossieFaturamento(par[0], par[1]);
+            ERP.app.aviso((r.mudou.length ? 'Gravado: ' + r.mudou.join(', ') + '.' : 'Nada mudou.') +
+              (d.grupo && !dpois.erro ? ' Total do ' + d.grupo + ': ' + U.brl(dpois.valor) + '.' : ''), 'ok');
           } }]
         : [],
       aoAbrir: function () { ligarRevisao(par, d); }
@@ -1243,6 +1367,18 @@ ERP.faturamento = (function () {
   }
 
   function ligarRevisao(par, d) {
+    /* A SOMA ACOMPANHA A DIGITAÇÃO. Quem reparte um valor negociado
+       precisa ver o total fechar enquanto reparte — no fim ele
+       apareceria tarde, depois de gravar. */
+    const somarSetores = function () {
+      const t = Array.prototype.slice.call(document.querySelectorAll('[data-rv-setor]'))
+        .reduce(function (a, e) { return Math.round((a + U.parseValor(e.value)) * 100) / 100; }, 0);
+      const el = U.el('rv-setor-total');
+      if (el) el.textContent = U.brl(t);
+    };
+    document.querySelectorAll('[data-rv-setor]').forEach(function (e) {
+      e.addEventListener('input', somarSetores);
+    });
     const padrao = U.el('rv-padrao');
     if (padrao) {
       padrao.addEventListener('click', function () {
@@ -1577,6 +1713,63 @@ ERP.faturamento = (function () {
       '-' + d.competencia + '.pdf');
   }
 
+  /* O DOCUMENTO DO FATURAMENTO, pela linha da esteira. Duas saídas,
+     porque são as duas respostas verdadeiras: anexar o que existe,
+     ou dizer que este caso não tem documento. A terceira — deixar
+     como está — continua valendo, e é por isso que o valor não
+     ficou travado esperando. */
+  function documentoDoFaturamento(ref) {
+    const par = String(ref).split('|');
+    const d = S.dossieFaturamento(par[0], par[1]);
+    if (ERP.app.erroDoRetorno(d)) return;
+    const dispensado = !!(d.anexos.length === 0 && d.documento_dispensado);
+    const podeMexer = S.podeMover('faturamento');
+    ERP.app.modal({
+      titulo: 'Documento do faturamento · ' + U.esc(d.grupo || d.projeto.curto || '') +
+        ' · ' + U.fComp(d.competencia),
+      fecharTxt: 'Fechar',
+      corpo:
+        '<div class="resumo-linha"><span>Valor confirmado</span><span class="v">' +
+          U.brl(d.valor) + '</span></div>' +
+        '<div class="resumo-linha"><span>Etapa</span><span class="v">' +
+          U.esc(ETAPAS_NOME[d.etapa] || d.etapa) + '</span></div>' +
+        (d.anexos.length
+          ? '<ul class="historico">' + d.anexos.map(function (an) {
+              return '<li><span class="badge b-aguardando">' + U.esc(S.nomeTipoAnexoFat(an.tipo)) +
+                '</span> <span class="mono">' + U.esc(an.nome) + '</span></li>';
+            }).join('') + '</ul>'
+          : '<div class="ajuda' + (dispensado ? '' : ' erro') + '">' +
+            (dispensado
+              ? 'Marcado como faturamento <b>sem documento</b>' +
+                (d.documento_dispensado_por ? ' por ' + U.esc(d.documento_dispensado_por) : '') +
+                (d.documento_dispensado_em ? ' em ' + U.fData(d.documento_dispensado_em) : '') + '.'
+              : 'Nenhum documento anexado. O valor seguiu assim mesmo, para não travar o ' +
+                'financeiro — mas enquanto ficar assim este faturamento conta como pendência.') +
+            '</div>') +
+        (podeMexer && !d.anexos.length && !dispensado
+          ? '<label style="margin-top:8px">Motivo <span class="sub">(se for marcar que não tem documento)</span></label>' +
+            '<input id="doc-motivo" placeholder="ex.: contrato por disponibilidade, sem medição do órgão">'
+          : ''),
+      acoes: (podeMexer
+        ? [{ txt: d.anexos.length ? 'Anexar mais' : 'Anexar documento', cls: 'btn-aprovar',
+             fn: function () { ERP.app.fecharModal(); anexarAoFaturamento(par); } }]
+          .concat(d.anexos.length ? [] : [dispensado
+            ? { txt: 'Voltar a exigir documento', cls: 'btn-sm', fn: function () {
+                const r = S.dispensarDocumentoFaturamento(par[0], par[1], false);
+                if (ERP.app.erroDoRetorno(r)) return;
+                ERP.app.fecharModal(); renderEsteira();
+                ERP.app.aviso('Volta a contar como pendência de documento.', 'ok');
+              } }
+            : { txt: 'Este faturamento não tem documento', cls: 'btn-sm', fn: function () {
+                const r = S.dispensarDocumentoFaturamento(par[0], par[1], true, U.val('doc-motivo'));
+                if (ERP.app.erroDoRetorno(r)) return;
+                ERP.app.fecharModal(); renderEsteira();
+                ERP.app.aviso('Marcado como faturamento sem documento — sai da lista de pendências.', 'ok');
+              } }])
+        : [])
+    });
+  }
+
   function acoesEsteira(l) {
     const ref = l.centro + '|' + l.competencia;
     /* VER E EDITAR O QUE FOI LANÇADO, em toda linha e em toda etapa.
@@ -1586,19 +1779,34 @@ ERP.faturamento = (function () {
        um modal que fechou e não abria mais. */
     const rever = '<button class="btn-sm" data-est-rev="' + ref + '" ' +
       'title="ver tudo que foi lançado neste faturamento">Ver / editar</button>';
+    /* O DOCUMENTO QUE FALTA, na própria linha e em vermelho. O valor
+       seguiu sem ele para não travar o financeiro — o que não pode é
+       a falta sumir de vista até alguém procurar. Verde quando já
+       tem; apagado quando alguém disse que este caso não tem. */
+    const doc = l.sem_documento
+      ? ' <button class="btn-sm btn-nf-falta" data-est-doc="' + ref + '" ' +
+        'title="confirmado sem documento — anexe a AF ou a escala, ou marque que não tem">' +
+        'Falta doc.</button>'
+      : (l.anexos
+          ? ' <button class="btn-sm btn-nf-ok" data-est-doc="' + ref + '" ' +
+            'title="' + l.anexos + ' documento(s) anexado(s)">Doc. ' + l.anexos + '</button>'
+          : (l.documento_dispensado
+              ? ' <button class="btn-sm btn-nf-na" data-est-doc="' + ref + '" ' +
+                'title="marcado como faturamento sem documento">sem doc.</button>'
+              : ''));
     /* Quem cuida de produtividade e faturamento digita o valor e
        autoriza no mesmo gesto — e a liberação vai junto. */
     if (l.etapa === 'previsao' && S.pode('autorizar_faturamento')) {
-      return rever +
+      return rever + doc +
         ' <button class="btn-sm btn-aprovar" data-est-conf="' + ref + '">Confirmar valor e autorizar</button>';
     }
     if (l.etapa === 'confirmado' && S.pode('autorizar_faturamento')) {
-      return rever +
+      return rever + doc +
         ' <button class="btn-sm" data-est-conf="' + ref + '">Corrigir valor</button>' +
         ' <button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar</button>';
     }
     if (l.etapa === 'autorizado') {
-      return rever +
+      return rever + doc +
         (S.pode('autorizar_faturamento')
           ? ' <button class="btn-sm" data-est-des="autorizado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('liberar_faturamento')
@@ -1617,7 +1825,7 @@ ERP.faturamento = (function () {
          esta casa não rola de lado. A etapa já está dita duas
          vezes: na coluna "Liberado", com data e nome, e no filtro
          do topo. A terceira era a que não cabia. */
-      return rever +
+      return rever + doc +
         /* A FOLHA PARA EMITIR À MÃO fica na linha liberada, que é
            onde a pessoa está quando vai emitir — e ao lado de
            "Anexar NF emitida", que é o passo seguinte dela. */
@@ -1626,13 +1834,14 @@ ERP.faturamento = (function () {
         (S.pode('liberar_faturamento')
           ? ' <button class="btn-sm" data-est-des="liberado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('faturar')
-          ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + ref + '">Anexar NF emitida</button>' : '');
+          ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + ref + '" ' +
+            'title="anexar a NF emitida fora do sistema e fechar o faturamento">Anexar NF</button>' : '');
     }
     if (l.etapa === 'previsao') {
-      return rever + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
+      return rever + doc + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
         'aguarda produtividade</span>';
     }
-    return rever;
+    return rever + doc;
   }
 
   function ligarEsteira() {
@@ -1649,6 +1858,33 @@ ERP.faturamento = (function () {
     box.querySelectorAll('[data-est-pdf]').forEach(function (b) {
       b.addEventListener('click', function () { pdfEmissaoManual(this.dataset.estPdf); });
     });
+    box.querySelectorAll('[data-est-doc]').forEach(function (b) {
+      b.addEventListener('click', function () { documentoDoFaturamento(this.dataset.estDoc); });
+    });
+    /* AS ETAPAS LADO A LADO. Um clique troca a etapa; clicar na que
+       já está escolhida volta para "Todas". */
+    box.querySelectorAll('[data-es-etapa]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const e = this.dataset.esEtapa;
+        fEst.etapa = (fEst.etapa === e && e) ? '' : e;
+        renderEsteira();
+      });
+    });
+    if (box.querySelector('[data-es-semdoc]')) {
+      box.querySelector('[data-es-semdoc]').addEventListener('click', function () {
+        fEst.sem_doc = !fEst.sem_doc;
+        renderEsteira();
+      });
+    }
+    if (box.querySelector('[data-es-atraso]')) {
+      box.querySelector('[data-es-atraso]').addEventListener('click', function () {
+        fEst.anteriores = !fEst.anteriores;
+        /* A visão de atraso é de VÁRIOS meses: a etapa escolhida
+           para um mês não quer dizer nada aqui. */
+        if (fEst.anteriores) fEst.etapa = '';
+        renderEsteira();
+      });
+    }
     box.querySelectorAll('[data-est-exp]').forEach(function (b) {
       b.addEventListener('click', function () {
         const k = this.dataset.estExp;
@@ -1665,9 +1901,14 @@ ERP.faturamento = (function () {
         const r = S.editarEstimativaEsteira({ centro: par[0], competencia: par[1], faturamento: valor });
         if (r.erro) { inp.value = U.num(antes); return ERP.app.aviso(r.erro, 'erro'); }
         renderEsteira();
-        ERP.app.aviso(r.grupo
-          ? 'Estimativa global do ' + r.grupo + ' atualizada para ' + U.brl(valor) + '.'
-          : 'Estimativa atualizada para ' + U.brl(valor) + '.', 'ok');
+        /* A mensagem dizia "estimativa global do grupo atualizada"
+           quando o retorno trouxesse `grupo` — e nunca traz: o valor
+           é sempre de um projeto. Dizer "global" onde o valor é de um
+           setor era a própria confusão que este campo criava. */
+        const g = (D.centro(par[0]) || {}).grupo_faturamento;
+        ERP.app.aviso('Valor de ' + U.esc((D.centro(par[0]) || {}).curto || par[0]) +
+          ' atualizado para ' + U.brl(valor) + '.' +
+          (g ? ' O total do ' + g + ' é a soma dos setores.' : ''), 'ok');
       };
       inp.addEventListener('blur', salvar);
       inp.addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); inp.blur(); } });
@@ -1676,7 +1917,6 @@ ERP.faturamento = (function () {
       b.addEventListener('click', function () { confirmarEAutorizar(this.dataset.estConf); });
     });
     U.el('es-comp').addEventListener('change', function () { fEst.competencia = this.value; renderEsteira(); });
-    U.el('es-etapa').addEventListener('change', function () { fEst.etapa = this.value; renderEsteira(); });
     U.el('es-pend').addEventListener('change', function () { fEst.pendentes = this.checked; renderEsteira(); });
 
     box.querySelectorAll('[data-est-aut]').forEach(function (b) {
