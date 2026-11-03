@@ -1385,7 +1385,28 @@ ERP.dados = (function () {
     teto_salario_familia: 1980.38,
     valor_salario_familia: 67.54,
     percentual_vt_max_desconto: 6,  // % do salário base — desconto de VT nunca passa disso
-    divisor_hora_padrao: 220        // jornada 44h/semana; outras jornadas usam jornada_semanal_horas*5
+    divisor_hora_padrao: 220,       // jornada 44h/semana; outras jornadas usam jornada_semanal_horas*5
+    /* ADICIONAL NOTURNO — CLT art. 73.
+       20% é o mínimo legal para o trabalhador urbano; convenção
+       coletiva pode ser mais generosa, e aí o número muda aqui. */
+    adicional_noturno_pct: 20,
+    /* HORA NOTURNA REDUZIDA — CLT art. 73 §1º: a hora entre 22h e 5h
+       vale 52min30s, então 7 horas de relógio valem 8 horas noturnas.
+       Ligado porque é a lei; desligue se o seu controle de ponto já
+       entrega as horas convertidas — senão a conversão é feita duas
+       vezes. */
+    hora_noturna_reduzida: true,
+    /* APROVAÇÃO DOS DADOS DE PAGAMENTO por quem tem alçada, antes de
+       o funcionário entrar na folha.
+
+       A trava existe contra um risco real: quem cadastra sozinho
+       pode cadastrar alguém com o PRÓPRIO PIX, e ninguém veria isso
+       antes do primeiro pagamento sair. Desligada aqui a pedido —
+       na Dom Pedro o DP tem autonomia para esses lançamentos.
+
+       O rastro continua: quem admitiu, quem alterou dado bancário e
+       quando fica na trilha de auditoria, que não depende disto. */
+    exigir_aprovacao_pagamento: false
   };
 
   /* Rubricas que o cálculo de folha (`calcularHolerite`, em store.js)

@@ -79,7 +79,10 @@ ERP.dp = (function () {
           (f.ativo && podeDP() ? '<button class="btn-sm" data-reajustar-fn="' + f.id + '">Reajustar</button>' : '') +
           (f.ativo && podeDP() ? '<button class="btn-sm" data-desligar-fn="' + f.id + '">Desligar</button>' : '') +
           (!f.ativo ? '<span class="badge b-cancelado">desligado ' + U.fData(f.desligado_em) + '</span>' : '') +
-          (f.pagamento_aprovado === false
+          /* A etiqueta só aparece quando a trava está LIGADA: com ela
+             desligada, "pendente de aprovação" seria um aviso sobre
+             uma aprovação que ninguém precisa dar. */
+          (!S.pagamentoLiberado(f)
             ? (podeAprovarPagamento()
                 ? ' <button class="btn-sm btn-aprovar" data-aprovar-pag-fn="' + f.id + '">Aprovar pagamento</button>'
                 : ' <span class="badge b-aguardando">pagamento pendente de aprovação</span>')
@@ -575,6 +578,12 @@ ERP.dp = (function () {
     box.innerHTML =
       '<table class="parcelas" style="overflow-x:auto;display:block"><thead><tr><th>Funcionário</th><th class="num">Salário base</th>' +
         '<th class="num" style="width:80px">HE 50% (h)</th><th class="num" style="width:80px">HE 100% (h)</th>' +
+        /* ADICIONAL NOTURNO NA GRADE. Existia só dentro de "Mais
+           ajustes", um funcionário por vez: numa folha com vinte e
+           um plantonistas, isso são vinte e uma janelas. Aqui ele é
+           digitado na linha, como a hora extra. */
+        '<th class="num" style="width:90px" title="horas de relógio trabalhadas entre 22h e 5h — ' +
+          'a conversão da hora noturna reduzida é do sistema">Not. (h)</th>' +
         '<th class="num" style="width:70px">Faltas (d)</th>' +
         '<th class="num">Insalubridade/Pericul.</th><th class="num">Salário-família</th>' +
         '<th class="num" style="width:100px">Desc. VT (R$)</th><th class="num" style="width:100px">Desc. VR (R$)</th>' +
@@ -593,6 +602,7 @@ ERP.dp = (function () {
             '<td class="num">' + U.brl(x.f.salario_base) + '</td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he50_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he50_horas || 0) + '"></td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he100_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he100_horas || 0) + '"></td>' +
+            '<td><input class="num" data-fn="' + x.f.id + '" data-c="horas_noturnas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.horas_noturnas || 0) + '"></td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="faltas_dias" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.faltas_dias || 0) + '"></td>' +
             '<td class="num">' + U.brl(insalPericul) + '</td>' +
             '<td class="num">' + U.brl(x.h.salario_familia || 0) + '</td>' +
@@ -638,7 +648,7 @@ ERP.dp = (function () {
            fecharFolha pula quem está com dados de pagamento pendentes
            de aprovação, e o valor lançado de verdade saía bem menor
            que o anunciado, sem aviso nenhum antes de clicar. */
-        const pendentes = linhas.filter(function (x) { return x.f.pagamento_aprovado === false; });
+        const pendentes = linhas.filter(function (x) { return !S.pagamentoLiberado(x.f); });
         const totalAFechar = Math.round((totalLiquido - pendentes.reduce(function (s, x) { return s + x.h.liquido; }, 0)) * 100) / 100;
         ERP.app.modal({
           titulo: 'Fechar folha de ' + U.fComp(comp),
@@ -678,10 +688,14 @@ ERP.dp = (function () {
       titulo: 'Mais ajustes — ' + f.nome,
       fecharTxt: 'Cancelar',
       corpo:
-        '<div class="row2"><div><label>Horas noturnas (22h-5h)</label><input class="num" id="dp-ma-noturno" inputmode="decimal" value="' + U.num(atual.horas_noturnas || 0) + '"></div>' +
-        '<div><label>Gratificação <span class="sub">(valor)</span></label><input class="num" id="dp-ma-grat-valor" inputmode="decimal" value="' + U.num(atual.gratificacao_valor || 0) + '"></div></div>' +
+        /* As horas noturnas saíram daqui: estão na tabela da folha,
+           na coluna "Not. (h)". Mantidas nos dois lugares, seriam
+           dois campos para o mesmo número. */
+        '<label>Gratificação <span class="sub">(valor)</span></label>' +
+        '<input class="num" id="dp-ma-grat-valor" inputmode="decimal" value="' + U.num(atual.gratificacao_valor || 0) + '">' +
         '<input id="dp-ma-grat-desc" placeholder="Descrição da gratificação (opcional)" value="' + U.esc(atual.gratificacao_descricao || '') + '" style="margin-top:4px">' +
-        '<div class="ajuda" style="margin-top:8px">VT e VR ficam direto na tabela da folha, junto de HE e faltas.</div>' +
+        '<div class="ajuda" style="margin-top:8px">Horas noturnas, VT e VR ficam direto na tabela da folha, ' +
+          'junto de HE e faltas.</div>' +
 
         (pensaoCadastro
           ? '<div class="ajuda" style="margin-top:10px">Pensão do cadastro: ' + U.brl(pensaoCadastro.valor) +
@@ -700,7 +714,6 @@ ERP.dp = (function () {
           : ''),
       acoes: [{ txt: 'Aplicar', cls: 'btn-aprovar', fn: function () {
         ajustesFolha[fid] = ajustesFolha[fid] || {};
-        ajustesFolha[fid].horas_noturnas = U.parseValor(U.val('dp-ma-noturno'));
         ajustesFolha[fid].gratificacao_valor = U.parseValor(U.val('dp-ma-grat-valor'));
         ajustesFolha[fid].gratificacao_descricao = U.val('dp-ma-grat-desc');
         if (pensaoCadastro && U.el('dp-ma-pensao-alterar').checked) {
@@ -1720,6 +1733,27 @@ ERP.dp = (function () {
         '<div><label>RAT×FAP (%) <span class="sub">varia por CNAE/FAP</span></label><input class="num" id="dp-rat-fap" value="' + U.num(dp.aliquota_rat_fap) + '"' + (podeEditar ? '' : ' disabled') + '></div>' +
         '<div><label>Terceiros/Sistema S (%) <span class="sub">confirme com o contador</span></label><input class="num" id="dp-terceiros" value="' + U.num(dp.aliquota_terceiros) + '"' + (podeEditar ? '' : ' disabled') + '></div>' +
       '</div>' +
+      '<div class="row3" style="margin-top:8px">' +
+        '<div><label>Adicional noturno (%) <span class="sub">mínimo legal 20%</span></label>' +
+          '<input class="num" id="dp-not-pct" value="' + U.num(dp.adicional_noturno_pct || 20) + '"' +
+          (podeEditar ? '' : ' disabled') + '></div>' +
+        '<div><label class="marcar"><input type="checkbox" id="dp-not-reduzida"' +
+          (dp.hora_noturna_reduzida ? ' checked' : '') + (podeEditar ? '' : ' disabled') + '>' +
+          '<span>Hora noturna reduzida (52min30s)</span></label>' +
+          '<div class="ajuda">CLT art. 73 §1º: 7h de relógio entre 22h e 5h valem 8h noturnas. ' +
+            'Desligue só se o seu ponto já entregar as horas convertidas.</div></div>' +
+        /* A TRAVA DOS DADOS DE PAGAMENTO, visível e reversível.
+           Ela existe contra um risco real — quem cadastra sozinho
+           pode cadastrar o próprio PIX — e está desligada a pedido.
+           Escondida no código, ninguém saberia que existe nem
+           como ligá-la de volta. */
+        '<div><label class="marcar"><input type="checkbox" id="dp-exigir-aprov"' +
+          (dp.exigir_aprovacao_pagamento ? ' checked' : '') + (podeEditar ? '' : ' disabled') + '>' +
+          '<span>Exigir aprovação dos dados de pagamento</span></label>' +
+          '<div class="ajuda">Ligado, quem o DP admite só entra na folha depois de a diretoria ' +
+            'conferir PIX e banco. Desligado, o DP lança sozinho — a trilha continua registrando ' +
+            'quem cadastrou e quando.</div></div>' +
+      '</div>' +
       (podeEditar ? '<button class="btn-linha" id="dp-salvar-tabelas" style="margin-top:12px">Salvar tabelas</button>' : '') +
 
       /* ── QUEM RECEBE O VALE ──────────────────────────────
@@ -1766,7 +1800,10 @@ ERP.dp = (function () {
           salario_minimo: U.parseValor(U.val('dp-sal-min')),
           percentual_vt_max_desconto: U.parseValor(U.val('dp-vt-max')),
           aliquota_rat_fap: U.parseValor(U.val('dp-rat-fap')),
-          aliquota_terceiros: U.parseValor(U.val('dp-terceiros'))
+          aliquota_terceiros: U.parseValor(U.val('dp-terceiros')),
+          adicional_noturno_pct: U.parseValor(U.val('dp-not-pct')),
+          hora_noturna_reduzida: U.el('dp-not-reduzida').checked,
+          exigir_aprovacao_pagamento: U.el('dp-exigir-aprov').checked
         } });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.aviso('Tabelas atualizadas — os próximos cálculos já usam os novos valores.', 'ok');
