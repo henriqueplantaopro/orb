@@ -932,7 +932,7 @@ ERP.ativos = (function () {
       (cal.length
         ? '<table><thead><tr><th>Tag</th><th>Equipamento</th><th>Laudo válido até</th>' +
           '<th>Situação</th><th></th></tr></thead><tbody>' + cal.map(function (c) {
-            return '<tr' + (c.vencido ? ' style="background:#fff4f2"' : '') + '>' +
+            return '<tr' + (c.vencido ? ' class="atrasada"' : '') + '>' +
               '<td class="mono">' + U.esc(c.ativo.tag) + '</td>' +
               '<td class="desc">' + U.esc(c.ativo.descricao) +
                 (c.ativo.calibracao_laudo ? '<div class="sub">laudo ' + U.esc(c.ativo.calibracao_laudo) + '</div>' : '') + '</td>' +
@@ -1126,7 +1126,7 @@ ERP.ativos = (function () {
         (lista.length ? lista.map(function (o) {
           const a = S.ativo(o.ativo) || {};
           const dias = o.status === 'fechada' ? null : U.diasEntre(o.abertura, U.hoje());
-          return '<tr' + (dias > 10 ? ' style="background:#fff4f2"' : '') + '>' +
+          return '<tr' + (dias > 10 ? ' class="atrasada"' : '') + '>' +
             '<td class="mono">' + U.esc(o.numero) + '</td>' +
             '<td class="desc">' + U.esc(a.tag || '') + ' · ' + U.esc((a.descricao || '').slice(0, 34)) +
               (o.parada_uso ? '<div class="sub erro">parado</div>' : '') + '</td>' +
@@ -1270,7 +1270,7 @@ ERP.ativos = (function () {
           '<th>Responsável</th><th></th></tr></thead><tbody>' + planos.map(function (p) {
             const alvo = p.ativo ? (S.ativo(p.ativo) || {}) : null;
             const venceu = p.proxima && p.proxima <= U.hoje();
-            return '<tr' + (venceu ? ' style="background:#fff4f2"' : '') + '>' +
+            return '<tr' + (venceu ? ' class="atrasada"' : '') + '>' +
               '<td class="desc">' + (alvo ? U.esc(alvo.tag + ' · ' + alvo.descricao.slice(0, 34))
                 : 'Categoria: ' + U.esc(p.categoria)) + '</td>' +
               '<td class="sub">a cada ' + p.periodicidade_dias + ' dias</td>' +

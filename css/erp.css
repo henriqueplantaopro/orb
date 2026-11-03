@@ -208,6 +208,13 @@ th{text-align:left;font-size:10.5px;color:var(--ink3);padding:5px 8px;border-bot
   border-top:1px solid var(--line);font-weight:600;white-space:nowrap;background:#f7f8f9;}
 td{padding:4px 8px;border-bottom:1px solid var(--line2);line-height:1.35;white-space:nowrap;}
 tbody tr:nth-child(even) td{background:var(--zebra);}
+/* LINHA DE ALERTA, e não "linha ímpar de alerta". O fundo vermelho
+   vinha num `style` do próprio `<tr>` — e a zebra, que pinta o
+   `<td>`, cobria o aviso em metade das linhas. Resultado: a esteira
+   marcava em vermelho o que está parado há mais de 15 dias e
+   mostrava a marca só nas linhas ímpares. Pintando o `td`, a regra
+   disputa com a zebra em pé de igualdade e vence por vir depois. */
+tbody tr.atrasada td{background:#fff4f2;}
 tbody tr:hover td{background:#eef1f3;}
 tr.sel td{background:var(--brand-soft) !important;}
 tr.cancelada td{color:var(--ink3);}
@@ -216,6 +223,27 @@ td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
 .mono{font-variant-numeric:tabular-nums;}
 .sub{font-size:11px;color:var(--ink3);font-weight:400;}
 .acoes{display:flex;gap:3px;justify-content:flex-end;}
+/* ── CÉLULA DE AÇÕES É CÉLULA, NÃO CAIXA FLEX ────────────────────
+   `.acoes` nasceu para uma DIV dentro da célula, e é isso que o
+   contas a pagar faz: `<td class="col-acoes"><div class="acoes">`.
+   Mas quarenta e nove tabelas, em dezesseis módulos, puseram a
+   classe no PRÓPRIO `<td>` — e `display:flex` num `td` tira a
+   célula do layout da tabela: ela deixa de ser table-cell, perde o
+   alinhamento com a linha e passa a ser desenhada deslocada, meia
+   linha abaixo, como um retângulo branco solto que não acompanha
+   nem a altura nem a cor da linha a que pertence.
+
+   É o "quadro branco cortado" da esteira: não é um campo faltando
+   informação — é a célula dos botões, fora do lugar. A correção é
+   uma só, aqui: `td` com `.acoes` volta a ser célula de tabela, e
+   os botões voltam a ser elementos de linha.
+
+   A regra geral continua valendo para quem usa `.acoes` numa div,
+   que é o uso para o qual ela foi escrita. */
+td.acoes{display:table-cell;text-align:right;white-space:nowrap;vertical-align:middle;}
+td.acoes > button, td.acoes > a, td.acoes > span, td.acoes > label{
+  display:inline-block;vertical-align:middle;margin-left:3px;}
+td.acoes > :first-child{margin-left:0;}
 .vazio{text-align:center;color:var(--ink3);padding:24px;white-space:normal;}
 .vazio strong{display:block;color:var(--ink2);margin-bottom:2px;}
 
@@ -518,7 +546,7 @@ td.col-situacao .sub{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
 td.col-acoes, th.col-acoes{position:sticky;right:0;background:var(--surface);
   box-shadow:-6px 0 6px -6px rgba(0,0,0,.18);white-space:nowrap;}
 tr:hover td.col-acoes{background:var(--wash);}
-td.col-acoes .acoes{display:flex;gap:4px;justify-content:flex-end;}
+td.col-acoes .acoes{display:flex;gap:4px;justify-content:flex-end;align-items:center;}
 @media print{ td.col-acoes, th.col-acoes{display:none;} }
 
 /* Fechamento de produtividade agrupado no contas a pagar */

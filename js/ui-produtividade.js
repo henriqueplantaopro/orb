@@ -118,7 +118,7 @@ ERP.produtividade = (function () {
         /* Vermelho só no que é falta de verdade: esperado e não
            lançado. Pintar projeto de locação de vermelho faria a
            tela parecer cheia de problema todo mês. */
-        return '<tr' + (x.esperado && !x.lote ? ' style="background:#fff4f2"' : '') + '>' +
+        return '<tr' + (x.esperado && !x.lote ? ' class="atrasada"' : '') + '>' +
           '<td class="desc">' + U.esc(c.curto || c.nome) + '</td>' +
           '<td class="sub">' + U.esc(c.unidade || '—') + '</td>' +
           '<td>' + (x.lote

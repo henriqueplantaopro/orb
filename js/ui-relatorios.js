@@ -864,7 +864,7 @@ ERP.relatorios = (function () {
           '<td class="num">' + U.num(f.saldo_inicial) + '</td><td class="sub">saldo bancário de hoje</td></tr>' +
         f.linhas.map(function (l) {
           const maiores = l.itens.slice().sort(function (a2, b2) { return b2.valor - a2.valor; }).slice(0, 2);
-          return '<tr' + (l.negativo ? ' style="background:#fff4f2"' : '') + '>' +
+          return '<tr' + (l.negativo ? ' class="atrasada"' : '') + '>' +
             '<td class="mono">' + U.fData(l.data) + (l.hoje ? ' <span class="sub">hoje</span>' : '') + '</td>' +
             '<td class="num">' + (l.entradas ? U.num(l.entradas) : '—') + '</td>' +
             '<td class="num">' + (l.saidas ? U.num(l.saidas) : '—') + '</td>' +
@@ -901,7 +901,7 @@ ERP.relatorios = (function () {
         '<tr><td>Saldo</td><td class="sub">—</td><td>Sim</td><td colspan="8" class="sub">saldo bancário em ' + U.fData(U.hoje()) + '</td>' +
           '<td class="num">—</td><td class="num"><b>' + U.brl(r.saldo_banco) + '</b></td></tr>' +
         (r.linhas.length ? r.linhas.map(function (l) {
-          return '<tr' + (l.saldo < 0 ? ' style="background:#fff4f2"' : '') + '>' +
+          return '<tr' + (l.saldo < 0 ? ' class="atrasada"' : '') + '>' +
             '<td>' + l.tipo + '</td>' +
             /* Texto puro, sem selo: o selo tem recheio e borda, e com
                treze colunas ele empurrava a tabela 416px para fora da
