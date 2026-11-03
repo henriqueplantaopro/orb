@@ -4323,60 +4323,106 @@ ERP.store = (function () {
     };
   }
 
-  /* Previsão do GRUPO: o HGB negocia um valor só com o hospital, não um
-     por especialidade. O valor entra uma vez e é distribuído entre os
-     projetos do grupo — a produtividade continua lançada em cada um, e
-     a esteira e a cobertura seguem funcionando por projeto. */
-  function salvarPrevisaoGrupo(grupo, competencia, valor, opcoes) {
+  /* ── O VALOR DO GRUPO É A SOMA DOS SETORES ───────────────
+
+     Aqui existia `salvarPrevisaoGrupo`: recebia UM valor global do
+     grupo e o repartia entre as especialidades por um peso
+     adivinhado — a previsão do mês anterior, a média dos últimos
+     três faturamentos, ou parelho quando não havia nem isso.
+
+     O palpite fazia o rateio existir, mas inventava o número mais
+     consultado da empresa: dividir R$ 2 milhões por peso histórico e
+     chamar a quarta parte de "faturamento da cardiologia" é escrever
+     no DRE uma conta que ninguém fez. O valor é NEGOCIADO POR SETOR;
+     o que é único é a NOTA.
+
+     A porta global foi fechada aqui embaixo, e não só escondida na
+     tela: enquanto a função existisse, qualquer tela nova voltaria a
+     oferecer o campo global sem saber que ele não vale. Quem informa
+     valor de grupo passa por `valoresPorSetor`, que exige um valor
+     por setor e devolve o total como SOMA.
+
+     DECIDE TUDO ANTES DE GRAVAR QUALQUER COISA: são sete gravações,
+     e recusar a quarta deixaria três setores com valor novo e quatro
+     com o velho, num grupo que só faz sentido inteiro. */
+  function valoresPorSetor(grupo, competencia, partes, opcoes) {
     opcoes = opcoes || {};
-    const ids = projetosDoGrupo(grupo);
-    if (!ids.length) return { erro: 'Nenhum projeto neste grupo de faturamento.' };
-    /* A distribuição segue o que cada projeto já tem — confirmado da
-       produtividade, senão a previsão anterior. Sem base nenhuma,
-       divide igual. */
-    /* O peso de cada projeto: o que ele já tem previsto no mês, senão a
-       média do que faturou nos últimos meses, senão peso igual. Usar só
-       a estimativa do cadastro jogava o valor inteiro na única
-       especialidade que tinha estimativa preenchida. */
-    const base = ids.map(function (id) {
-      const pv = previsaoDe(id, competencia);
-      if (pv && pv.faturamento > 0) return { id: id, peso: pv.faturamento };
-      const historico = st.receber.filter(function (r) {
-        return r.centro === id && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
-          ['cancelado', 'substituido'].indexOf(r.status) < 0 && r.competencia < competencia;
-      }).sort(function (a2, b2) { return String(b2.competencia).localeCompare(String(a2.competencia)); })
-        .slice(0, 3);
-      if (historico.length) {
-        return { id: id, peso: historico.reduce(function (a2, r) { return a2 + r.valor_bruto; }, 0) / historico.length };
-      }
-      const est = (D.centro(id) || {}).prev_faturamento || 0;
-      return { id: id, peso: est, sem_base: !est };
-    });
-    /* Se algum projeto do grupo ficou sem base, todos entram com peso
-       igual: melhor dividir parelho do que concentrar o valor inteiro
-       em quem tinha uma estimativa velha no cadastro. */
-    if (base.some(function (x) { return x.sem_base; })) {
-      base.forEach(function (x) { x.peso = 1; });
+    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
+      return { erro: 'Seu perfil não altera valor de faturamento.' };
     }
-    const soma = base.reduce(function (a2, x) { return a2 + x.peso; }, 0);
-    let acumulado = 0;
-    const partes = base.map(function (x, i) {
-      const v = i === base.length - 1
-        ? Math.round((valor - acumulado) * 100) / 100
-        : Math.round((soma > 0 ? valor * (x.peso / soma) : valor / base.length) * 100) / 100;
-      acumulado = Math.round((acumulado + v) * 100) / 100;
-      return { centro: x.id, valor: v };
+    if (!competencia) return { erro: 'Informe a competência.' };
+    const ids = projetosDoGrupo(grupo);
+    if (!ids.length) return { erro: 'Nenhum projeto no grupo de faturamento ' + grupo + '.' };
+
+    const limpas = (partes || []).map(function (p) {
+      return { centro: p.centro, valor: Math.round((Number(p.valor) || 0) * 100) / 100 };
     });
-    let n = 0;
-    const conflitos = [];
-    partes.forEach(function (p) {
+    const forasteiro = limpas.find(function (p) { return ids.indexOf(p.centro) < 0; });
+    if (forasteiro) {
+      return { erro: 'O projeto ' + ((D.centro(forasteiro.centro) || {}).curto || forasteiro.centro) +
+        ' não é do grupo ' + grupo + '.' };
+    }
+    const invalida = limpas.find(function (p) { return !isFinite(p.valor) || p.valor < 0; });
+    if (invalida) {
+      return { erro: 'Valor inválido em ' + ((D.centro(invalida.centro) || {}).curto || invalida.centro) + '.' };
+    }
+    const repetido = limpas.find(function (p, i) {
+      return limpas.findIndex(function (x) { return x.centro === p.centro; }) !== i;
+    });
+    if (repetido) {
+      return { erro: 'O setor ' + ((D.centro(repetido.centro) || {}).curto || repetido.centro) +
+        ' veio duas vezes na mesma lista.' };
+    }
+    const total = limpas.reduce(function (a, p) { return Math.round((a + p.valor) * 100) / 100; }, 0);
+    if (!(total > 0) && !opcoes.aceitar_zero) {
+      return { erro: 'Informe o valor de ao menos um setor do grupo ' + grupo + '.' };
+    }
+    /* Nota já emitida no grupo: mexer no valor agora faria a nota e a
+       previsão discordarem — e é a previsão que alimenta o DRE. */
+    const jaFaturado = ids.filter(function (id) {
+      return st.receber.some(function (r) {
+        return r.centro === id && r.competencia === competencia &&
+          ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+          ['cancelado', 'substituido'].indexOf(r.status) < 0;
+      });
+    });
+    if (jaFaturado.length && !opcoes.forcar) {
+      return { erro: 'O grupo ' + grupo + ' já tem nota ou fatura emitida em ' + U.fComp(competencia) +
+        '. Cancele o documento antes de mudar os valores.' };
+    }
+
+    /* CADA SETOR FICA NA ETAPA EM QUE JÁ ESTAVA. Um setor com valor
+       confirmado pela produtividade continua confirmado (com o valor
+       novo); um que ainda era estimativa continua estimativa. Sem
+       isso, corrigir um número na grade carimbaria "confirmado pela
+       produtividade" em seis setores que ninguém conferiu — ou
+       apagaria o selo de quem conferiu. */
+    const feitas = [];
+    limpas.forEach(function (p) {
       const atual = previsaoDe(p.centro, competencia);
+      const eraConfirmado = !!atual && atual.status === 'confirmada_prod';
+      if (opcoes.confirmar || eraConfirmado) {
+        const r = confirmarFaturamentoProdutividade({
+          centro: p.centro, competencia: competencia, faturamento: p.valor,
+          produtividade: (atual || {}).produtividade || 0,
+          observacao: opcoes.observacao || '', lote: opcoes.lote || null, forcar: true
+        });
+        if (r.ok) feitas.push(p);
+        return;
+      }
+      /* Zero também é resposta: o setor não faturou neste mês. Gravar
+         o zero é o que apaga um valor anterior — sem isso, corrigir
+         para baixo deixaria o número velho no lugar. */
       const r = salvarPrevisao({ centro: p.centro, competencia: competencia, faturamento: p.valor,
-        produtividade: atual ? atual.produtividade : 0, forcar: opcoes.forcar });
-      if (r.ok) n++;
-      else if (r.confirmadaProd) conflitos.push({ centro: p.centro, valor: p.valor, atual: r.valor_atual });
+        produtividade: (atual || {}).produtividade || 0,
+        observacao: atual ? atual.observacao : '', forcar: true });
+      if (r.ok) feitas.push(p);
     });
-    return { ok: true, n: n, partes: partes, conflitos: conflitos };
+    logar('previsao', grupo, opcoes.confirmar
+      ? 'confirmou faturamento por setor' : 'informou o valor por setor',
+      grupo + ' · ' + U.fComp(competencia) + ' · soma ' + U.brl(total) +
+      ' em ' + feitas.length + ' setor(es)');
+    return { ok: true, grupo: grupo, total: total, partes: feitas };
   }
 
   /* Rateia o valor da nota única entre os projetos do grupo, na
@@ -5744,7 +5790,12 @@ ERP.store = (function () {
        qualquer perfil que a chamasse. */
     }).map(function (f) {
       return visivel('dp', f, { financeiro: veFinanceiro('dp') || pode('dp') });
-    });
+    /* EM ORDEM DE NOME. A folha saía na ordem do cadastro: procurar
+       um funcionário numa grade de duzentas linhas era varrer a tela
+       de cima a baixo. A ordem nasce aqui porque é desta lista que
+       saem a grade do fechamento, os holerites gravados na folha e os
+       títulos — ordenar na tela deixaria o PDF e o CSV fora de ordem. */
+    }).sort(U.porNome);
   }
 
   /* Já existe rescisão lançada (não cancelada) pra este funcionário? */
@@ -5761,7 +5812,8 @@ ERP.store = (function () {
      botão sumia da tela de Rescisão e ficava sem jeito de receber o
      que devia. */
   function funcionariosParaRescisao() {
-    return D.funcionarios.filter(function (f) { return f.ativo || !temRescisaoLancada(f); });
+    return D.funcionarios.filter(function (f) { return f.ativo || !temRescisaoLancada(f); })
+      .sort(U.porNome);
   }
 
   /* Preenche `dias_trabalhados` sozinho quando a admissão cai dentro
@@ -6564,7 +6616,10 @@ ERP.store = (function () {
     if (parcela === 2 && !st.decimos.some(function (d) { return d.ano === ano && d.parcela === 1 && !d.cancelado; })) {
       return { erro: 'Feche a 1ª parcela antes da 2ª.' };
     }
-    const ativos = D.funcionarios.filter(function (f) { return f.ativo && f.admissao <= (ano + '-12-31'); });
+    /* Em ordem de nome, como a folha: é desta lista que saem os
+       holerites gravados no 13º e os títulos a pagar. */
+    const ativos = D.funcionarios.filter(function (f) { return f.ativo && f.admissao <= (ano + '-12-31'); })
+      .sort(U.porNome);
     if (!ativos.length) return { erro: 'Nenhum funcionário ativo neste ano.' };
 
     // vencimento oficial (30/11 ou 20/12) antecipado se cair em fim de semana
@@ -8978,7 +9033,11 @@ ERP.store = (function () {
     }).sort(function (a, b) {
       const ordem = { vencida: 0, urgente: 1, atencao: 2, em_dia: 3, sem_pendencia: 4 };
       return ordem[a.situacao] - ordem[b.situacao] ||
-        (a.dias_ate_limite === null ? 999 : a.dias_ate_limite) - (b.dias_ate_limite === null ? 999 : b.dias_ate_limite);
+        (a.dias_ate_limite === null ? 999 : a.dias_ate_limite) - (b.dias_ate_limite === null ? 999 : b.dias_ate_limite) ||
+        /* Dentro do mesmo aperto, ordem de nome. A urgência continua
+           mandando: alfabetar por cima dela esconderia a férias
+           vencida no meio da letra M. */
+        U.porNome(a.funcionario, b.funcionario);
     });
   }
 
@@ -13689,6 +13748,24 @@ ERP.store = (function () {
 
     const alvo = d.id ? st.contratos.find(function (c) { return c.id === d.id; }) : { id: novoId('ct'), aditivos: [] };
     if (!alvo) return { erro: 'Contrato não encontrado.' };
+    /* TROCAR DE LADO: o contrato foi cadastrado como de cliente (a
+       faturar) quando era de fornecedor (a pagar), ou o contrário.
+       Acontece, e até aqui não havia correção — o campo vinha da aba
+       aberta e nunca mais mudava. Só a administração troca, e só
+       enquanto o contrato não gerou título: trocar de lado depois de
+       gerar parcelas deixaria título a pagar pendurado num contrato
+       que passou a ser de receita. */
+    const trocaDeLado = !!d.id && (alvo.parte || 'cliente') !== parte;
+    if (trocaDeLado) {
+      if (!pode('admin')) {
+        return { erro: 'Mudar o contrato de cliente para fornecedor (ou o contrário) é da administração.' };
+      }
+      const presos = titulosDoContrato(alvo.id);
+      if (presos.length) {
+        return { erro: 'Este contrato já gerou ' + presos.length + ' título(s) no contas a pagar. ' +
+          'Cancele os títulos antes de mudar o contrato de lado.' };
+      }
+    }
     alvo.parte = parte;
     ['numero', 'tipo', 'cliente', 'fornecedor', 'conta', 'objeto', 'processo', 'vigencia_ini', 'vigencia_fim',
      'renovacao', 'indice', 'reajuste_mes', 'observacao', 'exemplo',
@@ -13703,6 +13780,16 @@ ERP.store = (function () {
      'forma_pagamento'].forEach(function (k) {
       if (d[k] !== undefined) alvo[k] = d[k];
     });
+    /* A CONTRAPARTE DO LADO ANTIGO SAI JUNTO: fornecedor em contrato
+       de cliente (e vice-versa) é dado que não quer dizer nada e
+       aparece em relatório como se quisesse. Depois da cópia, não
+       antes: a lista acima copia `cliente` e `fornecedor`, e limpar
+       primeiro era limpar e reescrever o mesmo valor na linha
+       seguinte. */
+    if (trocaDeLado) {
+      if (parte === 'fornecedor') alvo.cliente = null;
+      else { alvo.fornecedor = null; alvo.conta = null; }
+    }
     alvo.itens = itens.map(function (i) {
       return { centro: i.centro, valor: Math.round((i.valor || 0) * 100) / 100 };
     });
@@ -13720,8 +13807,9 @@ ERP.store = (function () {
     if (d.id) alvo.exemplo = false;   // editado por alguém = conferido
     alvo.atualizado_em = new Date();
     if (!d.id) st.contratos.push(alvo);
-    logar('contrato', alvo.id, d.id ? 'editou contrato' : 'criou contrato',
-      alvo.numero + ' · ' + U.brl(alvo.valor_mensal) + '/mês · até ' + U.fData(alvo.vigencia_fim));
+    logar('contrato', alvo.id, trocaDeLado ? 'mudou o contrato de lado' : (d.id ? 'editou contrato' : 'criou contrato'),
+      alvo.numero + ' · ' + U.brl(alvo.valor_mensal) + '/mês · até ' + U.fData(alvo.vigencia_fim) +
+      (trocaDeLado ? ' · agora é contrato com ' + (parte === 'fornecedor' ? 'FORNECEDOR (a pagar)' : 'CLIENTE (a faturar)') : ''));
     return { ok: true, contrato: alvo };
   }
 
@@ -13841,9 +13929,23 @@ ERP.store = (function () {
     const i = st.contratos.findIndex(function (c) { return c.id === id; });
     if (i < 0) return { erro: 'Contrato não encontrado.' };
     const c = st.contratos[i];
+    /* TÍTULO GERADO NÃO FICA ÓRFÃO.
+
+       O título a pagar nascido de contrato aponta de volta por
+       `origem_ref`. Apagar o contrato e deixar os títulos de pé
+       deixava parcela no fluxo de caixa referindo um contrato que
+       não existe mais: ninguém consegue nem conferir o que está
+       pagando, nem achar o que apagou. */
+    const presos = titulosDoContrato(id);
+    if (presos.length) {
+      return { erro: 'Este contrato já gerou ' + presos.length + ' título(s) no contas a pagar. ' +
+        'Cancele os títulos primeiro — depois dá para excluir o contrato.' };
+    }
     st.contratos.splice(i, 1);
-    logar('contrato', id, 'excluiu contrato', (c.numero || '') + ' · ' + (c.objeto || ''));
-    return { ok: true };
+    logar('contrato', id, 'excluiu contrato',
+      (c.numero || '') + ' · ' + (c.parte === 'fornecedor' ? 'fornecedor' : 'cliente') +
+      ' · ' + (c.objeto || ''));
+    return { ok: true, contrato: c };
   }
 
   /* ── painel de pendências da página inicial ─────────────
@@ -15201,7 +15303,15 @@ ERP.store = (function () {
         protocolo: pv ? pv.autorizacao_protocolo : '',
         liberado_em: pv ? pv.liberado_em : null,
         liberado_por: pv ? pv.liberado_por : null,
-        faturado_em: docs.length ? docs[0].emissao : null
+        faturado_em: docs.length ? docs[0].emissao : null,
+        /* DOCUMENTO DO FATURAMENTO — a AF, a escala, a medição.
+           Todo faturamento tem um; o que não pode é esperar por ele
+           e travar o financeiro. Então o valor segue, e o que fica
+           é a PENDÊNCIA, visível: confirmado, sem documento e sem
+           ninguém ter dito que este caso não tem documento. */
+        anexos: anexosDoFaturamento(centro, competencia).length,
+        documento_dispensado: !!(previsaoAncora(centro, competencia) || {}).documento_dispensado,
+        sem_documento: faltaDocumento(centro, competencia, etapa)
       });
     };
 
@@ -15296,6 +15406,18 @@ ERP.store = (function () {
     if (f.centro) lista = lista.filter(function (l) { return l.centro === f.centro; });
     if (f.etapa) lista = lista.filter(function (l) { return l.etapa === f.etapa; });
     if (f.pendentes) lista = lista.filter(function (l) { return l.etapa !== 'faturado'; });
+    /* SÓ O QUE ESTÁ SEM DOCUMENTO. */
+    if (f.sem_documento) lista = lista.filter(function (l) { return l.sem_documento; });
+    /* PENDÊNCIAS ANTERIORES: o que ficou para trás de N competências
+       e ainda não fechou. Em 01/11, com N=2, é setembro para trás.
+       Ignora o filtro de competência de propósito — a pergunta é
+       justamente "o que sobrou dos meses que já passaram". */
+    if (f.anteriores) {
+      const limite = competenciaDeslocada(f.anteriores === true ? 2 : f.anteriores);
+      lista = lista.filter(function (l) {
+        return l.competencia <= limite && l.etapa !== 'faturado' && !l.sem_previsao;
+      });
+    }
     /* ORDEM ALFABÉTICA, SEMPRE.
 
        A lista já foi ordenada por etapa, depois por "o que pede ação
@@ -15363,121 +15485,22 @@ ERP.store = (function () {
   /* Confirmar o valor e autorizar o faturamento é um gesto só para
      quem cuida de produtividade e faturamento: era botão de confirmar,
      depois outro de autorizar, depois um terceiro de liberar. */
-  /* No GHC-HGB o faturamento é negociado com o hospital em valor
-     GLOBAL: não existe previsão por especialidade. Lançar a
-     produtividade da anestesia pede o valor do grupo inteiro, e o
-     sistema distribui internamente entre as especialidades (é o que
-     sustenta o resultado por projeto e o rateio da nota única). */
-  function confirmarFaturamentoGrupo(grupo, competencia, valor, opcoes) {
-    opcoes = opcoes || {};
-    if (!pode('faturar') && !pode('lancar')) {
-      return { erro: 'Seu perfil não confirma valor de faturamento.' };
-    }
-    const ids = projetosDoGrupo(grupo);
-    if (!ids.length) return { erro: 'Nenhum projeto neste grupo de faturamento.' };
-    if (!(valor > 0)) return { erro: 'Informe o valor global a faturar do grupo ' + grupo + '.' };
-    const r = salvarPrevisaoGrupo(grupo, competencia, valor, { forcar: true });
-    if (r.erro) return r;
-    /* Cada parte fica com o selo de confirmada: é o mesmo valor
-       global, visto por especialidade. */
-    const partes = [];
-    ids.forEach(function (id) {
-      const pv = previsaoDe(id, competencia);
-      if (!pv || !(pv.faturamento > 0)) return;
-      const c = confirmarFaturamentoProdutividade({
-        centro: id, competencia: competencia, faturamento: pv.faturamento,
-        produtividade: pv.produtividade || 0,
-        observacao: (opcoes.observacao ? opcoes.observacao + ' · ' : '') +
-          'parte do faturamento global de ' + U.brl(valor) + ' do grupo ' + grupo,
-        lote: opcoes.lote || null
-      });
-      if (c.ok) partes.push({ centro: id, valor: pv.faturamento });
-    });
-    logar('previsao', grupo, 'confirmou faturamento global do grupo',
-      grupo + ' · ' + U.fComp(competencia) + ' · ' + U.brl(valor) + ' em ' + partes.length + ' especialidade(s)');
-    return { ok: true, grupo: grupo, valor: valor, partes: partes };
-  }
 
-  /* ── VALOR POR ESPECIALIDADE, NO GRUPO ──────────────────
+  /* ── CONFIRMAR O VALOR DO GRUPO, SETOR POR SETOR ────────
 
-     O GHC-HGB tem sete especialidades e UMA nota. Até aqui a tela
-     pedia só o total do grupo, e o sistema repartia entre as
-     especialidades por um peso adivinhado — a previsão anterior, a
-     média dos últimos três meses, ou parelho quando não havia nem
-     isso.
+     O GHC-HGB tem sete setores e UMA nota. O que se confirma aqui é
+     o valor de cada setor; o total da nota é a soma deles.
 
-     O palpite servia para o rateio existir, mas não é o número: o
-     que vale é o que foi negociado por setor, e é disso que saem o
-     resultado por projeto e o DRE. Dividir R$ 2 milhões por peso
-     histórico e chamar aquilo de faturamento da cardiologia é
-     inventar o dado mais consultado da empresa.
-
-     Aqui quem fatura informa cada uma. O total continua sendo o
-     que vai para a nota — só que agora ele é a SOMA, e não a
-     origem.
-
-     DECIDE TUDO ANTES DE MUDAR QUALQUER COISA: são sete gravações,
-     e recusar a quarta deixaria três especialidades confirmadas e
-     quatro não, num grupo que só faz sentido inteiro. */
+     Antes havia também `confirmarFaturamentoGrupo`, que pedia o
+     valor global e o repartia por peso adivinhado. Saiu junto com a
+     repartição: a validação, a trava da nota emitida e a gravação
+     moram em `valoresPorSetor`, e esta função só acrescenta o
+     carimbo da confirmação. Duas portas para o mesmo valor davam
+     duas respostas. */
   function confirmarFaturamentoEspecialidades(grupo, competencia, partes, opcoes) {
     opcoes = opcoes || {};
-    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
-      return { erro: 'Seu perfil não confirma valor de faturamento.' };
-    }
-    if (!competencia) return { erro: 'Informe a competência.' };
-    const ids = projetosDoGrupo(grupo);
-    if (!ids.length) return { erro: 'Nenhum projeto no grupo de faturamento ' + grupo + '.' };
-
-    const limpas = (partes || []).map(function (p) {
-      return { centro: p.centro, valor: Math.round((Number(p.valor) || 0) * 100) / 100 };
-    });
-    const forasteiro = limpas.find(function (p) { return ids.indexOf(p.centro) < 0; });
-    if (forasteiro) {
-      return { erro: 'O projeto ' + ((D.centro(forasteiro.centro) || {}).curto || forasteiro.centro) +
-        ' não é do grupo ' + grupo + '.' };
-    }
-    const invalida = limpas.find(function (p) { return !isFinite(p.valor) || p.valor < 0; });
-    if (invalida) {
-      return { erro: 'Valor inválido em ' + ((D.centro(invalida.centro) || {}).curto || invalida.centro) + '.' };
-    }
-    const total = limpas.reduce(function (a, p) { return Math.round((a + p.valor) * 100) / 100; }, 0);
-    if (!(total > 0)) {
-      return { erro: 'Informe o valor de ao menos uma especialidade do grupo ' + grupo + '.' };
-    }
-    /* Nota já emitida no grupo: mexer no valor agora faria a nota e
-       a previsão discordarem. */
-    const jaFaturado = ids.filter(function (id) {
-      return st.receber.some(function (r) {
-        return r.centro === id && r.competencia === competencia &&
-          ['nota', 'fatura'].indexOf(r.origem) > -1 &&
-          ['cancelado', 'substituido'].indexOf(r.status) < 0;
-      });
-    });
-    if (jaFaturado.length && !opcoes.forcar) {
-      return { erro: 'O grupo ' + grupo + ' já tem nota ou fatura emitida em ' + U.fComp(competencia) +
-        '. Cancele o documento antes de mudar os valores.' };
-    }
-
-    const feitas = [];
-    limpas.forEach(function (p) {
-      if (p.valor > 0) {
-        const r = confirmarFaturamentoProdutividade({
-          centro: p.centro, competencia: competencia, faturamento: p.valor,
-          observacao: opcoes.observacao || '', lote: opcoes.lote || null, forcar: true
-        });
-        if (r.ok) feitas.push(p);
-      } else {
-        /* Zero também é resposta: a especialidade não faturou neste
-           mês. Gravar o zero é o que apaga um valor confirmado antes
-           — sem isso, corrigir para baixo deixaria o número velho. */
-        salvarPrevisao({ centro: p.centro, competencia: competencia, faturamento: 0,
-          produtividade: (previsaoDe(p.centro, competencia) || {}).produtividade || 0, forcar: true });
-      }
-    });
-    logar('previsao', grupo, 'confirmou faturamento por especialidade',
-      grupo + ' · ' + U.fComp(competencia) + ' · ' + U.brl(total) +
-      ' em ' + feitas.length + ' especialidade(s)');
-    return { ok: true, grupo: grupo, total: total, partes: feitas };
+    return valoresPorSetor(grupo, competencia, partes,
+      Object.assign({}, opcoes, { confirmar: true }));
   }
 
   function confirmarEAutorizarFaturamento(d) {
@@ -16218,6 +16241,11 @@ ERP.store = (function () {
       /* O texto ambíguo do campo de observação: oferecido, nunca
          adotado sozinho. */
       discriminacao_candidata: discriminacaoCandidata(pvAncora),
+      /* O documento do faturamento, do jeito que a esteira conta. */
+      documento_dispensado: !!(pvAncora && pvAncora.documento_dispensado),
+      documento_dispensado_por: pvAncora ? pvAncora.documento_dispensado_por : null,
+      documento_dispensado_em: pvAncora ? pvAncora.documento_dispensado_em : null,
+      sem_documento: faltaDocumento(centro, competencia, linha.etapa || etapaDaPrevisao(pvAncora)),
       protocolo: pvAncora ? (pvAncora.autorizacao_protocolo || '') : '',
       vencimento: pvAncora ? pvAncora.data : vencimentoPrevistoDe(competencia, centro),
       retencoes: retencoesPrevistas(centro, valor),
@@ -16453,6 +16481,57 @@ ERP.store = (function () {
     if (!atual) D.armazens.push(alvo);
     logar('armazem', alvo.id, atual ? 'editou armazém' : 'cadastrou armazém', alvo.nome);
     return { ok: true, armazem: alvo, criado: !atual };
+  }
+
+  /* ── a pendência de documento ────────────────────────────
+     Todo faturamento tem documento — a AF do órgão, o relatório de
+     escala, a medição. Mas esperar por ele antes de confirmar o
+     valor trava o financeiro, e por isso o valor segue sem ele.
+
+     O que não pode é a falta sumir de vista. Daqui sai a conta que
+     a tela mostra em vermelho: confirmado para cima, sem nenhum
+     documento anexado, e sem ninguém ter dito que este caso não
+     tem documento. */
+  const anexosDoFaturamento = (centro, competencia) =>
+    ((previsaoAncora(centro, competencia) || {}).anexos) || [];
+
+  const ETAPAS_COM_VALOR_FIRME = ['confirmado', 'autorizado', 'liberado', 'faturado'];
+  function faltaDocumento(centro, competencia, etapa) {
+    if (ETAPAS_COM_VALOR_FIRME.indexOf(etapa) < 0) return false;
+    const pv = previsaoAncora(centro, competencia);
+    if (pv && pv.documento_dispensado) return false;
+    return anexosDoFaturamento(centro, competencia).length === 0;
+  }
+
+  /* "ESTE FATURAMENTO NÃO TEM DOCUMENTO" é uma resposta, não um
+     silêncio: dispensar é uma decisão de alguém, com nome e data,
+     e some da lista de pendências. Desmarcar devolve a pendência. */
+  function dispensarDocumentoFaturamento(centro, competencia, dispensar, motivo) {
+    if (!podeMover('faturamento')) {
+      return { erro: 'Seu perfil vê o faturamento, mas não movimenta.' };
+    }
+    const g = garantirPrevisaoAncora(centro, competencia);
+    if (g.erro) return g;
+    const pv = g.previsao;
+    if (dispensar && anexosDoFaturamento(centro, competencia).length) {
+      return { erro: 'Este faturamento já tem documento anexado — não há o que dispensar.' };
+    }
+    pv.documento_dispensado = !!dispensar;
+    pv.documento_dispensado_por = dispensar ? (usuario() || {}).nome || '' : null;
+    pv.documento_dispensado_em = dispensar ? U.hoje() : null;
+    pv.documento_dispensado_motivo = dispensar ? String(motivo || '') : null;
+    logar('previsao', pv.id, dispensar ? 'marcou faturamento sem documento' : 'voltou a exigir documento',
+      (grupoDe(centro) || (D.centro(centro) || {}).curto || '') + ' · ' + U.fComp(competencia) +
+      (dispensar && motivo ? ' · ' + motivo : ''));
+    return { ok: true, previsao: pv };
+  }
+
+  /* A COMPETÊNCIA DE N MESES ATRÁS. A esteira abre no mês anterior
+     (o mês corrente mal começou a faturar) e a contagem de atraso
+     olha duas competências para trás. */
+  function competenciaDeslocada(n) {
+    const hoje = U.hoje();
+    return U.compDe(U.addMeses(hoje.slice(0, 7) + '-01', -Math.abs(n || 0)));
   }
 
   /* ── a folha de emissão manual ───────────────────────────
@@ -19789,7 +19868,7 @@ ERP.store = (function () {
     saldoInicial, saldoInicialEm, saldoAtual, saldosAtuais,
     receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,
-    autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento, confirmarFaturamentoGrupo,
+    autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
     statusProdutividade, NOME_STATUS_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
     editarEstimativaEsteira, desfazerEtapaFaturamento, esteiraFaturamento, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
@@ -19823,6 +19902,7 @@ ERP.store = (function () {
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
     dadosParaEmissaoManual, salvarCliente, salvarArmazem,
+    dispensarDocumentoFaturamento, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
@@ -19869,7 +19949,7 @@ ERP.store = (function () {
     marcarEnviados, liquidar, devolverParaRemessa,
     proximoSeuNumero, registrarRemessa, cancelarRemessa, remessas,
     remessaPorSequencial, proximoSequencialRemessa, aplicarRetorno, todosPagamentos,
-    grupoDe, projetosDoGrupo, baseDoGrupo, salvarPrevisaoGrupo, ratearNoGrupo, faturarGrupo,
+    grupoDe, projetosDoGrupo, baseDoGrupo, valoresPorSetor, ratearNoGrupo, faturarGrupo,
     itensParaRPS, registrarLoteRPS, registrarProtocoloRPS, converterLoteRPS,
     ativos, ativo, salvarAtivo, movimentarAtivo, movimentacoesDoAtivo, situacaoAtiva, ondeEstavaEm,
     abrirOS, ordensServico, fecharOS, salvarPlanoManutencao, gerarPreventivas,

@@ -2824,20 +2824,48 @@ function liberarParaFaturar(centro, competencia) {
   verificar('saldo de partida pode ser simulado',
     S.fluxoDiario({ dias: 3, saldo_inicial: 1000 }).saldo_inicial === 1000, '');
 
-  // previsão única do grupo
+  /* v148: O VALOR DO GRUPO É A SOMA DOS SETORES.
+     Até aqui havia `salvarPrevisaoGrupo`: recebia o valor global e o
+     repartia entre as sete especialidades por peso adivinhado. A
+     operação recusou o palpite — é o número que vai para o resultado
+     de cada projeto. A porta global não existe mais; informa-se setor
+     por setor e o total é a soma. */
   const comp = '2083-07';
-  const g = S.salvarPrevisaoGrupo('GHC - HGB', comp, 800000);
-  verificar('previsão do grupo é distribuída entre os projetos', g.ok && g.partes.length === 7, JSON.stringify(g.erro));
-  verificar('e a soma das partes bate com o valor do grupo',
-    Math.abs(g.partes.reduce((a, p) => a + p.valor, 0) - 800000) < 0.01, '');
-  /* v125: são 7 especialidades (o mutirão saiu), e 800 mil não divide
-     exato — a última parte leva a sobra de centavos. */
-  verificar('sem base, a divisão é igual entre as especialidades',
-    g.partes.slice(0, -1).every(p => Math.abs(p.valor - g.partes[0].valor) < 0.005) &&
-    Math.abs(g.partes.reduce((a2, p) => a2 + p.valor, 0) - 800000) < 0.01,
-    JSON.stringify(g.partes.map(p => p.valor)));
-  verificar('cada projeto do grupo fica com a sua parte na previsão',
-    S.projetosDoGrupo('GHC - HGB').every(id => (S.previsaoDe(id, comp) || {}).faturamento > 0), '');
+  verificar('a porta do valor global do grupo não existe mais',
+    typeof S.salvarPrevisaoGrupo === 'undefined' &&
+    typeof S.confirmarFaturamentoGrupo === 'undefined', '');
+  const setores = S.projetosDoGrupo('GHC - HGB');
+  verificar('o grupo tem 7 setores', setores.length === 7, setores.length);
+  const g = S.valoresPorSetor('GHC - HGB', comp,
+    setores.map((id, i) => ({ centro: id, valor: 100000 + i * 1000 })), {});
+  verificar('o valor entra setor por setor', g.ok && g.partes.length === 7, JSON.stringify(g.erro));
+  verificar('e o total do grupo é a SOMA dos setores',
+    Math.abs(g.total - (7 * 100000 + 21000)) < 0.01, g.total);
+  verificar('cada setor fica com o valor que foi digitado nele',
+    setores.every((id, i) => Math.abs(((S.previsaoDe(id, comp) || {}).faturamento || 0) - (100000 + i * 1000)) < 0.01), '');
+  verificar('a linha do grupo na esteira mostra a soma',
+    Math.abs((S.esteiraFaturamento({ competencia: comp }).find(l => l.eh_grupo) || {}).valor -
+      (7 * 100000 + 21000)) < 0.05, '');
+  verificar('setor de fora do grupo é recusado',
+    !!S.valoresPorSetor('GHC - HGB', comp, [{ centro: 'pj01', valor: 10 }], {}).erro, '');
+  verificar('valor negativo é recusado',
+    !!S.valoresPorSetor('GHC - HGB', comp, [{ centro: setores[0], valor: -1 }], {}).erro, '');
+  /* Informar valor não carimba confirmação: o setor que era
+     estimativa continua estimativa. */
+  verificar('informar o valor não confirma por conta própria',
+    (S.previsaoDe(setores[0], comp) || {}).status !== 'confirmada_prod',
+    (S.previsaoDe(setores[0], comp) || {}).status);
+  const cf = S.confirmarFaturamentoEspecialidades('GHC - HGB', comp,
+    setores.map(id => ({ centro: id, valor: 90000 })), {});
+  verificar('confirmar por setor carimba os sete',
+    cf.ok && setores.every(id => (S.previsaoDe(id, comp) || {}).status === 'confirmada_prod'),
+    JSON.stringify(cf.erro));
+  /* E, confirmado, informar um valor novo mantém o selo — não o
+     derruba nem o carimba onde não havia. */
+  S.valoresPorSetor('GHC - HGB', comp, [{ centro: setores[0], valor: 95000 }], {});
+  verificar('corrigir um setor confirmado mantém o selo da produtividade',
+    (S.previsaoDe(setores[0], comp) || {}).status === 'confirmada_prod' &&
+    Math.abs((S.previsaoDe(setores[0], comp) || {}).faturamento - 95000) < 0.01, '');
   S.setUsuario('u8');
 })();
 
@@ -9879,9 +9907,13 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /and tipo_servico is not null/.test(sql55), '');
 
   /* A esteira abre numa competência e não oferece "todas":
-     faturamento se acompanha mês a mês. */
-  verificar('v112 — a esteira abre na competência do mês corrente',
-    /competencia: U\.hoje\(\)\.slice\(0, 7\)/.test(fat), '');
+     faturamento se acompanha mês a mês. QUAL competência mudou na
+     v147 — passou a ser o mês ANTERIOR, porque dia 3 de novembro
+     não há o que faturar de novembro. O que esta verificação
+     guarda é a regra que não mudou: UMA competência, nunca
+     "todas". */
+  verificar('v112 — a esteira abre numa competência só (v147: a anterior)',
+    /fEst.competencia = S\.competenciaDeslocada\(1\)/.test(fat), '');
   verificar('v112 — e não tem mais a opção "todas"',
     !/<option value="">Todas<\/option>' \+ comps/.test(fat), '');
   verificar('v112 — o mês corrente entra na lista mesmo sem lançamento',
@@ -11488,6 +11520,208 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v146 — e os tres parametros ficam na tela de tabelas',
     /id="dp-not-pct"/.test(dpui) && /id="dp-not-reduzida"/.test(dpui) &&
     /id="dp-exigir-aprov"/.test(dpui), '');
+  S.setUsuario('u8');
+})();
+
+// ── v147: a esteira vista por quem acompanha pendencia ──
+(function () {
+  const fsE = require('fs');
+  const fat = fsE.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const css = fsE.readFileSync(__dirname + '/css/erp.css', 'utf8');
+  S.setUsuario('u2');
+
+  /* A COMPETENCIA DE N MESES ATRAS. */
+  const Uv147 = sandbox.window.ERP.util;
+  const mesAnterior = S.competenciaDeslocada(1);
+  const hoje = Uv147.hoje().slice(0, 7);
+  verificar('v147 — o mes anterior nao e o mes corrente',
+    mesAnterior < hoje && mesAnterior === Uv147.compDe(Uv147.addMeses(hoje + '-01', -1)),
+    mesAnterior + ' (hoje ' + hoje + ')');
+  verificar('v147 — e a esteira abre nele, nao no corrente',
+    /fEst.competencia = S\.competenciaDeslocada\(1\)/.test(fat), '');
+
+  /* O DOCUMENTO DO FATURAMENTO. */
+  const centro = 'pj01', comp = '2083-04';
+  S.confirmarFaturamentoProdutividade({ centro: centro, competencia: comp,
+    faturamento: 42000, produtividade: 0, forcar: true });
+  const linha = () => S.esteiraFaturamento({ centro: centro, competencia: comp, sem_agrupar: true })[0] || {};
+  verificar('v147 — valor confirmado sem documento e pendencia',
+    linha().sem_documento === true && linha().anexos === 0, JSON.stringify(linha().sem_documento));
+  S.dispensarDocumentoFaturamento(centro, comp, true, 'contrato por disponibilidade');
+  verificar('v147 — marcar "nao tem documento" tira da conta, com nome e data',
+    linha().sem_documento === false && linha().documento_dispensado === true &&
+    !!S.dossieFaturamento(centro, comp).documento_dispensado_por, '');
+  S.dispensarDocumentoFaturamento(centro, comp, false);
+  verificar('v147 — e desmarcar devolve a pendencia', linha().sem_documento === true, '');
+  S.anexarAoFaturamento(centro, comp, { nome: 'AF.pdf', tipo: 'af', path: 'q/af.pdf' });
+  verificar('v147 — anexar o documento tambem tira da conta',
+    linha().sem_documento === false && linha().anexos === 1, '');
+  verificar('v147 — e dispensar quem ja tem documento e recusado',
+    !!S.dispensarDocumentoFaturamento(centro, comp, true).erro, '');
+  /* Quem so tem previsao nao e cobrado por documento. */
+  const so_previsao = S.esteiraFaturamento({ centro: 'pj02', competencia: comp, sem_agrupar: true })[0] || {};
+  verificar('v147 — quem nem confirmou valor nao e cobrado por documento',
+    so_previsao.sem_documento === false, String(so_previsao.sem_documento));
+
+  /* PENDENCIAS ANTERIORES: o que ficou por fazer, nao o que e antigo. */
+  const velho = S.competenciaDeslocada(4);
+  S.confirmarFaturamentoProdutividade({ centro: 'pj03', competencia: velho,
+    faturamento: 15000, produtividade: 0, forcar: true });
+  const atrasadas = S.esteiraFaturamento({ anteriores: 2 });
+  const limite = S.competenciaDeslocada(2);
+  verificar('v147 — o atraso so pega de duas competencias para tras',
+    atrasadas.length > 0 && atrasadas.every(l => l.competencia <= limite), limite);
+  verificar('v147 — e so o que ainda nao fechou',
+    atrasadas.every(l => l.etapa !== 'faturado'), '');
+  verificar('v147 — o mes anterior nao conta como atraso',
+    atrasadas.every(l => l.competencia !== mesAnterior), '');
+
+  /* A TELA. */
+  verificar('v147 — as etapas viraram botoes lado a lado, sem menu suspenso',
+    /data-es-etapa=/.test(fat) && !/id="es-etapa"/.test(fat), '');
+  verificar('v147 — com as duas pendencias ao lado delas',
+    /data-es-semdoc/.test(fat) && /data-es-atraso/.test(fat), '');
+  verificar('v147 — e a contagem de cada etapa e do mes aberto',
+    /conta\[e\] = base\.filter/.test(fat), '');
+  verificar('v147 — a linha mostra o documento que falta, em vermelho',
+    /data-est-doc=/.test(fat) && /btn-nf-falta" data-est-doc/.test(fat), '');
+  verificar('v147 — os botoes das etapas ficam numa linha so',
+    /\.es-chips\{display:flex;flex-wrap:wrap/.test(css), '');
+  /* `--wash` era usado em cinco lugares e nunca declarado. */
+  verificar('v147 — o token --wash existe de verdade',
+    /--wash:#/.test(css), '');
+  S.setUsuario('u8');
+})();
+
+/* ── v148: contrato do lado errado, e ordem alfabetica ──────────── */
+(function () {
+  const fsG = require('fs');
+  const S = sandbox.window.ERP.store, D = sandbox.window.ERP.dados, Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');   // admin
+
+  /* O ENGANO: contrato COM FORNECEDOR cadastrado na aba de clientes.
+     Nao havia botao de excluir em tela nenhuma e o lado vinha da aba
+     aberta — o contrato ficava errado para sempre. */
+  const pj = D.centros.find(c => c.tipo === 'projeto' && c.ativo !== false);
+  const base = { numero: 'QA148-LADO', tipo: 'servico', objeto: 'manutencao predial',
+    vigencia_ini: '2026-01-01', vigencia_fim: '2026-12-31',
+    itens: [{ centro: pj.id, valor: 5000 }] };
+  const cr = S.salvarContrato(Object.assign({}, base,
+    { parte: 'cliente', cliente: D.clientes[0].id }));
+  verificar('v148 — o contrato nasce do lado que foi informado',
+    cr.ok && cr.contrato.parte === 'cliente', JSON.stringify(cr.erro));
+  const fornecedor = D.credores.find(x => x.ativo !== false && x.tipo !== 'medico' && x.tipo !== 'funcionario');
+  const conta = D.plano.find(x => x.nivel === 2 && x.tipo !== 'receita');
+  const tr = S.salvarContrato(Object.assign({}, base, { id: cr.contrato.id,
+    parte: 'fornecedor', cliente: D.clientes[0].id,
+    fornecedor: fornecedor.id, conta: conta.cod }));
+  verificar('v148 — o admin troca o contrato de lado',
+    tr.ok && tr.contrato.parte === 'fornecedor', JSON.stringify(tr.erro));
+  /* A contraparte do lado antigo sai junto, mesmo mandada de volta:
+     cliente E fornecedor no mesmo contrato aparece em relatorio como
+     se os dois valessem. */
+  verificar('v148 — e o cliente do lado antigo sai junto',
+    !tr.contrato.cliente && tr.contrato.fornecedor === fornecedor.id,
+    'cliente=' + tr.contrato.cliente + ' fornecedor=' + tr.contrato.fornecedor);
+  verificar('v148 — o contrato passa para a aba de fornecedores',
+    S.contratos({ parte: 'fornecedor' }).some(c => c.id === cr.contrato.id) &&
+    !S.contratos({ parte: 'cliente' }).some(c => c.id === cr.contrato.id), '');
+
+  /* COM TITULO GERADO, NEM TROCA NEM EXCLUI: o titulo aponta de
+     volta por origem_ref e ficaria orfao no contas a pagar. */
+  const ger = S.gerarTitulosContrato(cr.contrato.id, { meses: 2 });
+  verificar('v148 — o cenario gerou titulo do contrato',
+    ger.ok && S.titulosDoContrato(cr.contrato.id).length > 0, JSON.stringify(ger.erro));
+  const voltar = S.salvarContrato(Object.assign({}, base, { id: cr.contrato.id,
+    parte: 'cliente', cliente: D.clientes[0].id }));
+  verificar('v148 — com titulo gerado, trocar de lado e recusado',
+    !!voltar.erro && /t.tulo/i.test(voltar.erro), voltar.erro || '(aceitou)');
+  verificar('v148 — e excluir tambem, para o titulo nao ficar orfao',
+    !!S.excluirContrato(cr.contrato.id).erro && !!S.contrato(cr.contrato.id), '');
+
+  /* SEM TITULO, EXCLUI — e so o admin. */
+  const limpo = S.salvarContrato(Object.assign({}, base,
+    { numero: 'QA148-APAGAR', parte: 'cliente', cliente: D.clientes[0].id }));
+  S.setUsuario('u1');
+  verificar('v148 — quem nao e admin nao exclui contrato',
+    !!S.excluirContrato(limpo.contrato.id).erro, '');
+  S.setUsuario('u5');
+  verificar('v148 — sem titulo gerado, o admin exclui',
+    S.excluirContrato(limpo.contrato.id).ok && !S.contrato(limpo.contrato.id), '');
+
+  /* ORDEM ALFABETICA em toda lista de funcionario. A ordem do
+     cadastro, numa folha de duzentas linhas, e ordem nenhuma. */
+  const emOrdem = nomes => nomes.every((n, i) => i === 0 ||
+    Ut.porNome({ nome: nomes[i - 1] }, { nome: n }) <= 0);
+  const compFolha = Ut.compDe(Ut.addMeses(Ut.hoje(), -1));
+  verificar('v148 — a folha sai em ordem de nome',
+    emOrdem(S.funcionariosDaFolha(compFolha).map(f => f.nome)),
+    S.funcionariosDaFolha(compFolha).map(f => f.nome).join(' < '));
+  verificar('v148 — e a lista de rescisao tambem',
+    emOrdem(S.funcionariosParaRescisao().map(f => f.nome)), '');
+  /* Nas ferias a urgencia continua mandando: alfabetar por cima dela
+     esconderia a ferias vencida no meio da letra M. O nome e o
+     TERCEIRO critério, depois da situacao e do prazo. */
+  const fe = S.situacaoFerias();
+  const ordemSit = ['vencida', 'urgente', 'atencao', 'em_dia', 'sem_pendencia'];
+  verificar('v148 — nas ferias a urgencia vem antes do alfabeto',
+    fe.every((x, i) => i === 0 ||
+      ordemSit.indexOf(fe[i - 1].situacao) <= ordemSit.indexOf(x.situacao)), '');
+  const porDia = {};
+  fe.forEach(x => { const k = x.situacao + '|' + x.dias_ate_limite;
+    (porDia[k] = porDia[k] || []).push(x.funcionario.nome); });
+  verificar('v148 — e entre duas que vencem no mesmo dia, o nome decide',
+    Object.keys(porDia).every(k => emOrdem(porDia[k])), '');
+  /* O comparador: sem locale, "Avila" cai depois de "Zuleica" porque
+     o codigo do "A" acentuado e maior que o do "Z". */
+  verificar('v148 — acento entra no lugar certo do alfabeto',
+    Ut.emOrdemDeNome([{ nome: 'Zuleica' }, { nome: 'Ávila' }, { nome: 'avelar' }])
+      .map(x => x.nome).join('|') === 'avelar|Ávila|Zuleica', '');
+  verificar('v148 — nome que difere so em acento ou caixa nao se separa em blocos',
+    Ut.porNome({ nome: 'ÁVILA' }, { nome: 'avila' }) === 0, '');
+  /* Ordenar devolve copia: ordenar no lugar mudaria a ordem do array
+     do cadastro e, com ela, o que a sincronizacao compara. */
+  const antesOrdem = D.funcionarios.map(f => f.id).join(',');
+  Ut.emOrdemDeNome(D.funcionarios);
+  verificar('v148 — ordenar nao mexe no array do cadastro',
+    D.funcionarios.map(f => f.id).join(',') === antesOrdem, '');
+
+  /* A TELA DA FOLHA: a grade inteira, sem rolar de lado. */
+  const dpTela = fsG.readFileSync(__dirname + '/js/ui-dp.js', 'utf8');
+  const cssG = fsG.readFileSync(__dirname + '/css/erp.css', 'utf8');
+  verificar('v148 — o titulo longo da insalubridade virou "Insal/Peric"',
+    />Insal\/Peric</.test(dpTela) && !/Insalubridade\/Pericul\./.test(dpTela), '');
+  verificar('v148 — a grade da folha nao tem mais rolagem lateral propria',
+    !/parcelas" style="overflow-x:auto;display:block"/.test(dpTela) &&
+    /table class="parcelas tab-folha"/.test(dpTela), '');
+  verificar('v148 — as colunas tem largura fixa, para o nome poder truncar',
+    /table\.tab-folha\{table-layout:fixed;width:100%;font-size:11px;\}/.test(cssG) &&
+    /table\.tab-folha td\.nome\{overflow:hidden;text-overflow:ellipsis/.test(cssG), '');
+  verificar('v148 — o nome truncado guarda o nome inteiro no title',
+    /<td class="nome" title="/.test(dpTela), '');
+
+  /* A TELA DO CONTRATO: o seletor de lado e o botao de excluir. */
+  const ctTela = fsG.readFileSync(__dirname + '/js/ui-contratos.js', 'utf8');
+  verificar('v148 — o formulario do contrato tem o seletor de lado, so para admin',
+    /id="ct-parte-sel"/.test(ctTela) && /\(id && S\.pode\('admin'\)/.test(ctTela), '');
+  verificar('v148 — e o botao de excluir contrato, so para admin',
+    /txt: 'Excluir contrato'/.test(ctTela) && /idEmEdicao && S\.pode\('admin'\)/.test(ctTela), '');
+
+  /* A TELA DO GRUPO: nenhum campo de valor global. */
+  const fatTela = fsG.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  /* O rotulo que a tela IMPRIME, nao a palavra no comentario: a
+     mudanca e explicada no codigo e a explicacao cita o texto
+     antigo. */
+  verificar('v148 — o rotulo "global do grupo" saiu da linha da esteira',
+    !/<div class="sub">global do grupo<\/div>/.test(fatTela) &&
+    /soma de ' \+ \(l\.total_especialidades/.test(fatTela), '');
+  verificar('v148 — e a linha do grupo diz "nota unica", nao "global"',
+    /nota única · ' \+\s*\n?\s*\(l\.total_especialidades \|\| l\.especialidades\.length\) \+ ' setores/
+      .test(fatTela), '');
+  verificar('v148 — o valor por setor se digita na linha do setor',
+    /U\.esc\(e\.centro \+ '\|' \+ e\.competencia\)/.test(fatTela), '');
+  verificar('v148 — e a composicao do "Ver / editar" e digitavel por setor',
+    /data-rv-setor=/.test(fatTela) && /id="rv-setor-total"/.test(fatTela), '');
   S.setUsuario('u8');
 })();
 

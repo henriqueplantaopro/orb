@@ -5,6 +5,12 @@
 :root{
   --bg:#e9ebed; --surface:#fff; --ink:#151a1f; --ink2:#4d565f; --ink3:#7b848d;
   --line:#cfd5da; --line2:#e5e9ec; --zebra:#f7f8f9;
+  /* `--wash` era usado em cinco lugares e nunca foi declarado: o
+     realce de passar o mouse no menu de Cadastros, nas áreas, na
+     coluna grudada de ações e a listra da linha de previsão
+     simplesmente não pintavam nada. Token que não existe não
+     avisa — a regra continua ali, parecendo funcionar. */
+  --wash:#f2f4f6;
   --brand:#1f3a4d; --brand-ink:#152833; --brand-soft:#eceff2;
   --green:#1c6440; --green-bg:#eef3f0;
   --amber:#7f5c11; --amber-bg:#f7f2e6;
@@ -175,6 +181,21 @@ button:focus-visible{outline:2px solid var(--brand);outline-offset:1px;}
 .parcelas .rodape .ok{color:var(--ink);}
 .parcelas .rodape .erro{color:var(--red);}
 
+/* ── grade do fechamento da folha ────────────────────────
+   Dezesseis colunas numa tela que não rola de lado. Largura fixa em
+   porcentagem (`table-layout:fixed`) para o nome poder truncar: sem
+   isso o navegador alarga a coluna do nome até caber o nome inteiro
+   e empurra o líquido para fora da tela. `cv` são as colunas de
+   valor e `ce` as de digitação — mesma largura entre iguais, que é
+   a simetria que todo relatório desta casa segue. */
+table.tab-folha{table-layout:fixed;width:100%;font-size:11px;}
+table.tab-folha th,table.tab-folha td{padding:4px 3px;}
+table.tab-folha th.cv,table.tab-folha th.ce{width:6%;}
+table.tab-folha td.nome{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+table.tab-folha input.num{width:100%;min-width:0;padding:3px 4px;font-size:11px;}
+table.tab-folha td.col-acoes,table.tab-folha td:last-child{white-space:nowrap;}
+table.tab-folha button.btn-sm{padding:2px 5px;font-size:10.5px;}
+
 /* ── métricas ───────────────────────────────────────────── */
 .metrics{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px;}
 @media(max-width:760px){.metrics{grid-template-columns:repeat(2,1fr);}}
@@ -326,6 +347,34 @@ td.acoes > :first-child{margin-left:0;}
 
 /* ── importação de produtividade ────────────────────────── */
 .pr-cab{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:0 12px;margin-top:6px;}
+/* ── as etapas lado a lado, na esteira ───────────────────────────
+   Eram um menu suspenso: três cliques para trocar de etapa, e as
+   opções escondidas até abrir. São seis, cabem numa linha, e a
+   contagem que antes só decorava virou o próprio botão. */
+.es-chips{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:12px;}
+.es-chips .chip{display:inline-flex;align-items:center;gap:6px;background:#fff;
+  border:1px solid var(--line);border-radius:3px;color:var(--ink2);
+  padding:5px 10px;font-size:12px;font-weight:500;cursor:pointer;}
+.es-chips .chip:hover{background:var(--wash);}
+.es-chips .chip b{font-variant-numeric:tabular-nums;color:var(--ink);}
+.es-chips .chip b.erro{color:var(--red);}
+/* A etapa escolhida é a única escura: duas marcas de seleção na
+   mesma linha fariam a pessoa procurar qual vale. */
+.es-chips .chip.sel{background:var(--brand);border-color:var(--brand);color:#fff;}
+.es-chips .chip.sel b, .es-chips .chip.sel b.erro{color:#fff;}
+.es-chips .es-sep{flex:1 1 auto;min-width:8px;}
+/* As duas pendências não são etapas: atravessam o filtro de
+   competência, e por isso não se parecem com as outras. */
+.es-chips .chip-falta{color:var(--red);border-color:#dcc3bf;background:var(--red-bg);font-weight:600;}
+.es-chips .chip-falta b{color:var(--red);}
+.es-chips .chip-falta:hover{background:#f0ddda;}
+.es-chips .chip-falta.sel{background:var(--red);border-color:var(--red);color:#fff;}
+.es-chips .chip-falta.sel b{color:#fff;}
+.es-chips .chip-atraso{color:var(--amber);border-color:#e3d7b8;background:var(--amber-bg);font-weight:600;}
+.es-chips .chip-atraso b{color:var(--amber);}
+.es-chips .chip-atraso.sel{background:var(--amber);border-color:var(--amber);color:#fff;}
+.es-chips .chip-atraso.sel b{color:#fff;}
+
 .pr-confere{display:flex;flex-wrap:wrap;gap:18px;margin-top:14px;padding:9px 12px;
   background:#f7f8f9;border:1px solid var(--line);border-radius:3px;font-size:12px;color:var(--ink2);}
 .pr-confere b{color:var(--ink);font-variant-numeric:tabular-nums;margin-left:5px;}
