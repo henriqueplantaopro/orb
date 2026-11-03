@@ -752,9 +752,9 @@ ERP.faturamento = (function () {
            quem o banco vai recusar é um campo que mente. */
         (S.podeMover('faturamento')
           ? '<div class="row2" style="margin-top:8px">' +
-              '<div><label>Anexar documento do faturamento</label>' +
-                '<input type="file" id="es-conf-arq" style="border:none;padding:0"></div>' +
-              '<div><label>O que é este arquivo</label><select id="es-conf-arq-tipo">' +
+              '<div><label>Anexar documentos do faturamento</label>' +
+                '<input type="file" id="es-conf-arq" multiple style="border:none;padding:0"></div>' +
+              '<div><label>Classificar (opcional)</label><select id="es-conf-arq-tipo">' +
                 TIPOS_ANEXO_FAT.map(function (x) {
                   return '<option value="' + x[0] + '">' + U.esc(x[1]) + '</option>';
                 }).join('') + '</select></div>' +
@@ -804,14 +804,20 @@ ERP.faturamento = (function () {
       const eraDoSistema = String(discInicial).trim() === String(discPadrao).trim();
       S.definirDiscriminacao(par[0], par[1], intocado && eraDoSistema ? '' : escrito);
       const campo = U.el('es-conf-arq');
-      const file = campo && campo.files && campo.files[0];
-      if (!file) return { ok: true };
-      const sub = await subirArquivo(file, par[0] + '-' + par[1], 'es-conf-aviso');
-      if (sub.erro) return { aviso: 'Valor gravado, mas o anexo não subiu: ' + sub.erro };
-      const r = S.anexarAoFaturamento(par[0], par[1],
-        Object.assign({ tipo: U.val('es-conf-arq-tipo') || 'outro' }, sub.anexo));
-      if (r.erro) return { aviso: 'Valor gravado, mas o anexo não entrou: ' + r.erro };
-      return { ok: true, anexou: file.name };
+      const arquivos = campo && campo.files ? Array.prototype.slice.call(campo.files) : [];
+      if (!arquivos.length) return { ok: true };
+      const tipo = U.val('es-conf-arq-tipo') || 'outro';
+      const falhou = [];
+      let n = 0;
+      for (let i = 0; i < arquivos.length; i++) {
+        const sub = await subirArquivo(arquivos[i], par[0] + '-' + par[1], 'es-conf-aviso');
+        if (sub.erro) { falhou.push(arquivos[i].name); continue; }
+        const r = S.anexarAoFaturamento(par[0], par[1], Object.assign({ tipo: tipo }, sub.anexo));
+        if (r.erro) { falhou.push(arquivos[i].name); continue; }
+        n++;
+      }
+      return { ok: true, anexou: n ? n + ' documento(s)' : '',
+        aviso: falhou.length ? 'Valor gravado, mas NÃO entraram: ' + falhou.join(', ') : '' };
     }
 
     async function aplicar(autorizar) {
@@ -841,7 +847,7 @@ ERP.faturamento = (function () {
         ERP.receber.render();
         ERP.app.aviso((autorizar ? 'Autorizado. ' : '') + 'Total do grupo ' + U.brl(r.total) +
           ' em ' + r.partes.length + ' especialidade(s).' +
-          (extra.anexou ? ' ' + extra.anexou + ' anexado.' : '') +
+          (extra.anexou ? ' ' + extra.anexou + ' anexado(s).' : '') +
           (extra.aviso ? ' ' + extra.aviso : ''), extra.aviso ? 'erro' : 'ok');
         return;
       }
@@ -860,7 +866,7 @@ ERP.faturamento = (function () {
       ERP.app.aviso((autorizar
         ? 'Valor confirmado e faturamento autorizado — já liberado para o RPS em lote.'
         : 'Valor confirmado.') +
-        (extra.anexou ? ' ' + extra.anexou + ' anexado.' : '') +
+        (extra.anexou ? ' ' + extra.anexou + ' anexado(s).' : '') +
         (extra.aviso ? ' ' + extra.aviso : ''), extra.aviso ? 'erro' : 'ok');
     }
   }
@@ -1035,12 +1041,15 @@ ERP.faturamento = (function () {
 
      O que ela mostra é exatamente o que vai sair: a discriminação
      daqui é a mesma que o gerador de RPS escreve no arquivo. */
+  /* "Sem classificação" É A PRIMEIRA e é o padrão: classificar é
+     útil para quem procura depois, e não pode ser condição para
+     guardar o arquivo. */
   const TIPOS_ANEXO_FAT = [
+    ['outro', 'Sem classificação'],
     ['af', 'Autorização de fornecimento (AF)'],
     ['escala', 'Relatório de escala'],
     ['medicao', 'Medição / relatório do órgão'],
-    ['oficio', 'Ofício / e-mail de autorização'],
-    ['outro', 'Outro documento']
+    ['oficio', 'Ofício / e-mail de autorização']
   ];
 
   function revisarFaturamento(ref) {
@@ -1105,6 +1114,20 @@ ERP.faturamento = (function () {
         '<textarea id="rv-disc" rows="5"' + (edita ? '' : ' readonly') + ' placeholder="' +
           'competência, ofício, medição, plantões — o que o tomador exige ver na nota">' +
           U.esc(d.discriminacao) + '</textarea>' +
+        /* O TEXTO LANÇADO ANTES DA ATUALIZAÇÃO, quando existe. Era
+           onde o sistema parecia ter comido o que a pessoa escreveu:
+           o texto continuava no banco, no campo antigo, e a tela
+           mostrava a frase automática por cima dele. */
+        (d.discriminacao_candidata
+          ? '<div class="aviso-linha" style="margin-top:6px">' +
+              '<b>Há outro texto lançado neste faturamento</b>, no campo de observação, antes da ' +
+              'atualização que separou os dois campos. Confira se é ele que deve ir na nota:' +
+              '<div class="mono" style="white-space:normal;margin:6px 0;padding:6px;' +
+                'background:#fff;border:1px solid var(--line);border-radius:3px;font-size:11px">' +
+                U.esc(d.discriminacao_candidata) + '</div>' +
+              (edita ? '<button class="btn-sm" id="rv-usar-antigo">Usar este texto na nota</button>' : '') +
+            '</div>'
+          : '') +
         /* A FOLHA DE EMISSÃO sai daqui também: esta é a tela onde a
            pessoa confere os dados, e emitir à mão é o que ela faz em
            seguida quando a nota não sai pelo sistema. */
@@ -1113,11 +1136,14 @@ ERP.faturamento = (function () {
           '<span class="sub">— cliente, CNPJ emissor, valor, retenções e a descrição, ' +
           'na ordem em que o portal pergunta.</span></div>' +
         '<div class="ajuda">' +
-          (d.discriminacao_escrita
+          (d.discriminacao_origem === 'escrita'
             ? 'Este texto foi <b>escrito à mão</b> e é o que sai no arquivo de RPS.'
-            : 'Ninguém escreveu nada ainda: este é o texto que o <b>sistema monta sozinho</b>. ' +
-              'O que for digitado aqui passa a valer no lugar dele.') +
-          (edita && d.discriminacao_escrita
+            : d.discriminacao_origem === 'antiga'
+              ? 'Este texto foi <b>lançado antes da atualização</b>, no campo da autorização — está ' +
+                'sendo usado na nota. Grave aqui para fixá-lo no campo novo.'
+              : 'Ninguém escreveu nada ainda: este é o texto que o <b>sistema monta sozinho</b>. ' +
+                'O que for digitado aqui passa a valer no lugar dele.') +
+          (edita && d.discriminacao_origem !== 'sistema'
             ? ' <button class="btn-ghost" id="rv-padrao">voltar ao texto do sistema</button>' : '') +
         '</div>' +
 
@@ -1265,35 +1291,65 @@ ERP.faturamento = (function () {
     if (folha) {
       folha.addEventListener('click', function () { pdfEmissaoManual(par.join('|')); });
     }
+    const antigo = U.el('rv-usar-antigo');
+    if (antigo) {
+      antigo.addEventListener('click', function () {
+        const t = U.el('rv-disc');
+        if (t) { t.value = d.discriminacao_candidata; t.focus(); }
+        ERP.app.aviso('Texto copiado para o campo. Confira e grave para que ele vá na nota.', 'ok');
+      });
+    }
   }
 
+  /* VÁRIOS ARQUIVOS DE UMA VEZ, e sem obrigar a classificar. Quem
+     monta o envio ao cliente tem a AF, a escala e a medição na
+     mesma pasta: escolher um, classificar, gravar, abrir de novo —
+     três vezes — é trabalho que o sistema estava criando. A
+     classificação continua existindo para quem quiser usá-la, como
+     escolha, não como pedágio. */
   function anexarAoFaturamento(par) {
     ERP.app.modal({
       titulo: 'Anexar ao faturamento · ' + U.fComp(par[1]),
       fecharTxt: 'Cancelar',
       corpo:
-        '<div class="row2">' +
-          '<div><label>O que é este arquivo *</label><select id="ax-tipo">' +
-            TIPOS_ANEXO_FAT.map(function (x) {
-              return '<option value="' + x[0] + '">' + U.esc(x[1]) + '</option>';
-            }).join('') + '</select></div>' +
-          '<div><label>Arquivo *</label><input type="file" id="ax-arq"></div>' +
-        '</div>' +
-        '<div class="ajuda" id="ax-aviso">O arquivo fica em pasta privada no servidor: abre por link ' +
-          'temporário, para quem tem o módulo de Faturamento. É o que vai junto com a nota no envio ' +
-          'ao cliente.</div>',
+        '<label>Arquivos *</label>' +
+        '<input type="file" id="ax-arq" multiple style="border:none;padding:0">' +
+        '<div class="ajuda">Dá para marcar vários de uma vez (Ctrl ou Shift na janela do ' +
+          'Windows). Todos entram neste faturamento.</div>' +
+        '<label style="margin-top:8px">Classificar (opcional)</label>' +
+        '<select id="ax-tipo">' +
+          TIPOS_ANEXO_FAT.map(function (x) {
+            return '<option value="' + x[0] + '"' + (x[0] === 'outro' ? ' selected' : '') + '>' +
+              U.esc(x[1]) + '</option>';
+          }).join('') + '</select>' +
+        '<div class="ajuda" id="ax-aviso">Os arquivos ficam em pasta privada no servidor: abrem por ' +
+          'link temporário, para quem tem o módulo de Faturamento. São eles que vão junto com a nota ' +
+          'no envio ao cliente.</div>',
       acoes: [{ txt: 'Anexar', cls: 'btn-aprovar', fn: async function () {
         const campo = U.el('ax-arq');
-        const file = campo && campo.files && campo.files[0];
-        if (!file) return ERP.app.aviso('Escolha um arquivo.', 'erro');
-        const sub = await subirArquivo(file, par[0] + '-' + par[1], 'ax-aviso');
-        if (sub.erro) return ERP.app.aviso(sub.erro, 'erro');
-        const r = S.anexarAoFaturamento(par[0], par[1],
-          Object.assign({ tipo: U.val('ax-tipo') || 'outro' }, sub.anexo));
-        if (ERP.app.erroDoRetorno(r)) return;
+        const arquivos = campo && campo.files ? Array.prototype.slice.call(campo.files) : [];
+        if (!arquivos.length) return ERP.app.aviso('Escolha ao menos um arquivo.', 'erro');
+        const tipo = U.val('ax-tipo') || 'outro';
+        const falhou = [];
+        let n = 0;
+        /* UM DE CADA VEZ, e o que falhar é nomeado. Subir tudo em
+           paralelo e dizer "deu erro" deixaria a pessoa sem saber
+           quais entraram — e ela reenviaria os que já estavam lá. */
+        for (let i = 0; i < arquivos.length; i++) {
+          const f = arquivos[i];
+          const aviso = U.el('ax-aviso');
+          if (aviso) aviso.textContent = 'enviando ' + (i + 1) + ' de ' + arquivos.length + '…';
+          const sub = await subirArquivo(f, par[0] + '-' + par[1], null);
+          if (sub.erro) { falhou.push(f.name + ' (' + sub.erro + ')'); continue; }
+          const r = S.anexarAoFaturamento(par[0], par[1], Object.assign({ tipo: tipo }, sub.anexo));
+          if (r.erro) { falhou.push(f.name + ' (' + r.erro + ')'); continue; }
+          n++;
+        }
         ERP.app.fecharModal();
         revisarFaturamento(par.join('|'));
-        ERP.app.aviso('Documento anexado ao faturamento.', 'ok');
+        ERP.app.aviso(n + ' documento(s) anexado(s)' +
+          (falhou.length ? '. NÃO entraram: ' + falhou.join(' · ') : '.'),
+          falhou.length ? 'erro' : 'ok');
       } }]
     });
   }

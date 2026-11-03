@@ -15992,10 +15992,56 @@ ERP.store = (function () {
 
      Agora quem pergunta "o que vai na nota?" — a tela de revisão, o
      RPS, a nota anexada de fora — pergunta aqui. */
+  /* O TEXTO LANÇADO ANTES DA v142 NÃO SE PERDEU — mas ficou invisível,
+     que na prática é a mesma coisa para quem o escreveu.
+
+     Até a v141, a caixa "Descrição / observação da nota" gravava em
+     DOIS lugares: `autorizacao_obs` (pela autorização) e
+     `observacao` (pela confirmação do valor). A v142 criou o campo
+     `discriminacao` e passou a ler só ele — e todo texto digitado
+     antes da atualização sumiu da tela, substituído pela frase que o
+     sistema monta sozinho. Quem tinha escrito três parágrafos de
+     dados bancários e número de ordem de compra via "Serviços
+     médicos prestados — ... — competência 10/2026".
+
+     Campo novo sem ponte para o antigo é dado perdido: quem olha a
+     tela não tem como saber que o texto continua no banco.
+
+     `autorizacao_obs` numa competência AUTORIZADA é inequívoco: só a
+     caixa da nota escrevia ali. (Desfazer a autorização também
+     escreve, com o motivo — mas aí `autorizado_em` fica nulo, e a
+     ponte não vale.) */
+  function discriminacaoAntiga(pv) {
+    if (!pv || !pv.autorizado_em) return '';
+    return String(pv.autorizacao_obs || '').trim();
+  }
+
+  /* `observacao` é AMBÍGUO, e por isso não entra na nota sozinho: a
+     mesma coluna recebe a observação curta do fechamento da
+     produtividade ("glosa", "mês parcial") e frases que o próprio
+     sistema escreve. Este texto aparece na tela de revisão, para a
+     pessoa olhar e decidir — nunca na nota por conta própria. */
+  const FRASES_DO_SISTEMA = [
+    'Calculado pelos procedimentos lançados',
+    'Confirmação desfeita:',
+    'Voltou a valer:',
+    'Valor alterado na grade de previsões'
+  ];
+  function discriminacaoCandidata(pv) {
+    if (!pv) return '';
+    const t = String(pv.observacao || '').trim();
+    if (!t) return '';
+    if (FRASES_DO_SISTEMA.some(function (f) { return t.indexOf(f) === 0; })) return '';
+    if (t === String(pv.discriminacao || '').trim()) return '';
+    if (t === discriminacaoAntiga(pv)) return '';
+    return t;
+  }
+
   function discriminacaoDaNota(centro, competencia, grupo, detalhe) {
     const pv = previsaoAncora(centro, competencia);
     const escrito = pv ? String(pv.discriminacao || '').trim() : '';
-    return escrito || discriminacaoPadrao(centro, competencia, grupo, detalhe);
+    return escrito || discriminacaoAntiga(pv) ||
+      discriminacaoPadrao(centro, competencia, grupo, detalhe);
   }
 
   function definirDiscriminacao(centro, competencia, texto) {
@@ -16119,6 +16165,14 @@ ERP.store = (function () {
       discriminacao: discriminacaoDaNota(centro, competencia, grupo, detalhe),
       discriminacao_escrita: pvAncora ? String(pvAncora.discriminacao || '') : '',
       discriminacao_padrao: discriminacaoPadrao(centro, competencia, grupo, detalhe),
+      /* De onde veio o texto que está valendo. A tela precisa dizer
+         isso: "escrito à mão" e "recuperado do campo antigo" pedem
+         conferências diferentes de quem está olhando. */
+      discriminacao_origem: (pvAncora && String(pvAncora.discriminacao || '').trim()) ? 'escrita'
+        : (discriminacaoAntiga(pvAncora) ? 'antiga' : 'sistema'),
+      /* O texto ambíguo do campo de observação: oferecido, nunca
+         adotado sozinho. */
+      discriminacao_candidata: discriminacaoCandidata(pvAncora),
       protocolo: pvAncora ? (pvAncora.autorizacao_protocolo || '') : '',
       vencimento: pvAncora ? pvAncora.data : vencimentoPrevistoDe(competencia, centro),
       retencoes: retencoesPrevistas(centro, valor),
@@ -16321,8 +16375,8 @@ ERP.store = (function () {
 
   const NOMES_ANEXO_FAT = { af: 'Autorização de fornecimento (AF)', escala: 'Relatório de escala',
     medicao: 'Medição / relatório do órgão', oficio: 'Ofício / e-mail de autorização',
-    nf: 'Nota fiscal', outro: 'Outro documento' };
-  const nomeTipoAnexoFat = t => NOMES_ANEXO_FAT[t] || 'Outro documento';
+    nf: 'Nota fiscal', outro: 'Documento' };
+  const nomeTipoAnexoFat = t => NOMES_ANEXO_FAT[t] || 'Documento';
 
   /* ── importação de NFS-e por XML ────────────────────────
      O XML da nota de serviço que a empresa emitiu vira título no
