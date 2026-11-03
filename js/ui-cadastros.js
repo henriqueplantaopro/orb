@@ -1071,14 +1071,13 @@ ERP.cadastros = (function () {
             return ERP.app.aviso('Este armazém ainda tem ' + comSaldo.length +
               ' material(is) com saldo. Transfira ou baixe antes de inativar.', 'erro');
           }
-          Object.keys(dados).forEach(function (k) { a[k] = dados[k]; });
-          a.ativo = ativoNovo;
-        } else {
-          dados.id = S.proximoId('am');
-          dados.ativo = true;
-          D.armazens.push(dados);
-          S.logarCadastro('armazem', dados.id, 'cadastrou armazém', dados.nome || dados.descricao || dados.codigo || '');
+          dados.ativo = ativoNovo;
         }
+        /* PELO STORE: alterar direto na memória muda a tela e não
+           agenda gravação nenhuma — o mesmo defeito que escondia a
+           alteração do cliente. */
+        const r = S.salvarArmazem(a ? a.id : null, dados);
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
         ERP.app.aviso('Armazém salvo.', 'ok');
         render();
@@ -1292,14 +1291,19 @@ ERP.cadastros = (function () {
   function clientes() {
     return '<div class="ap-acoes"><button class="btn-linha" id="cad-novo-cliente">+ Novo cliente</button></div>' +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
-      '<th>Cliente</th><th>CNPJ</th><th>Projeto</th><th class="num">Prazo</th>' +
+      '<th>Cliente</th><th>CNPJ</th><th>Projetos</th><th class="num">Prazo</th>' +
       '<th>Retenções</th><th></th></tr></thead><tbody>' +
       D.clientes.map(function (c) {
-        const pj = D.centro(c.centro_padrao) || {};
-        const pz = S.prazoDe(c.centro_padrao, c.documento);
+        /* TODOS os projetos, não "o projeto padrão": um cliente tem
+           quantos tiver, e mostrar um só escondia os outros. */
+        const pjs = D.projetosDoCliente(c.id);
+        const pz = S.prazoDe(c.centro_padrao || (pjs[0] || {}).id, c.documento);
         return '<tr><td class="desc">' + U.esc(c.nome) + '</td>' +
           '<td class="mono">' + U.esc(c.documento) + '</td>' +
-          '<td>' + U.esc(pj.curto || '—') + (pj.unidade ? '<div class="sub">' + U.esc(pj.unidade) + '</div>' : '') + '</td>' +
+          '<td class="desc">' + (pjs.length
+            ? U.esc(pjs.slice(0, 2).map(function (p) { return p.curto || p.nome; }).join(', ')) +
+              (pjs.length > 2 ? '<div class="sub">e mais ' + (pjs.length - 2) + '</div>' : '')
+            : '<span class="sub">— nenhum —</span>') + '</td>' +
           '<td class="num">' + pz.dias + 'd<div class="sub">' + pz.origem + '</div></td>' +
           '<td>' + ((c.retencoes || []).length
             ? '<span class="badge b-pago">cadastrada</span><div class="sub">' +
@@ -1315,11 +1319,6 @@ ERP.cadastros = (function () {
     const c = id ? D.clientes.find(function (x) { return x.id === id; }) : null;
     const atuais = {};
     ((c && c.retencoes) || []).forEach(function (r) { atuais[r.tributo] = r.aliquota; });
-    const porUni = {};
-    D.centros.filter(function (x) { return x.ativo; }).forEach(function (x) {
-      const u = x.unidade || 'Estruturais';
-      (porUni[u] = porUni[u] || []).push(x);
-    });
     ERP.app.modal({
       titulo: c ? 'Cliente · ' + c.nome : 'Novo cliente',
       corpo:
@@ -1364,69 +1363,56 @@ ERP.cadastros = (function () {
           '<div class="ajuda" style="align-self:end">Vale para todas as notas deste cliente. Na esteira dá ' +
             'para trocar só numa competência, quando for exceção.</div>' +
         '</div>' +
-        '<label>Projeto</label><select id="cl-centro"><option value="">Nenhum</option>' +
-          Object.keys(porUni).sort().map(function (u) {
-            return '<optgroup label="' + U.esc(u) + '">' + porUni[u].map(function (x) {
-              return '<option value="' + x.id + '"' + (c && c.centro_padrao === x.id ? ' selected' : '') + '>' +
-                U.esc(x.curto || x.nome) + '</option>';
-            }).join('') + '</optgroup>';
-          }).join('') + '</select>' +
+        /* OS PROJETOS DESTE CLIENTE: mostrados, não escolhidos.
+
+           O vínculo nasce no PROJETO, onde o cliente é obrigatório
+           ("Escolha o cliente deste projeto"). Aqui havia um segundo
+           lugar para fazer a mesma ligação, de trás para frente — e
+           dois lugares para a mesma amarração é a receita para as
+           duas discordarem. Um cliente tem vários projetos; o campo
+           único ainda sugeria que tinha um só. */
+        '<label style="margin-top:10px">Projetos deste cliente</label>' +
+        (c
+          ? (function () {
+              const pjs = D.projetosDoCliente(c.id);
+              return pjs.length
+                ? '<div class="sub">' + pjs.map(function (p) {
+                    return U.esc(p.curto || p.nome); }).join(' · ') + '</div>'
+                : '<div class="sub erro">Nenhum projeto ligado a este cliente ainda.</div>';
+            })()
+          : '<div class="sub">Depois de cadastrar, ligue os projetos a ele em ' +
+            '<b>Cadastros › Projetos</b>.</div>') +
+        '<div class="ajuda">A ligação é feita no cadastro do projeto, onde o cliente é obrigatório — ' +
+          'um cliente pode ter quantos projetos tiver.</div>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Retenções na fonte (% sobre o bruto)</h2>' +
         '<div class="row3">' + TRIB.map(function (t) {
           return '<div><label>' + t + '</label><input id="cl-' + t + '" class="num" inputmode="decimal" value="' +
             U.num(atuais[t] || 0) + '"></div>';
         }).join('') + '</div>',
       acoes: [{ txt: c ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
-        const nome = U.val('cl-nome'), doc = U.val('cl-doc').replace(/\D/g, '');
-        if (!nome) return ERP.app.aviso('Informe a razão social.', 'erro');
-        if (doc.length !== 14 && doc.length !== 11) return ERP.app.aviso('CNPJ ou CPF inválido.', 'erro');
-        const outro = D.clientes.find(function (x) {
-          return x !== c && String(x.documento).replace(/\D/g, '') === doc; });
-        if (outro) return ERP.app.aviso('Já existe cliente com este CNPJ: ' + outro.nome, 'erro');
         const retencoes = TRIB.map(function (t) {
           return { tributo: t, aliquota: U.parseValor(U.val('cl-' + t)) };
         }).filter(function (r) { return r.aliquota > 0; });
-        const dados = {
-          nome: nome, documento: doc, centro_padrao: U.val('cl-centro') || null,
+        /* PELO STORE, não direto na memória. Era aqui que a alteração
+           de um cliente existente se perdia: o formulário gravava no
+           objeto e nunca chamava o store, e é a chamada ao store que
+           agenda a gravação no banco. */
+        const r = S.salvarCliente(c ? c.id : null, {
+          nome: U.val('cl-nome'), documento: U.val('cl-doc').replace(/\D/g, ''),
           endereco: U.val('cl-end'), numero: U.val('cl-num'), complemento: U.val('cl-compl'),
           bairro: U.val('cl-bairro'), cidade: U.val('cl-cidade'), uf: U.val('cl-uf').toUpperCase(),
           cep: U.val('cl-cep').replace(/\D/g, ''), codigo_ibge: U.val('cl-ibge').replace(/\D/g, ''),
           email: U.val('cl-email'),
-          /* marcar o projeto aqui grava o vínculo no projeto; os outros
-             projetos do mesmo cliente continuam como estão */
           prazo_dias: parseInt(U.val('cl-prazo'), 10) || null, retencoes: retencoes,
           /* Vazio volta a seguir o cadastro do projeto — e precisa
              gravar o vazio, não ignorá-lo, senão desfazer a escolha
              seria impossível. */
           empresa: U.val('cl-empresa') || null
-        };
-        if (c) Object.keys(dados).forEach(function (k) { c[k] = dados[k]; });
-        else {
-          dados.id = S.proximoId('cl');
-          D.clientes.push(dados);
-          S.logarCadastro('cliente', dados.id, 'cadastrou cliente', dados.nome || dados.descricao || dados.codigo || '');
-        }
-        /* O vínculo mora NO PROJETO. Gravar só o "projeto padrão" no
-           cliente não ligava nada: o projeto continuava sem dono, e
-           trocar o padrão parecia desligar o anterior. Aqui o projeto
-           escolhido passa a apontar para este cliente — e, se ele já
-           era de outro, a troca é confirmada em vez de silenciosa. */
-        const idCli = c ? c.id : dados.id;
-        const pjEscolhido = U.val('cl-centro');
-        if (pjEscolhido) {
-          const pj = D.centro(pjEscolhido);
-          const donoAtual = D.clienteDoCentro(pjEscolhido);
-          if (pj && donoAtual && donoAtual.id !== idCli) {
-            if (!confirm('O projeto ' + (pj.curto || pj.nome) + ' está ligado a ' + donoAtual.nome +
-                '.\n\nPassar para ' + (dados.nome || '') + '?')) return;
-          }
-          if (pj) pj.cliente = idCli;
-        }
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal();
-        ERP.app.aviso(pjEscolhido
-          ? 'Cliente salvo e ligado ao projeto ' + ((D.centro(pjEscolhido) || {}).curto || '') + '.'
-          : 'Cliente salvo.', 'ok');
-        if (aoFechar) aoFechar(c ? c.id : dados.id);
+        ERP.app.aviso('Cliente salvo.', 'ok');
+        if (aoFechar) aoFechar(r.cliente.id);
         else render();
       } }]
     });

@@ -2034,7 +2034,11 @@ ERP.store = (function () {
     terco_constitucional_ferias: [0, 1], percentual_vt_max_desconto: [0, 20],
     salario_minimo: [1, 100000], multa_fgts_pct: [0, 100],
     divisor_hora_mensal: [100, 300], teto_salario_familia: [0, 100000],
-    valor_salario_familia: [0, 10000], aliquota_multa_fgts: [0, 100]
+    valor_salario_familia: [0, 10000], aliquota_multa_fgts: [0, 100],
+    /* 20% e o minimo da CLT art. 73; convencao coletiva pode dar
+       mais. Abaixo de 20 o sistema recusa: seria pagar menos que a
+       lei manda, e sem dizer que esta fazendo isso. */
+    adicional_noturno_pct: [20, 100]
   };
 
   function salvarTabelasDP(nova) {
@@ -2052,7 +2056,14 @@ ERP.store = (function () {
     if (nova.irrf && !(nova.irrf.faixas && nova.irrf.faixas.length)) {
       return { erro: 'Para alterar o IRRF, envie as faixas junto — sem elas o cálculo para.' };
     }
+    /* Parâmetros de LIGA/DESLIGA não têm faixa numérica — e sem esta
+       lista eles caíam em "parâmetro desconhecido", que é o jeito
+       mais silencioso de uma opção nova nunca chegar ao banco. */
+    const LIGA_DESLIGA_DP = ['hora_noturna_reduzida', 'exigir_aprovacao_pagamento'];
     const foraDaFaixa = Object.keys((nova.parametros || {})).map(function (k) {
+      if (LIGA_DESLIGA_DP.indexOf(k) > -1) {
+        return typeof nova.parametros[k] === 'boolean' ? null : k + ': informe ligado ou desligado';
+      }
       const faixa = FAIXA_PARAM_DP[k];
       if (!faixa) return 'parâmetro desconhecido: ' + k;
       const v = Number(nova.parametros[k]);
@@ -5253,8 +5264,29 @@ ERP.store = (function () {
       variaveis += v;
     }
     if (extras.horas_noturnas > 0) {
-      const v = Math.round(valorHora * 0.2 * extras.horas_noturnas * 100) / 100;
-      proventos.push({ codigo: '103', descricao: 'Adicional noturno (' + extras.horas_noturnas + 'h)', valor: v, natureza: '4.01' });
+      /* HORA NOTURNA REDUZIDA — CLT art. 73 §1º.
+
+         A hora entre 22h e 5h vale 52min30s, não 60: sete horas de
+         relógio valem OITO horas noturnas. O cálculo pagava as horas
+         de relógio direto, o que tira ~14% do adicional de todo
+         plantonista de madrugada — era uma simplificação conhecida,
+         anotada no código e nunca fechada.
+
+         O que o DP informa continua sendo o que o ponto mostra: as
+         horas de relógio. A conversão é do sistema, e aparece
+         escrita no holerite para quem for conferir.
+
+         Desligável em Parâmetros, para o caso de o controle de
+         ponto já entregar as horas convertidas — aí converter de
+         novo pagaria a mais. */
+      const fator = D.parametrosDP.hora_noturna_reduzida ? (60 / 52.5) : 1;
+      const horasNoturnas = Math.round(extras.horas_noturnas * fator * 100) / 100;
+      const pct = D.parametrosDP.adicional_noturno_pct || 20;
+      const v = Math.round(valorHora * (pct / 100) * horasNoturnas * 100) / 100;
+      proventos.push({ codigo: '103',
+        descricao: 'Adicional noturno ' + U.num(pct) + '% (' + U.num(extras.horas_noturnas) + 'h' +
+          (fator > 1 ? ' de relógio = ' + U.num(horasNoturnas) + 'h noturnas, art. 73 §1º' : '') + ')',
+        valor: v, natureza: '4.01' });
       variaveis += v;
     }
     if (variaveis > 0.004) {
@@ -5998,7 +6030,7 @@ ERP.store = (function () {
       const fora = funcionariosForaDaFolha(competencia);
       if (!fora.length) return { erro: 'Ninguém ficou de fora da folha de ' + U.fComp(competencia) + '.' };
       // só entra quem já pode receber — quem continua pendente de aprovação ficaria de fora de novo
-      ativos = fora.filter(function (f) { return f.pagamento_aprovado !== false; });
+      ativos = fora.filter(function (f) { return pagamentoLiberado(f); });
       if (!ativos.length) {
         return { erro: 'Quem ficou de fora ainda está com dados de pagamento pendentes de aprovação: ' +
           fora.map(function (f) { return f.nome; }).join(', ') + '. Aprove antes de fechar a complementar.' };
@@ -6092,7 +6124,7 @@ ERP.store = (function () {
           'pra gerar o fornecedor-espelho, ou recadastre. Ficou de fora desta folha (salário e encargos).');
         return;
       }
-      if (h.liquido > 0.004 && f.pagamento_aprovado === false) {
+      if (h.liquido > 0.004 && !pagamentoLiberado(f)) {
         erros.push(f.nome + ': dados de pagamento ainda não aprovados por quem tem alçada — ficou de fora ' +
           'desta folha (salário e encargos). Depois de aprovar, feche a folha complementar.');
         return;
@@ -6568,7 +6600,7 @@ ERP.store = (function () {
         erros.push(f.nome + ': sem credor cadastrado.');
         return;
       }
-      if (f.pagamento_aprovado === false) {
+      if (!pagamentoLiberado(f)) {
         erros.push(f.nome + ': dados de pagamento ainda não aprovados por quem tem alçada.');
         return;
       }
@@ -7021,7 +7053,7 @@ ERP.store = (function () {
        mas o pagamento fica bloqueado até alguém com alçada confirmar
        (ver aprovarDadosPagamento) — a folha, o 13º e a rescisão
        recusam pagar enquanto isso não acontece. */
-    const pagamentoAprovado = pode('aprovar');
+    const pagamentoAprovado = pode('aprovar') || !D.parametrosDP.exigir_aprovacao_pagamento;
     const f = {
       id: id, matricula: String(ultimaMatricula + 1).padStart(4, '0'), nome: dados.nome,
       cpf: dados.cpf, pis: dados.pis || '', nascimento: dados.nascimento || '',
@@ -7066,6 +7098,19 @@ ERP.store = (function () {
   /* Libera o pagamento de um funcionário admitido por quem não tem
      alçada — só quem tem `aprovar` pode fazer isso, e só depois de
      conferir os dados de pagamento (PIX/banco) de verdade. */
+  /* QUEM PODE RECEBER, numa pergunta só.
+
+     A trava dos dados de pagamento virou opcional
+     (`parametrosDP.exigir_aprovacao_pagamento`): desligada, todo
+     funcionário ativo entra na folha. Ela era perguntada em quatro
+     lugares — folha, folha complementar, 13º e rescisão — e quatro
+     cópias da mesma pergunta é como as quatro respostas se
+     separam. */
+  function pagamentoLiberado(f) {
+    if (!D.parametrosDP.exigir_aprovacao_pagamento) return true;
+    return (f || {}).pagamento_aprovado !== false;
+  }
+
   function aprovarDadosPagamento(funcionarioId) {
     if (!pode('aprovar')) return { erro: 'Seu perfil não aprova dados de pagamento.' };
     const f = D.funcionario(funcionarioId);
@@ -8676,7 +8721,7 @@ ERP.store = (function () {
        verbas) ainda pode ter a rescisão lançada aqui — sem isso, quem
        usasse aquele botão ficava sem jeito nenhum de pagar o que devia
        (a rescisão recusava com "já está desligado", travando de vez). */
-    if (f.pagamento_aprovado === false) {
+    if (!pagamentoLiberado(f)) {
       return { erro: 'Dados de pagamento deste funcionário ainda não foram aprovados por quem tem alçada — ' +
         'peça pra diretoria ou sócio aprovar em Funcionários antes de lançar a rescisão.' };
     }
@@ -16331,6 +16376,85 @@ ERP.store = (function () {
       return !(doc.arquivo && doc.arquivo.path); }) };
   }
 
+  /* ── cadastro alterado tem de CHEGAR AO BANCO ────────────
+     A gravação é agendada por um envoltório que observa as funções
+     DO STORE: toda vez que uma delas roda, a sincronização entra na
+     fila. Quem altera `D.clientes` ou `D.armazens` direto da tela,
+     sem passar por aqui, muda a memória e não agenda nada — e o
+     cadastro fica parecendo salvo até a página ser recarregada.
+
+     Era o caso do cliente: o formulário gravava o objeto na memória
+     e só chamava o store quando o cliente era NOVO. Alterar um
+     cliente existente não agendava gravação nenhuma. A alteração
+     sobrevivia por acaso, quando alguma outra ação da pessoa — mexer
+     no projeto, por exemplo — agendava a sincronização e levava a do
+     cliente de carona. Daí a receita que ele descobriu sozinho:
+     salvar o endereço, depois mexer no projeto, e aí sim "pegava".
+
+     O conserto não é lembrar de chamar o log: é a alteração passar
+     pelo store, como passa a do projeto, a do fornecedor e a do
+     material. */
+  function salvarCliente(id, dados) {
+    if (!podeMover('cadastros')) {
+      return { erro: 'Seu perfil vê os cadastros, mas não altera.' };
+    }
+    dados = dados || {};
+    const nome = String(dados.nome || '').trim();
+    if (!nome) return { erro: 'Informe a razão social.' };
+    const doc = String(dados.documento || '').replace(/\D/g, '');
+    if (doc.length !== 14 && doc.length !== 11) return { erro: 'CNPJ ou CPF inválido.' };
+    const atual = id ? D.clientes.find(function (x) { return x.id === id; }) : null;
+    if (id && !atual) return { erro: 'Cliente não encontrado.' };
+    const outro = D.clientes.find(function (x) {
+      return x !== atual && String(x.documento || '').replace(/\D/g, '') === doc;
+    });
+    if (outro) return { erro: 'Já existe cliente com este CNPJ: ' + outro.nome };
+
+    const alvo = atual || { id: novoId('cl') };
+    const antes = atual ? atual.nome : '';
+    Object.keys(dados).forEach(function (k) { alvo[k] = dados[k]; });
+    alvo.nome = nome;
+    alvo.documento = doc;
+    if (!atual) D.clientes.push(alvo);
+
+    /* O VÍNCULO PASSA A MORAR NUM LUGAR SÓ.
+
+       Havia dois: `cliente` no projeto e `centro_padrao` no cliente.
+       O segundo é uma CHAVE ESTRANGEIRA de verdade no banco
+       (`references centros(id)`), e aponta para um único projeto —
+       enquanto um cliente tem vários. Um `centro_padrao` apontando
+       para projeto que o banco não conhece faz o Postgres recusar a
+       linha inteira do cliente: a tela mostra o nome novo e o
+       cadastro não vai, sem mensagem nenhuma.
+
+       Ao salvar, o que estiver em `centro_padrao` vira o vínculo no
+       projeto — que é onde ele deveria estar desde sempre — e o
+       campo é zerado. O vínculo não se perde; muda de lugar. */
+    if (alvo.centro_padrao) {
+      const pj = D.centro(alvo.centro_padrao);
+      if (pj && !pj.cliente) pj.cliente = alvo.id;
+      alvo.centro_padrao = null;
+    }
+    logar('cliente', alvo.id, atual ? 'editou cliente' : 'cadastrou cliente',
+      nome + (atual && antes && antes !== nome ? ' (antes: ' + antes + ')' : ''));
+    return { ok: true, cliente: alvo, criado: !atual };
+  }
+
+  function salvarArmazem(id, dados) {
+    if (!podeMover('cadastros') && !podeMover('estoque')) {
+      return { erro: 'Seu perfil não altera armazéns.' };
+    }
+    dados = dados || {};
+    if (!String(dados.nome || '').trim()) return { erro: 'Informe o nome do armazém.' };
+    const atual = id ? D.armazens.find(function (x) { return x.id === id; }) : null;
+    if (id && !atual) return { erro: 'Armazém não encontrado.' };
+    const alvo = atual || { id: novoId('am'), ativo: true };
+    Object.keys(dados).forEach(function (k) { alvo[k] = dados[k]; });
+    if (!atual) D.armazens.push(alvo);
+    logar('armazem', alvo.id, atual ? 'editou armazém' : 'cadastrou armazém', alvo.nome);
+    return { ok: true, armazem: alvo, criado: !atual };
+  }
+
   /* ── a folha de emissão manual ───────────────────────────
      Nem toda nota sai daqui: a do Ceará é emitida no portal da
      prefeitura de lá, à mão, por alguém que precisa dos dados na
@@ -19698,7 +19822,7 @@ ERP.store = (function () {
     dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
-    dadosParaEmissaoManual,
+    dadosParaEmissaoManual, salvarCliente, salvarArmazem,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
@@ -19728,7 +19852,7 @@ ERP.store = (function () {
     calcularINSS, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
     criarFuncionario, editarFuncionario, desligarFuncionario, registrarReajusteSalarial, historicoSalarial, criarCargo,
-    aprovarDadosPagamento,
+    aprovarDadosPagamento, pagamentoLiberado,
     funcionariosForaDaFolha, calcularFerias, lancarFerias, cancelarFerias, situacaoFerias, calcularRescisao, lancarRescisao, cancelarRescisao, TIPOS_RESCISAO, alertasDP,
     funcionariosParaRescisao,
     custoFuncionarios, provisaoMensalPessoal, calcular13, decimos, fechar13, cancelar13,

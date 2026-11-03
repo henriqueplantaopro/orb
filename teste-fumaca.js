@@ -212,6 +212,11 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
 
 // ── aprovação de dados de pagamento na admissão ──
 (function () {
+  /* A trava e OPCIONAL desde a v146 e vem desligada. Este bloco
+     testa a trava, entao liga ela: e o unico estado em que a
+     pergunta "nasce aprovado?" tem sentido. */
+  const travaAntes = D.parametrosDP.exigir_aprovacao_pagamento;
+  D.parametrosDP.exigir_aprovacao_pagamento = true;
   const fantasma = S.criarFuncionario({
     nome: 'Fantasma', cpf: '111.444.777-35', salario_base: 3000, cargo: 'cg01',
     admissao: '2026-09-01', pix: 'meupix@dp.com'
@@ -231,6 +236,7 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
   S.setUsuario('u8');
   verificar('aprovarDadosPagamento funciona com perfil de alçada', aprovacao.ok, JSON.stringify(aprovacao));
   verificar('funcionário fica com pagamento_aprovado true depois', fantasma.funcionario.pagamento_aprovado === true, fantasma.funcionario.pagamento_aprovado);
+  D.parametrosDP.exigir_aprovacao_pagamento = travaAntes;
 })();
 
 // ── efetivarPrevisto preserva o tipo_titulo original ──
@@ -1282,6 +1288,12 @@ function cpfValido(seed) {
 // ── v74: folha complementar e aviso de quem ficou fora de folha fechada ──
 (function () {
   S.setUsuario('u3');
+  /* A TRAVA DOS DADOS DE PAGAMENTO virou opcional na v146 e vem
+     DESLIGADA (o DP da casa tem autonomia). Este bloco testa a
+     trava em si, entao liga ela — testar o mecanismo com ele
+     desligado nao mediria nada. */
+  const travaAntes74 = D.parametrosDP.exigir_aprovacao_pagamento;
+  D.parametrosDP.exigir_aprovacao_pagamento = true;
   const f = S.criarFuncionario({ nome: 'QA Complementar', cpf: cpfValido(740000201), salario_base: 3000, cargo: 'cg01', admissao: '2020-01-01' });
   D.funcionario(f.funcionario.id).pagamento_aprovado = false;   // pendente de aprovação
   const fl = S.fecharFolha('2062-03', {});
@@ -1299,6 +1311,7 @@ function cpfValido(seed) {
   verificar('depois da complementar só sobram de fora os ainda pendentes de aprovação', S.funcionariosForaDaFolha('2062-03').every(x => x.pagamento_aprovado === false), S.funcionariosForaDaFolha('2062-03').map(x => x.nome).join(','));
   const de_novo = S.fecharFolha('2062-03', {}, { complementar: true });
   verificar('segunda complementar só com pendentes é recusada (não fecha folha vazia)', !!de_novo.erro && /pendentes de aprovação|Ninguém/.test(de_novo.erro), de_novo.erro);
+  D.parametrosDP.exigir_aprovacao_pagamento = travaAntes74;
   S.setUsuario('u8');
 })();
 
@@ -1373,6 +1386,8 @@ function cpfValido(seed) {
 // ── v77: folha complementar não duplica encargos (relatório de QA da v76) ──
 (function () {
   S.setUsuario('u3');
+  const travaAntes77 = D.parametrosDP.exigir_aprovacao_pagamento;
+  D.parametrosDP.exigir_aprovacao_pagamento = true;
   const comp = '2065-10';
   const x = S.criarFuncionario({ nome: 'QA Teste Exp', cpf: cpfValido(770000001), salario_base: 3000, cargo: 'cg01', admissao: '2020-01-01' });
   // referência: folha com todo mundo junto
@@ -1394,6 +1409,7 @@ function cpfValido(seed) {
   verificar('principal + complementar: FGTS igual ao de uma folha única (sem dobra)', Math.abs(soma('total_fgts') - refTot.fgts) < 0.02, JSON.stringify([soma('total_fgts'), refTot.fgts]));
   verificar('principal + complementar: INSS patronal igual ao de uma folha única', Math.abs(soma('total_inss_patronal') - refTot.pat) < 0.02, JSON.stringify([soma('total_inss_patronal'), refTot.pat]));
   verificar('principal + complementar: INSS+IRRF retidos iguais aos de uma folha única', Math.abs(soma('total_inss') + soma('total_irrf') - refTot.ret) < 0.02, '');
+  D.parametrosDP.exigir_aprovacao_pagamento = travaAntes77;
   S.setUsuario('u8');
 })();
 
@@ -11342,6 +11358,136 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /id="ax-arq" multiple/.test(fat) && /id="es-conf-arq" multiple/.test(fat), '');
   verificar('v144 — e nao obriga a classificar',
     /Classificar \(opcional\)/.test(fat) && /\['outro', 'Sem classificação'\]/.test(fat), '');
+  S.setUsuario('u8');
+})();
+
+// ── v145: cadastro de cliente alterado pelo store ──
+(function () {
+  const fsE = require('fs');
+  const cad = fsE.readFileSync(__dirname + '/js/ui-cadastros.js', 'utf8');
+
+  S.setUsuario('u2');
+  const r = S.salvarCliente(null, { nome: 'QA Cliente', documento: '11222333000181',
+    endereco: 'RUA A', cidade: 'RIO DE JANEIRO', uf: 'RJ' });
+  verificar('v145 — o store cadastra cliente', !r.erro && !!r.cliente, r.erro || '');
+  const id = (r.cliente || {}).id;
+
+  /* O CASO DELE: trocar o nome junto com o resto. */
+  const r2 = S.salvarCliente(id, { nome: 'Instituto se liga - QA', documento: '11222333000181',
+    endereco: 'RUA DAS FLORES', numero: '100' });
+  verificar('v145 — e altera o nome junto com o endereco, num gesto so',
+    !r2.erro && r2.cliente.nome === 'Instituto se liga - QA' &&
+    r2.cliente.endereco === 'RUA DAS FLORES', r2.erro || r2.cliente.nome);
+  verificar('v145 — a alteracao fica na trilha, com o nome anterior',
+    (S.st.eventos || []).some(e => e.entidade === 'cliente' && e.entidade_id === id &&
+      /editou cliente/.test(e.acao) && /antes: QA Cliente/.test(e.detalhe || '')), '');
+
+  /* AS TRAVAS. */
+  verificar('v145 — razao social em branco e recusada',
+    !!S.salvarCliente(id, { nome: ' ', documento: '11222333000181' }).erro, '');
+  verificar('v145 — CNPJ invalido e recusado',
+    !!S.salvarCliente(id, { nome: 'x', documento: '123' }).erro, '');
+  verificar('v145 — CNPJ de outro cliente e recusado',
+    !!S.salvarCliente(id, { nome: 'x', documento: D.clientes[0].documento }).erro, '');
+  S.setUsuario('u4');
+  verificar('v145 — quem so consulta nao altera cadastro',
+    !!S.salvarCliente(id, { nome: 'x', documento: '11222333000181' }).erro, '');
+  S.setUsuario('u2');
+
+  /* O VINCULO MORA NUM LUGAR SO: ao salvar, `centro_padrao` vira o
+     vinculo no projeto. No banco ele e chave estrangeira de
+     verdade, e apontando para projeto que o banco nao conhece
+     derruba a linha inteira do cliente, sem mensagem. */
+  const pjId = 'pj01';
+  const donoAntes = D.centro(pjId).cliente;
+  D.centro(pjId).cliente = null;
+  S.salvarCliente(id, { nome: 'Instituto se liga - QA', documento: '11222333000181',
+    centro_padrao: pjId });
+  const cli = D.clientes.find(x => x.id === id);
+  verificar('v145 — o vinculo antigo do cliente passa para o projeto',
+    !cli.centro_padrao && D.centro(pjId).cliente === id,
+    'centro_padrao=' + cli.centro_padrao + ' · projeto.cliente=' + D.centro(pjId).cliente);
+  verificar('v145 — e o projeto aparece na lista do cliente',
+    D.projetosDoCliente(id).some(p => p.id === pjId), '');
+  D.centro(pjId).cliente = donoAntes;
+
+  /* ARMAZEM tinha o mesmo descuido. */
+  const a = S.salvarArmazem(null, { nome: 'QA Almox', codigo: 'QA-1', tipo: 'almoxarifado' });
+  const a2 = S.salvarArmazem(a.armazem.id, { nome: 'QA Almox 2' });
+  verificar('v145 — o armazem tambem e salvo pelo store',
+    !a2.erro && a2.armazem.nome === 'QA Almox 2' &&
+    (S.st.eventos || []).some(e => e.entidade === 'armazem' && /editou/.test(e.acao)),
+    a2.erro || '');
+
+  /* A TELA: sem campo de projeto, com a lista dos projetos. */
+  verificar('v145 — o cadastro do cliente passa pelo store',
+    /S\.salvarCliente\(c \? c\.id : null/.test(cad) &&
+    /S\.salvarArmazem\(a \? a\.id : null/.test(cad), '');
+  verificar('v145 — e nao pede mais projeto: mostra os que estao ligados',
+    !/id="cl-centro"/.test(cad) && /Projetos deste cliente/.test(cad), '');
+  S.setUsuario('u8');
+})();
+
+// ── v146: a folha fecha com todo mundo, e o adicional noturno ──
+(function () {
+  const fsE = require('fs');
+  const dpui = fsE.readFileSync(__dirname + '/js/ui-dp.js', 'utf8');
+  S.setUsuario('u8');   // Carol do DP: sem alcada de aprovacao
+
+  /* A TRAVA DESLIGADA: quem o DP admite ja entra na folha. */
+  verificar('v146 — a trava da aprovacao vem desligada',
+    D.parametrosDP.exigir_aprovacao_pagamento === false, '');
+  const f = S.criarFuncionario({ nome: 'QA Noturno', cpf: cpfValido(146000001),
+    salario_base: 3000, cargo: 'cg01', admissao: '2020-01-01' });
+  verificar('v146 — e o admitido pelo DP ja nasce liberado para a folha',
+    !f.erro && f.funcionario.pagamento_aprovado === true, f.erro || '');
+
+  /* OS QUE JA ESTAVAM MARCADOS no banco tambem passam: a correcao
+     nao pode valer so para quem for contratado daqui pra frente. */
+  D.funcionario(f.funcionario.id).pagamento_aprovado = false;
+  verificar('v146 — e quem ja estava marcado como pendente tambem entra',
+    S.pagamentoLiberado(D.funcionario(f.funcionario.id)) === true, '');
+
+  /* RELIGADA, ela volta a valer — nao foi apagada, foi posta numa chave. */
+  D.parametrosDP.exigir_aprovacao_pagamento = true;
+  verificar('v146 — religada, a trava volta a barrar',
+    S.pagamentoLiberado(D.funcionario(f.funcionario.id)) === false, '');
+  D.parametrosDP.exigir_aprovacao_pagamento = false;
+  D.funcionario(f.funcionario.id).pagamento_aprovado = true;
+
+  /* ADICIONAL NOTURNO com a hora reduzida do art. 73 §1º. */
+  const comp = '2082-03';
+  const fn = D.funcionario(f.funcionario.id);
+  const h = S.calcularHolerite(fn.id, comp, S.extrasComDiasPadrao(fn, comp, { horas_noturnas: 7 }));
+  const linha = (h.proventos || []).find(p => p.codigo === '103');
+  const valorHora = Math.round(3000 / 220 * 100) / 100;
+  verificar('v146 — 7h de relogio viram 8h noturnas (art. 73 §1º)',
+    !!linha && Math.abs(linha.valor - Math.round(valorHora * 0.2 * 8 * 100) / 100) < 0.02,
+    linha ? String(linha.valor) : '(sem linha)');
+  verificar('v146 — e o holerite escreve a conversao',
+    !!linha && /de rel.gio = 8,00h noturnas/.test(linha.descricao) && /art\. 73/.test(linha.descricao),
+    linha ? linha.descricao : '');
+  D.parametrosDP.hora_noturna_reduzida = false;
+  const h2 = S.calcularHolerite(fn.id, comp, S.extrasComDiasPadrao(fn, comp, { horas_noturnas: 7 }));
+  const l2 = (h2.proventos || []).find(p => p.codigo === '103');
+  verificar('v146 — desligada a reducao, volta a hora de relogio',
+    !!l2 && Math.abs(l2.valor - Math.round(valorHora * 0.2 * 7 * 100) / 100) < 0.02,
+    l2 ? String(l2.valor) : '');
+  D.parametrosDP.hora_noturna_reduzida = true;
+
+  /* O percentual e parametro, com piso legal. */
+  verificar('v146 — percentual abaixo de 20% e recusado',
+    !!S.salvarTabelasDP({ parametros: { adicional_noturno_pct: 10 } }).erro, '');
+  verificar('v146 — e o liga-desliga e aceito como parametro',
+    !S.salvarTabelasDP({ parametros: { hora_noturna_reduzida: true,
+      exigir_aprovacao_pagamento: false } }).erro, '');
+
+  /* A TELA: a coluna na grade, e os parametros. */
+  verificar('v146 — as horas noturnas ficam na GRADE da folha, por linha',
+    /data-c="horas_noturnas"/.test(dpui) && !/id="dp-ma-noturno"/.test(dpui), '');
+  verificar('v146 — e os tres parametros ficam na tela de tabelas',
+    /id="dp-not-pct"/.test(dpui) && /id="dp-not-reduzida"/.test(dpui) &&
+    /id="dp-exigir-aprov"/.test(dpui), '');
   S.setUsuario('u8');
 })();
 
