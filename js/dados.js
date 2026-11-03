@@ -12,7 +12,7 @@ ERP.dados = (function () {
   const empresas = [
     { id: 'emp1', apelido: 'HJM Matriz', nome: 'HJM DOM PEDRO GESTAO E SERVICOS EM SAUDE LTDA',
       cnpj: '34.958.609/0001-90', municipio: 'BARUERI', uf: 'SP', codigo_ibge: '3505708',
-      inscricao_municipal: '5BX8969', matriz: true, ativo: true },
+      inscricao_municipal: '4BX8963', matriz: true, ativo: true },
     { id: 'emp2', apelido: 'HJM Filial CE', nome: 'HJM DOM PEDRO GESTAO E SERVICOS EM SAUDE LTDA',
       cnpj: '34.958.609/0003-51', municipio: 'FORTALEZA', uf: 'CE', codigo_ibge: '2304400',
       inscricao_municipal: '', matriz: false, ativo: true },
@@ -25,8 +25,27 @@ ERP.dados = (function () {
   const empresa = {
     nome: 'HJM DOM PEDRO GESTAO E SERVICOS EM SAUDE LTDA', cnpj: '34.958.609/0001-90',
     /* Dados usados no arquivo de RPS da prefeitura de Barueri (layout
-       PMB004 / v4.4). Inscrição municipal sem ponto e sem traço. */
-    inscricao_municipal: '5BX8969', municipio: 'BARUERI', uf: 'SP', codigo_ibge: '3505708',
+       PMB004 / v4.4). Inscrição municipal sem ponto e sem traço.
+
+       Era 5BX8969 e a prefeitura mudou. Enviando a antiga, o lote
+       inteiro volta com o erro 101 — "inscrição do prestador não
+       encontrada" — no cabeçalho, com os RPS todos corretos
+       embaixo. Este valor é só o de partida: quem manda é o
+       cadastro de Cadastros › Empresas, que é o que o gerador lê. */
+    /* A INSCRIÇÃO MUNICIPAL E O IBGE NÃO MORAM MAIS AQUI.
+
+       Moravam, e também na lista `empresas` logo acima — e o
+       gerador de RPS lia esta cópia. Corrigir a inscrição na tela
+       de Cadastros não mudava o arquivo, e a prefeitura devolvia o
+       lote inteiro com "inscrição do prestador não encontrada".
+
+       São dados de CADA empresa do grupo (a matriz, a filial do
+       Ceará e a Novaped têm inscrições diferentes); este objeto é
+       da matriz só. Ficam na lista `empresas`, que é o que a tela
+       edita e o que o gerador passou a ler. O que sobra aqui é o
+       endereço e os parâmetros fiscais do serviço, que ainda não
+       têm tela própria. */
+    municipio: 'BARUERI', uf: 'SP',
     endereco: 'ALAMEDA ITAPECURU', numero: '645', complemento: 'SALA 1221 E 1223',
     bairro: 'ALPHAVILLE CENTRO INDUSTR E EMPR', cep: '06454080',
     email: 'DIR.FINANCEIRA@DOMPEDROSAUDE.COM.BR', fone: '(71) 3936-4641',

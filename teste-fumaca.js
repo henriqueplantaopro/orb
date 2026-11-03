@@ -2282,12 +2282,29 @@ function liberarParaFaturar(centro, competencia) {
   verificar('valor mudou depois da autorização: liberação avisa', !!div.erro && div.divergencia, '');
   verificar('e libera quando confirmado assim mesmo', S.liberarFaturamento('pj38', '2074-03', { forcar: true }).ok, '');
 
-  // a esteira ordena do mais atrasado para o mais adiantado, faturado no fim
+  /* v141: a esteira ordena por NOME DO PROJETO, sempre. Ordenava por
+     etapa (faturado no fim), e com isso o projeto mudava de lugar de
+     um dia para o outro — quem procura um cliente pelo nome precisa
+     achá-lo onde estava ontem. A etapa continua na coluna, na
+     contagem do topo e no filtro. */
   const esteira = S.esteiraFaturamento({ competencia: '2074-03' });
   verificar('esteira lista as competências com etapa e dias', esteira.length >= 2, esteira.length);
-  const idx = esteira.map(l => l.etapa);
-  verificar('faturado fica no fim da lista',
-    idx.indexOf('faturado') === -1 || idx.indexOf('faturado') === idx.length - 1, JSON.stringify(idx));
+  const nomesEst = esteira.map(l => String(l.projeto.curto || l.projeto.nome || ''));
+  verificar('a esteira vem em ordem alfabética de projeto',
+    nomesEst.every((n, i) => i === 0 || nomesEst[i - 1].localeCompare(n, 'pt-BR') <= 0),
+    JSON.stringify(nomesEst.slice(0, 6)));
+  /* A TRAVA QUE MAIS IMPORTA AQUI: o lugar de uma linha é o lugar
+     do NOME dela, não o da etapa. Medido no projeto mais adiantado
+     da lista: pela ordem antiga ele iria para o fim; pela nova ele
+     fica onde o alfabeto o põe. */
+  const maisAdiantado = esteira.slice().sort((a, b) => b.indice - a.indice)[0];
+  const ondeEsta = esteira.indexOf(maisAdiantado);
+  const ondeOAlfabetoPoe = nomesEst.slice().sort((a, b) => a.localeCompare(b, 'pt-BR'))
+    .indexOf(String(maisAdiantado.projeto.curto || maisAdiantado.projeto.nome || ''));
+  verificar('e a etapa não muda ninguém de lugar',
+    ondeEsta === ondeOAlfabetoPoe,
+    (maisAdiantado.projeto.curto || '') + ' (' + maisAdiantado.etapa + ') na posição ' +
+      ondeEsta + ', alfabeto diz ' + ondeOAlfabetoPoe);
   const pend = S.esteiraFaturamento({ pendentes: true, competencia: '2074-03' });
   verificar('filtro de pendentes tira os faturados', pend.every(l => l.etapa !== 'faturado'), '');
 
@@ -2606,9 +2623,21 @@ function liberarParaFaturar(centro, competencia) {
   verificar('liberado entra na lista do lote', itens.length === 1, itens.length);
 
   verificar('cliente sem endereço é barrado antes de gerar',
-    R.pendencias({ valor: 100, discriminacao: 'x', tomador_nome: 'X', tomador_documento: '123' }, D.empresa).length > 0, '');
+    R.pendencias({ valor: 100, discriminacao: 'x', tomador_nome: 'X', tomador_documento: '123' },
+      S.dadosDaEmpresaParaRps('emp1')).length > 0, '');
+  /* v141: a inscrição municipal do arquivo vem do CADASTRO de
+     empresas, não de uma cópia escrita no código — era essa
+     duplicação que fazia a prefeitura recusar o lote com o erro
+     101 depois de a inscrição ter sido corrigida na tela. */
+  verificar('a empresa do RPS é montada a partir do cadastro',
+    S.dadosDaEmpresaParaRps('emp1').inscricao_municipal ===
+      (D.empresaPor('emp1') || {}).inscricao_municipal,
+    S.dadosDaEmpresaParaRps('emp1').inscricao_municipal);
+  verificar('e empresa sem inscrição cadastrada não herda a da matriz',
+    S.dadosDaEmpresaParaRps('emp2').inscricao_municipal === '',
+    JSON.stringify(S.dadosDaEmpresaParaRps('emp2').inscricao_municipal));
 
-  const r = R.gerar(itens, D.empresa, { remessa: '20790301001' });
+  const r = R.gerar(itens, S.dadosDaEmpresaParaRps('emp1'), { remessa: '20790301001' });
   verificar('arquivo gerado', r.ok, JSON.stringify(r.erro && (r.problemas || [{}])[0].falta));
   const linhas = r.conteudo.split('\r\n').filter(Boolean);
   verificar('cabeçalho tem 25 posições e a versão PMB004',
@@ -2675,7 +2704,7 @@ function liberarParaFaturar(centro, competencia) {
     item.retencoes.length === 5 && item.retencoes.find(r => r.tributo === 'ISS').valor === 5000,
     JSON.stringify(item.retencoes));
 
-  const g = R.gerar([item], D.empresa, { remessa: '20810601001' });
+  const g = R.gerar([item], S.dadosDaEmpresaParaRps('emp1'), { remessa: '20810601001' });
   const linhas = g.conteudo.split('\r\n').filter(Boolean);
   verificar('só os tributos federais viram registro 3',
     linhas.filter(l => l[0] === '3').length === 4, linhas.filter(l => l[0] === '3').length);
@@ -2702,7 +2731,7 @@ function liberarParaFaturar(centro, competencia) {
     S.autorizarFaturamento('pj02', comp, { protocolo: 'QA2' });
     S.liberarFaturamento('pj02', comp, {});
     const it2 = S.itensParaRPS(comp).find(i => i.centro === 'pj02');
-    const g2 = R.gerar([it2], D.empresa, { remessa: '20810601002' });
+    const g2 = R.gerar([it2], S.dadosDaEmpresaParaRps('emp1'), { remessa: '20810601002' });
     verificar('a remessa sai mesmo com o cliente sem lista de retenções',
       g2.ok === true, g2.erro || '');
     verificar('e a retenção federal é calculada de qualquer forma',
@@ -2711,7 +2740,7 @@ function liberarParaFaturar(centro, competencia) {
 
   // parâmetros fiscais são lidos do cadastro na hora de gerar
   D.empresa.rps.codigo_servico = '040700100';
-  const g3 = R.gerar([item], D.empresa, { remessa: '20810601003' });
+  const g3 = R.gerar([item], S.dadosDaEmpresaParaRps('emp1'), { remessa: '20810601003' });
   verificar('trocar o código do serviço no cadastro muda o arquivo',
     g3.conteudo.split('\r\n').find(l => l[0] === '2').slice(242, 251) === '040700100',
     g3.conteudo.split('\r\n').find(l => l[0] === '2').slice(242, 251));
@@ -3112,7 +3141,41 @@ function liberarParaFaturar(centro, competencia) {
 (function () {
   const Ut = sandbox.window.ERP.util;
   S.setUsuario('u3');
-  const ct = S.contratos({ parte: 'cliente' }).find(c => !c.encerrado);
+  /* CONTRATO AINDA VIGENTE, não só "não encerrado".
+
+     A escolha era o primeiro contrato não encerrado do seed, que
+     tem `vigencia_fim` FIXO em 30/09/2026. A nota deste bloco é
+     lançada na competência de hoje menos um mês, que é relativa —
+     e `resultadoDoAtivo` conta a receita só até o fim do contrato,
+     de propósito (equipamento devolvido não fatura depois).
+
+     As duas datas se cruzaram em 01/11/2026: a nota passou a cair
+     fora da vigência, a receita real virou zero e cinco asserções
+     deste bloco quebraram — e quebrariam todo dia dali em diante,
+     não só na virada do mês. O código estava certo; a comparação
+     é que tinha uma ponta fixa e outra andando.
+
+     Escolher "outro contrato vigente" do seed só trocaria a data
+     fixa por outra, e ainda traria as notas que esse contrato já
+     tem — o bloco mede receita ZERADA no começo. O cenário passa a
+     ser dele: contrato próprio, vigência relativa a hoje, sem nota
+     nenhuma antes das que ele mesmo lança. */
+  const cliQA = S.clientes ? (S.clientes()[0] || {}) : (sandbox.window.ERP.dados.clientes[0] || {});
+  const ctNovo = S.salvarContrato({
+    numero: 'QA116/' + Ut.hoje().replace(/-/g, ''), parte: 'cliente', cliente: cliQA.id,
+    objeto: 'locação QA — receita real x estimada',
+    vigencia_ini: Ut.addMeses(Ut.hoje(), -6).slice(0, 10),
+    vigencia_fim: Ut.addMeses(Ut.hoje(), 6).slice(0, 10),
+    /* Projeto SEM nota nenhuma: o bloco mede receita real partindo
+       de zero, e qualquer projeto que já faturou no seed traria um
+       valor de partida que não é deste cenário. */
+    itens: [{ centro: (sandbox.window.ERP.dados.centros.find(c => c.tipo === 'projeto' &&
+                !S.contasReceber().some(r => r.centro === c.id)) || {}).id,
+              descricao: 'locação QA', valor: 5000 }]
+  });
+  verificar('o cenário cria um contrato próprio, com vigência relativa a hoje',
+    !ctNovo.erro && !!ctNovo.contrato, ctNovo.erro || (ctNovo.contrato || {}).numero);
+  const ct = ctNovo.contrato;
   const a = S.ativos({}).find(x => !x.contrato);
   S.vincularLocacao(a.id, { contrato: ct.id, valor_locacao: 5000, forcar: true,
     desde: Ut.addMeses(Ut.hoje(), -5).slice(0, 10) });
