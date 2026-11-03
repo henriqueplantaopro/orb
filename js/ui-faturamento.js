@@ -1105,6 +1105,13 @@ ERP.faturamento = (function () {
         '<textarea id="rv-disc" rows="5"' + (edita ? '' : ' readonly') + ' placeholder="' +
           'competência, ofício, medição, plantões — o que o tomador exige ver na nota">' +
           U.esc(d.discriminacao) + '</textarea>' +
+        /* A FOLHA DE EMISSÃO sai daqui também: esta é a tela onde a
+           pessoa confere os dados, e emitir à mão é o que ela faz em
+           seguida quando a nota não sai pelo sistema. */
+        '<div class="ajuda" style="margin-top:6px">Vai emitir esta nota no portal da prefeitura, à ' +
+          'mão? <button class="btn-sm" id="rv-pdf">Gerar folha de emissão (PDF)</button> ' +
+          '<span class="sub">— cliente, CNPJ emissor, valor, retenções e a descrição, ' +
+          'na ordem em que o portal pergunta.</span></div>' +
         '<div class="ajuda">' +
           (d.discriminacao_escrita
             ? 'Este texto foi <b>escrito à mão</b> e é o que sai no arquivo de RPS.'
@@ -1254,6 +1261,10 @@ ERP.faturamento = (function () {
     if (baixar) {
       baixar.addEventListener('click', function () { baixarPacote(par); });
     }
+    const folha = U.el('rv-pdf');
+    if (folha) {
+      folha.addEventListener('click', function () { pdfEmissaoManual(par.join('|')); });
+    }
   }
 
   function anexarAoFaturamento(par) {
@@ -1316,6 +1327,200 @@ ERP.faturamento = (function () {
       (p.nota_sem_arquivo ? ' — a nota emitida pelo sistema não tem PDF anexado.' : '.'), n ? 'ok' : 'erro');
   }
 
+  /* ── a folha de emissão manual ───────────────────────────
+     A nota que não sai pelo sistema sai no portal da prefeitura, à
+     mão, por alguém que precisa dos dados na frente. Esta folha é
+     esses dados, na ordem em que o portal pergunta — e vem da
+     mesma fonte do arquivo de RPS, para que a nota digitada seja
+     igual à que o sistema teria emitido. */
+  function pdfEmissaoManual(ref) {
+    const par = String(ref).split('|');
+    const e = S.dadosParaEmissaoManual(par[0], par[1]);
+    if (ERP.app.erroDoRetorno(e)) return;
+    const d = e.dossie, it = e.item, pr = e.prestador;
+    /* O documento do tomador fica guardado só com os dígitos; no
+       portal ele é digitado com máscara, e conferir um CNPJ de
+       catorze dígitos corridos contra a tela é onde o erro entra. */
+    const doc = function (v) {
+      const s = String(v || '').replace(/\D/g, '');
+      if (s.length === 14) return s.replace(/^(\d{2})(\d{3})(\d{3})(\d{4})(\d{2})$/, '$1.$2.$3/$4-$5');
+      if (s.length === 11) return s.replace(/^(\d{3})(\d{3})(\d{3})(\d{2})$/, '$1.$2.$3-$4');
+      return v || '';
+    };
+
+    const p = ERP.pdf.doc({ orientacao: 'retrato' });
+    const x0 = p.margem, x1 = p.largura - p.margem;
+    let y = p.margem + 10;
+
+    /* Cabeçalho. A marca identifica o documento; o aviso embaixo
+       dela impede o mal-entendido que destruiria a confiança nele:
+       isto NÃO é nota fiscal e não vale como uma. */
+    p.marca(x0, y - 10);
+    p.texto(x1, y, 'EMISSÃO MANUAL DE NF', { tam: 12, negrito: true, alinhar: 'direita' });
+    y += 13;
+    p.texto(x1, y, d.grupo || d.projeto.curto || d.projeto.nome || '',
+      { tam: 9, alinhar: 'direita' });
+    y += 11;
+    p.texto(x1, y, 'Competência ' + U.fComp(d.competencia), { tam: 8, cinza: 0.4, alinhar: 'direita' });
+    y += 14;
+    p.retangulo(x0, y, x1 - x0, 16, { preenchimento: 0.94, borda: false });
+    p.texto(x0 + 6, y + 11, 'Documento de apoio para digitar a nota no portal. Não é nota fiscal ' +
+      'e não substitui nenhuma.', { tam: 8, cinza: 0.3 });
+    y += 26;
+
+    const secao = function (titulo) {
+      if (y > p.altura - p.margem - 80) { p.novaPagina(); y = p.margem + 12; }
+      p.texto(x0, y, titulo, { tam: 9, negrito: true });
+      y += 4;
+      p.linha(x0, y, x1, y, { cinza: 0.55 });
+      y += 12;
+    };
+    const campo = function (rotulo, valor, alerta) {
+      if (y > p.altura - p.margem - 30) { p.novaPagina(); y = p.margem + 12; }
+      p.texto(x0, y, rotulo, { tam: 8, cinza: 0.45, largura: 150 });
+      const txt = String(valor === undefined || valor === null || valor === '' ? '—' : valor);
+      y = p.paragrafo(x0 + 155, y, txt, { tam: 9, largura: x1 - x0 - 155,
+        negrito: !!alerta, cinza: alerta ? 0 : undefined });
+      y += 2;
+    };
+
+    /* 1. QUEM EMITE. Primeiro de propósito: é o campo que o portal
+       pergunta antes de tudo, e o que saiu errado na v141. */
+    secao('1 · QUEM EMITE A NOTA (prestador)');
+    campo('Empresa', S.apelidoEmpresa(d.empresa) + '  (' + d.empresa_origem + ')');
+    campo('Razão social', pr.nome);
+    campo('CNPJ', pr.cnpj);
+    campo('Inscrição municipal', pr.inscricao_municipal ||
+      'NÃO CADASTRADA — procure antes de emitir', !pr.inscricao_municipal);
+    campo('Município', (pr.municipio || '') + (pr.uf ? ' / ' + pr.uf : ''));
+    y += 6;
+
+    /* 2. PARA QUEM. */
+    secao('2 · PARA QUEM (tomador)');
+    campo('Nome', it.tomador_nome);
+    campo('CNPJ / CPF', it.tomador_documento ? doc(it.tomador_documento) : '');
+    campo('Endereço', [it.tomador_endereco, it.tomador_numero, it.tomador_complemento]
+      .filter(Boolean).join(', '));
+    campo('Bairro', it.tomador_bairro);
+    campo('Cidade / UF', (it.tomador_cidade || '') + (it.tomador_uf ? ' / ' + it.tomador_uf : ''));
+    campo('CEP', it.tomador_cep);
+    campo('E-mail', it.tomador_email);
+    y += 6;
+
+    /* 3. O QUE EMITIR. */
+    secao('3 · O QUE EMITIR');
+    campo('Valor da nota', U.brl(d.valor));
+    campo('Competência', U.fComp(d.competencia));
+    campo('Vencimento previsto', d.vencimento ? U.fData(d.vencimento) : '');
+    campo('Código do serviço', (e.servico.codigo_servico || '') +
+      '   (LC 116 · item 4.07 — serviços médicos)');
+    campo('Local da prestação', e.servico.local_prestacao === '1'
+      ? 'no município do prestador' : 'informe conforme o contrato');
+    campo('Protocolo do órgão', d.protocolo);
+    y += 6;
+
+    /* 4. RETENÇÕES. O número que mais dá trabalho de refazer: nota
+       emitida com retenção errada vira cancelamento. */
+    secao('4 · RETENÇÕES');
+    if (!e.retencoes.length) {
+      p.texto(x0, y, 'Nenhuma retenção cadastrada para este tomador — confirme com o financeiro ' +
+        'antes de emitir.', { tam: 9, largura: x1 - x0 });
+      y += 16;
+    } else {
+      p.texto(x0, y, 'Tributo', { tam: 8, negrito: true, cinza: 0.45 });
+      p.texto(x0 + 200, y, 'Alíquota', { tam: 8, negrito: true, cinza: 0.45, alinhar: 'direita' });
+      p.texto(x0 + 330, y, 'Valor', { tam: 8, negrito: true, cinza: 0.45, alinhar: 'direita' });
+      y += 12;
+      e.retencoes.forEach(function (r) {
+        p.texto(x0, y, r.tributo, { tam: 9 });
+        p.texto(x0 + 200, y, U.num(r.aliquota) + '%', { tam: 9, alinhar: 'direita' });
+        p.texto(x0 + 330, y, U.brl(r.valor), { tam: 9, alinhar: 'direita' });
+        y += 12;
+      });
+      y += 2; p.linha(x0, y, x0 + 330, y, { cinza: 0.6 }); y += 12;
+      p.texto(x0, y, 'Total retido', { tam: 9, negrito: true });
+      p.texto(x0 + 330, y, U.brl(e.retido), { tam: 9, negrito: true, alinhar: 'direita' });
+      y += 13;
+      p.texto(x0, y, 'Líquido a receber', { tam: 9, negrito: true });
+      p.texto(x0 + 330, y, U.brl(e.liquido), { tam: 9, negrito: true, alinhar: 'direita' });
+      y += 18;
+    }
+
+    /* 5. A DESCRIÇÃO, inteira. É o campo que mais some no caminho
+       entre quem escreve e quem digita. */
+    secao('5 · DESCRIÇÃO / DISCRIMINAÇÃO DA NOTA');
+    p.texto(x0, y, 'Copie o texto abaixo para o campo de discriminação do portal:',
+      { tam: 8, cinza: 0.45 });
+    y += 13;
+    /* A caixa é desenhada ANTES do texto (senão ele fica por baixo),
+       então a altura tem de ser contada antes: mesma quebra que o
+       `paragrafo` vai aplicar, com a mesma medida de largura. */
+    const larguraTxt = x1 - x0 - 12;
+    let linhas = 1, atual = '';
+    String(it.discriminacao || '').split(/\s+/).filter(Boolean).forEach(function (w) {
+      const tent = atual ? atual + ' ' + w : w;
+      if (atual && p.larguraTexto(tent, 9) > larguraTxt) { linhas++; atual = w; }
+      else atual = tent;
+    });
+    p.retangulo(x0, y - 10, x1 - x0, linhas * 12 + 8, { preenchimento: 0.97 });
+    y = p.paragrafo(x0 + 6, y, it.discriminacao, { tam: 9, largura: larguraTxt });
+    y += 14;
+
+    /* 6. COMPOSIÇÃO, quando a nota cobre um grupo. */
+    if (d.grupo && d.partes.length > 1) {
+      secao('6 · COMPOSIÇÃO DA NOTA POR ESPECIALIDADE');
+      d.partes.forEach(function (parte) {
+        if (!(parte.valor > 0)) return;
+        if (y > p.altura - p.margem - 30) { p.novaPagina(); y = p.margem + 12; }
+        p.texto(x0, y, parte.projeto.curto || parte.projeto.nome || '', { tam: 9, largura: 300 });
+        p.texto(x0 + 330, y, U.brl(parte.valor), { tam: 9, alinhar: 'direita' });
+        y += 12;
+      });
+      y += 2; p.linha(x0, y, x0 + 330, y, { cinza: 0.6 }); y += 12;
+      p.texto(x0, y, 'Total da nota', { tam: 9, negrito: true });
+      p.texto(x0 + 330, y, U.brl(d.valor), { tam: 9, negrito: true, alinhar: 'direita' });
+      y += 18;
+    }
+
+    /* 7. O QUE FALTA. Em vez de a pessoa descobrir no meio do
+       preenchimento que o cadastro não tem o CEP do tomador. */
+    const faltas = (ERP.rpsBarueri && ERP.rpsBarueri.pendencias)
+      ? ERP.rpsBarueri.pendencias(it, pr) : [];
+    if (faltas.length) {
+      secao('ATENÇÃO · DADOS QUE FALTAM NO CADASTRO');
+      y = p.paragrafo(x0, y, 'O portal vai pedir, e o sistema não tem: ' + faltas.join(' · ') +
+        '. Procure antes de começar, ou complete em Cadastros.',
+        { tam: 9, largura: x1 - x0 });
+      y += 10;
+    }
+
+    /* 8. DEPOIS DE EMITIR. Fecha o laço: sem isto o faturamento
+       fica parado em "liberado" dizendo que falta emitir o que já
+       foi emitido. */
+    if (y > p.altura - p.margem - 70) { p.novaPagina(); y = p.margem + 12; }
+    secao('DEPOIS DE EMITIR');
+    y = p.paragrafo(x0, y, 'Volte à esteira do faturamento, nesta mesma linha, e use ' +
+      '"Anexar NF emitida": informe número, série, valor e a chave, e anexe o arquivo da nota. ' +
+      'É isso que fecha este faturamento e lança o título no contas a receber. Enquanto não for ' +
+      'feito, a linha continua em "liberado para faturar".', { tam: 9, largura: x1 - x0 });
+
+    /* Rodapé: quem gerou e quando. A folha vai circular fora do
+       sistema, e daqui a um mês alguém vai precisar saber se o que
+       está na mão dela ainda é o número vigente. */
+    const rod = p.altura - p.margem + 2;
+    p.linha(x0, rod - 10, x1, rod - 10, { cinza: 0.75 });
+    /* A versão vem como "v142 · 03/11/2026"; só o número interessa
+       aqui, porque a data já está na frase. */
+    const versao = String((ERP.config || {}).versao || '').split('·')[0].trim();
+    p.texto(x0, rod, 'Gerado por ' + ((S.usuario() || {}).nome || '') + ' em ' +
+      U.fData(U.hoje()) + (versao ? ' · ORB ' + versao : ''), { tam: 7, cinza: 0.5 });
+    p.texto(x1, rod, 'Confira na esteira antes de emitir — o valor pode ter mudado',
+      { tam: 7, cinza: 0.5, alinhar: 'direita' });
+
+    p.salvar('emissao-' + (d.grupo || d.projeto.curto || '').replace(/[^\w]+/g, '-') +
+      '-' + d.competencia + '.pdf');
+  }
+
   function acoesEsteira(l) {
     const ref = l.centro + '|' + l.competencia;
     /* VER E EDITAR O QUE FOI LANÇADO, em toda linha e em toda etapa.
@@ -1349,10 +1554,19 @@ ERP.faturamento = (function () {
          sem este caminho o faturamento ficava parado em "liberado"
          para sempre, dizendo que falta emitir o que já foi
          emitido. */
-      /* A situação vira ETIQUETA. Como frase solta dentro da célula
-         dos botões, "pronto para faturar" era espremida em três
-         linhas e esticava a altura da linha inteira. */
-      return '<span class="badge b-pago">pronto p/ faturar</span>' + rever +
+      /* SEM ETIQUETA DE SITUAÇÃO AQUI. "pronto para faturar" era
+         uma frase solta espremida em três linhas; virou etiqueta; e
+         com a folha de emissão na mesma célula, os quatro botões
+         passaram a empurrar a tabela 81px para fora da tela — e
+         esta casa não rola de lado. A etapa já está dita duas
+         vezes: na coluna "Liberado", com data e nome, e no filtro
+         do topo. A terceira era a que não cabia. */
+      return rever +
+        /* A FOLHA PARA EMITIR À MÃO fica na linha liberada, que é
+           onde a pessoa está quando vai emitir — e ao lado de
+           "Anexar NF emitida", que é o passo seguinte dela. */
+        ' <button class="btn-sm" data-est-pdf="' + ref + '" ' +
+          'title="PDF com os dados para digitar a nota no portal da prefeitura">Emitir à mão</button>' +
         (S.pode('liberar_faturamento')
           ? ' <button class="btn-sm" data-est-des="liberado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('faturar')
@@ -1375,6 +1589,9 @@ ERP.faturamento = (function () {
     });
     box.querySelectorAll('[data-est-rev]').forEach(function (b) {
       b.addEventListener('click', function () { revisarFaturamento(this.dataset.estRev); });
+    });
+    box.querySelectorAll('[data-est-pdf]').forEach(function (b) {
+      b.addEventListener('click', function () { pdfEmissaoManual(this.dataset.estPdf); });
     });
     box.querySelectorAll('[data-est-exp]').forEach(function (b) {
       b.addEventListener('click', function () {

@@ -16277,6 +16277,48 @@ ERP.store = (function () {
       return !(doc.arquivo && doc.arquivo.path); }) };
   }
 
+  /* ── a folha de emissão manual ───────────────────────────
+     Nem toda nota sai daqui: a do Ceará é emitida no portal da
+     prefeitura de lá, à mão, por alguém que precisa dos dados na
+     frente. Até agora essa pessoa juntava cadastro do cliente,
+     CNPJ emissor, valor, retenções e texto da nota de quatro telas
+     diferentes — e cada peça copiada à mão é uma chance de a nota
+     sair diferente da que o sistema teria emitido.
+
+     Os dados saem da MESMA fonte do arquivo de RPS: `montarItemRPS`
+     para o tomador, o valor, as retenções e a discriminação, e
+     `dadosDaEmpresaParaRps` para o prestador. É o que faz a nota
+     digitada à mão ser igual à que teria saído daqui — montar uma
+     segunda versão dos mesmos dados seria pedir que as duas
+     discordassem um dia. */
+  function dadosParaEmissaoManual(centro, competencia) {
+    const d = dossieFaturamento(centro, competencia);
+    if (d.erro) return d;
+    const detalhe = d.partes.filter(function (p) { return p.valor > 0; })
+      .map(function (p) { return (p.projeto.curto || p.projeto.nome || '') + ': ' + U.brl(p.valor); })
+      .join(' | ');
+    const item = montarItemRPS({
+      referencia: d.grupo ? 'grupo:' + d.grupo : 'centro:' + centro,
+      grupo: d.grupo, centro: centro, competencia: competencia,
+      valor: d.valor, detalhe: detalhe
+    });
+    const prestador = dadosDaEmpresaParaRps(d.empresa);
+    const retido = item.retencoes.reduce(function (a, r) {
+      return Math.round((a + r.valor) * 100) / 100; }, 0);
+    return {
+      ok: true, dossie: d, item: item, prestador: prestador,
+      retencoes: retencoesPrevistas(centro, d.valor),
+      retido: retido,
+      liquido: Math.round((d.valor - retido) * 100) / 100,
+      /* Serviço e regime vêm dos parâmetros fiscais — os mesmos que
+         o arquivo de RPS declara. */
+      servico: (D.empresa && D.empresa.rps) || {},
+      /* O cadastro do cliente INTEIRO, porque o portal pede campos
+         que o RPS não pede (telefone, inscrição municipal). */
+      cliente: D.clienteDoCentro(centro) || null
+    };
+  }
+
   const NOMES_ANEXO_FAT = { af: 'Autorização de fornecimento (AF)', escala: 'Relatório de escala',
     medicao: 'Medição / relatório do órgão', oficio: 'Ofício / e-mail de autorização',
     nf: 'Nota fiscal', outro: 'Outro documento' };
@@ -19602,6 +19644,7 @@ ERP.store = (function () {
     dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
+    dadosParaEmissaoManual,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
