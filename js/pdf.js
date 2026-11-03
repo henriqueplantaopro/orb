@@ -94,6 +94,39 @@ ERP.pdf = (function () {
         return api;
       },
 
+      /* TEXTO LONGO QUEBRA EM LINHAS, em vez de ser cortado.
+
+         `texto` com `largura` corta e põe reticências — certo para
+         uma célula de tabela, errado para um parágrafo: a
+         discriminação de uma nota tem três, quatro linhas, e
+         cortada no fim da primeira ela deixaria de dizer o que
+         precisa dizer. Devolve o `y` da linha seguinte, para quem
+         vai continuar escrevendo embaixo. */
+      paragrafo: function (x, y, txt, o) {
+        o = o || {};
+        const tam = o.tam || 9;
+        const larg = o.largura || (largura - margem * 2);
+        const passo = o.entrelinha || Math.round(tam * 1.35);
+        /* O estilo da linha é o do parágrafo MENOS a largura: passada
+           adiante, ela faria `texto` cortar cada linha que já coube. */
+        const estilo = { tam: tam, negrito: o.negrito, cinza: o.cinza, alinhar: o.alinhar };
+        const palavras = String(txt == null ? '' : txt).split(/\s+/).filter(Boolean);
+        let linha = '';
+        let yy = y;
+        palavras.forEach(function (p) {
+          const tentativa = linha ? linha + ' ' + p : p;
+          if (linha && larguraTexto(tentativa, tam, o.negrito) > larg) {
+            api.texto(x, yy, linha, estilo);
+            yy += passo;
+            linha = p;
+          } else {
+            linha = tentativa;
+          }
+        });
+        if (linha) { api.texto(x, yy, linha, estilo); yy += passo; }
+        return yy;
+      },
+
       linha: function (x1, y1, x2, y2, o) {
         o = o || {};
         /* `cor` aceita [r,g,b]; `cinza` continua valendo para o resto

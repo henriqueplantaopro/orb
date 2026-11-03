@@ -11227,4 +11227,58 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   S.setUsuario('u8');
 })();
 
+// ── v143: a folha para emitir a NF a mao ──
+(function () {
+  const fsE = require('fs');
+  const fat = fsE.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const pdfSrc = fsE.readFileSync(__dirname + '/js/pdf.js', 'utf8');
+
+  S.setUsuario('u2');
+  const comp = '2081-06';
+  const centro = 'pj01';
+  S.confirmarFaturamentoProdutividade({ centro: centro, competencia: comp,
+    faturamento: 200000, produtividade: 0, forcar: true });
+  S.autorizarFaturamento(centro, comp, { protocolo: 'QA-143', sem_produtividade: true });
+
+  const e = S.dadosParaEmissaoManual(centro, comp);
+  verificar('v143 — a folha de emissao monta sem erro', !e.erro, e.erro || '');
+  verificar('v143 — com prestador, tomador, valor e retencoes',
+    !!e.prestador && !!e.item.tomador_nome !== undefined && e.dossie.valor === 200000 &&
+    Array.isArray(e.retencoes), JSON.stringify({ v: e.dossie.valor, r: e.retencoes.length }));
+  verificar('v143 — o liquido e o bruto menos o retido',
+    Math.abs(e.dossie.valor - e.retido - e.liquido) < 0.005,
+    e.dossie.valor + ' - ' + e.retido + ' = ' + e.liquido);
+  /* A FOLHA E O ARQUIVO DIZEM A MESMA COISA. Duas montagens dos
+     mesmos dados discordariam um dia — e a nota digitada a mao
+     sairia diferente da que o sistema teria emitido. */
+  const doLote = S.itensParaRPS(comp).find(i => i.centro === centro);
+  verificar('v143 — a descricao da folha e a MESMA que iria no arquivo de RPS',
+    !!doLote && e.item.discriminacao === doLote.discriminacao,
+    (e.item.discriminacao || '').slice(0, 40));
+  verificar('v143 — e o prestador tambem vem de onde o RPS busca',
+    e.prestador.cnpj === S.dadosDaEmpresaParaRps(e.dossie.empresa).cnpj, e.prestador.cnpj);
+  verificar('v143 — a folha le o cadastro do cliente inteiro, nao so o que o RPS usa',
+    'cliente' in e, '');
+
+  /* A TELA e o gerador. */
+  verificar('v143 — a linha liberada oferece a folha de emissao',
+    /data-est-pdf="' \+ ref \+ '"/.test(fat), '');
+  verificar('v143 — e a tela de revisao tambem',
+    /id="rv-pdf"/.test(fat), '');
+  verificar('v143 — a folha avisa quando a inscricao municipal nao esta cadastrada',
+    /NÃO CADASTRADA — procure antes de emitir/.test(fat), '');
+  verificar('v143 — e deixa claro que o papel nao e nota fiscal',
+    /Não é nota fiscal/.test(fat), '');
+  verificar('v143 — e diz o que fazer depois de emitir, para fechar o faturamento',
+    /secao\('DEPOIS DE EMITIR'\)/.test(fat) && /Anexar NF emitida/.test(fat), '');
+  /* TEXTO LONGO QUEBRA, nao e cortado: a discriminacao tem tres,
+     quatro linhas, e cortada na primeira deixaria de dizer o que
+     precisa dizer. */
+  verificar('v143 — o PDF ganhou quebra de paragrafo',
+    /paragrafo: function \(x, y, txt, o\)/.test(pdfSrc), '');
+  verificar('v143 — e a discriminacao usa ela, nao o corte com reticencias',
+    /p\.paragrafo\(x0 \+ 6, y, it\.discriminacao/.test(fat), '');
+  S.setUsuario('u8');
+})();
+
 concluir();
