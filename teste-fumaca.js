@@ -11281,4 +11281,68 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   S.setUsuario('u8');
 })();
 
+// ── v144: o texto lancado antes da v142 nao se perde ──
+(function () {
+  const fsE = require('fs');
+  const fat = fsE.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+
+  S.setUsuario('u2');
+  const comp = '2081-07';
+  const centro = 'pj01';
+  const TEXTO = 'Referente ao 1o aditivo 10581/2026 — locacao de 03 mamografos — ' +
+    'ORDEM DE COMPRA: 46911 — LOCAL: FORTALEZA/CE';
+
+  /* O CENARIO DA v141: a mesma caixa de texto gravava nos campos
+     antigos, e o campo novo nem existia. */
+  S.confirmarFaturamentoProdutividade({ centro: centro, competencia: comp,
+    faturamento: 97800, produtividade: 0, forcar: true });
+  S.autorizarFaturamento(centro, comp, { protocolo: 'LOCACAO OUTUBRO', sem_produtividade: true });
+  const pv = S.previsaoDe(centro, comp);
+  pv.autorizacao_obs = TEXTO;
+  pv.observacao = TEXTO;
+  delete pv.discriminacao;
+
+  verificar('v144 — o texto lancado antes da v142 volta a aparecer',
+    S.discriminacaoDaNota(centro, comp, null, '') === TEXTO,
+    S.discriminacaoDaNota(centro, comp, null, '').slice(0, 40));
+  verificar('v144 — e o arquivo de RPS sai com ele, nao com o template',
+    (S.itensParaRPS(comp).find(i => i.centro === centro) || {}).discriminacao === TEXTO, '');
+  verificar('v144 — e a tela sabe dizer que ele veio do campo antigo',
+    S.dossieFaturamento(centro, comp).discriminacao_origem === 'antiga',
+    S.dossieFaturamento(centro, comp).discriminacao_origem);
+
+  /* A PONTE NAO PODE VIRAR PORTA DOS FUNDOS: o mesmo campo antigo
+     recebe o MOTIVO de desfazer a autorizacao. */
+  S.desfazerEtapaFaturamento(centro, comp, 'liberado', 'orgao pediu revisao');
+  S.desfazerEtapaFaturamento(centro, comp, 'autorizado', 'orgao pediu revisao da medicao');
+  verificar('v144 — motivo de desfazer a autorizacao NAO vira descricao da nota',
+    !/pediu revis/.test(S.discriminacaoDaNota(centro, comp, null, '')),
+    S.discriminacaoDaNota(centro, comp, null, '').slice(0, 40));
+
+  /* O campo ambiguo e OFERECIDO, nunca adotado sozinho. */
+  const c2 = 'pj02';
+  S.confirmarFaturamentoProdutividade({ centro: c2, competencia: comp, faturamento: 7000,
+    produtividade: 0, observacao: 'glosa de 3 plantoes', forcar: true });
+  const d2 = S.dossieFaturamento(c2, comp);
+  verificar('v144 — observacao curta nao entra na nota sozinha',
+    d2.discriminacao === d2.discriminacao_padrao, '');
+  verificar('v144 — mas e oferecida na tela, para a pessoa decidir',
+    d2.discriminacao_candidata === 'glosa de 3 plantoes', d2.discriminacao_candidata || '');
+  const pv2 = S.previsaoDe(c2, comp);
+  pv2.observacao = 'Calculado pelos procedimentos lançados';
+  verificar('v144 — e frase escrita pelo proprio sistema nao e nem oferecida',
+    !S.dossieFaturamento(c2, comp).discriminacao_candidata, '');
+
+  /* ANEXAR EM LOTE, sem classificar. */
+  const r = S.anexarAoFaturamento(c2, comp, { nome: 'af.pdf', path: 'q/af.pdf' });
+  verificar('v144 — anexo sem classificacao e aceito', !r.erro, r.erro || '');
+  verificar('v144 — e aparece como "Documento"',
+    S.nomeTipoAnexoFat('outro') === 'Documento', S.nomeTipoAnexoFat('outro'));
+  verificar('v144 — a tela aceita varios arquivos de uma vez',
+    /id="ax-arq" multiple/.test(fat) && /id="es-conf-arq" multiple/.test(fat), '');
+  verificar('v144 — e nao obriga a classificar',
+    /Classificar \(opcional\)/.test(fat) && /\['outro', 'Sem classificação'\]/.test(fat), '');
+  S.setUsuario('u8');
+})();
+
 concluir();
