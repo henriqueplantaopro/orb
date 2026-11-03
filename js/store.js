@@ -1782,9 +1782,7 @@ ERP.store = (function () {
          no contas a receber. A regra que a v14 criou era sobre não
          somar a PREVISÃO junto com a nota — e essa continua, pelo
          `conferir` e pela exclusão de `previsao`. */
-      return ['cancelado', 'substituido'].indexOf(r.status) < 0 &&
-        ['nota', 'fatura', 'avulso'].indexOf(r.origem) > -1 && !r.conferir &&
-        noPeriodo(r.competencia);
+      return faturamentoRealizado(r) && noPeriodo(r.competencia);
     }).forEach(function (r) {
       const e = nova(empresaDoCentro(r.centro));
       const v = r.valor_bruto || 0;
@@ -4789,9 +4787,7 @@ ERP.store = (function () {
     if (porPeriodo && f.de > f.ate) return { erro: 'O período termina antes de começar.' };
 
     const docEntra = function (r) {
-      if (['cancelado', 'substituido'].indexOf(r.status) > -1) return false;
-      if (['nota', 'fatura', 'avulso'].indexOf(r.origem) < 0) return false;
-      if (r.conferir) return false;
+      if (!faturamentoRealizado(r)) return false;
       return porPeriodo
         ? (r.emissao || '') >= f.de && (r.emissao || '') <= f.ate
         : r.competencia === f.competencia;
@@ -15003,13 +14999,15 @@ ERP.store = (function () {
      protocolo/ofício com que o hospital aceitou o valor. */
   function autorizarFaturamento(centro, competencia, d) {
     d = d || {};
-    /* O protocolo é a razão de existir desta etapa: é o número que
-       prova que o órgão autorizou. `liberarFaturamento` recusa com
-       "o órgão ainda não autorizou", então a etapa não pode ficar
-       sem número. */
-    if (!String(d.protocolo || '').trim()) {
-      return { erro: 'Informe o protocolo devolvido pelo órgão — é o que prova a autorização.' };
-    }
+    /* O PROTOCOLO NÃO TRAVA O FATURAMENTO.
+
+       Ele era obrigatório aqui, com o argumento de que é a prova da
+       autorização do órgão. O argumento é bom e a trava é errada: o
+       protocolo vem depois em metade dos contratos, e enquanto não
+       vem o faturamento inteiro fica parado — travar a receita para
+       cobrar um número é o remédio pior que a doença. A falta do
+       protocolo continua dita na tela, como informação; não como
+       porteiro. */
     if (!pode('autorizar_faturamento')) {
       return { erro: 'Seu perfil não registra a autorização do órgão para faturar.' };
     }
@@ -15019,18 +15017,24 @@ ERP.store = (function () {
       return { erro: 'O valor ainda não foi confirmado no fechamento da produtividade. ' +
         'Confirme o fechamento antes de registrar a autorização do órgão.' };
     }
-    /* Reautorizar substitui o protocolo e o valor autorizado. Pode
-       ser legítimo (o órgão corrigiu o ofício), mas apaga o que
-       estava registrado — então pergunta antes, e o anterior fica
-       no histórico da previsão. */
-    if (pv.autorizacao_protocolo && pv.autorizacao_protocolo !== d.protocolo &&
-        !d.confirmar_substituicao) {
-      return { erro: 'Esta competência já está autorizada pelo protocolo ' +
-        pv.autorizacao_protocolo + ' no valor de ' + U.brl(pv.autorizado_valor || 0) +
-        '. Confirme a substituição pelo protocolo ' + d.protocolo + '.',
-        substitui_autorizacao: true, protocolo_anterior: pv.autorizacao_protocolo };
-    }
-    if (pv.autorizacao_protocolo && pv.autorizacao_protocolo !== d.protocolo) {
+    /* REAUTORIZAR NÃO É ERRO, É CORREÇÃO.
+
+       Isto recusava quando o protocolo digitado era diferente do que
+       já estava gravado, e só passava com `confirmar_substituicao` —
+       que a tela nunca mandava. O resultado foi o faturamento
+       travado: ela lançou, não confirmou, abriu de novo, o campo do
+       protocolo veio VAZIO (defeito da tela, corrigido lá), digitou
+       algo um pouco diferente, e o sistema recusou dizendo que já
+       estava autorizado por um protocolo que ela não estava vendo.
+       Sem saída e sem o número à mão.
+
+       O protocolo novo passa a valer e o anterior vai para o
+       histórico da previsão — é a correção que ela queria fazer, e
+       nada se perde. Em branco também passa: só não apaga o que já
+       estava escrito, porque apagar nunca foi o que se pediu. */
+    const protocoloNovo = String(d.protocolo || '').trim();
+    if (pv.autorizacao_protocolo && protocoloNovo &&
+        pv.autorizacao_protocolo !== protocoloNovo) {
       pv.autorizacoes_anteriores = (pv.autorizacoes_anteriores || []).concat([{
         protocolo: pv.autorizacao_protocolo, valor: pv.autorizado_valor || 0,
         em: pv.autorizado_em, por: pv.autorizado_por }]);
@@ -15038,7 +15042,7 @@ ERP.store = (function () {
     pv.autorizado_em = d.data || U.hoje();
     pv.autorizado_por = usuario().nome;
     pv.autorizado_por_id = (usuario() || {}).id || null;
-    pv.autorizacao_protocolo = d.protocolo;
+    if (protocoloNovo) pv.autorizacao_protocolo = protocoloNovo;
     pv.autorizacao_obs = d.observacao || '';
     pv.autorizado_valor = pv.faturamento;
     /* Quem confirma a produtividade e autoriza o faturamento é o
@@ -15189,7 +15193,7 @@ ERP.store = (function () {
          projeto no mês foram baixadas, o ciclo fechou. */
       const notas = st.receber.filter(function (r) {
         return centros.indexOf(r.centro) > -1 && r.competencia === l.competencia &&
-          ['cancelado', 'substituido'].indexOf(r.status) < 0;
+          faturamentoRealizado(r);
       });
       const bruto = Math.round(notas.reduce(function (t, r) { return t + (r.valor_bruto || 0); }, 0) * 100) / 100;
       const recebido = Math.round(notas.reduce(function (t, r) { return t + (r.valor_recebido || 0); }, 0) * 100) / 100;
@@ -15311,7 +15315,13 @@ ERP.store = (function () {
            ninguém ter dito que este caso não tem documento. */
         anexos: anexosDoFaturamento(centro, competencia).length,
         documento_dispensado: !!(previsaoAncora(centro, competencia) || {}).documento_dispensado,
-        sem_documento: faltaDocumento(centro, competencia, etapa)
+        sem_documento: faltaDocumento(centro, competencia, etapa),
+        /* ENVIO AO CLIENTE: emitir e enviar são dois atos, e só o
+           primeiro deixava rastro. */
+        enviado_cliente_em: (previsaoAncora(centro, competencia) || {}).enviado_cliente_em || null,
+        enviado_cliente_por: (previsaoAncora(centro, competencia) || {}).enviado_cliente_por || null,
+        enviado_cliente_como: (previsaoAncora(centro, competencia) || {}).enviado_cliente_como || null,
+        falta_enviar: faltaEnviarAoCliente(centro, competencia, etapa)
       });
     };
 
@@ -15385,10 +15395,15 @@ ERP.store = (function () {
           return !t || e.parado_desde < t ? e.parado_desde : t; }, null);
         g.dias = U.diasEntre(g.parado_desde, hoje);
         ['confirmado_em', 'confirmado_por', 'autorizado_em', 'autorizado_por', 'protocolo',
-         'liberado_em', 'liberado_por', 'faturado_em'].forEach(function (campo) {
+         'liberado_em', 'liberado_por', 'faturado_em',
+         'enviado_cliente_em', 'enviado_cliente_por', 'enviado_cliente_como'].forEach(function (campo) {
           const achou = esp.find(function (e) { return e[campo]; });
           g[campo] = achou ? achou[campo] : null;
         });
+        /* No grupo a nota é ÚNICA: ou o conjunto foi enviado, ou não
+           foi. Ler o envio de uma especialidade qualquer diria que o
+           grupo foi enviado quando só a âncora estava marcada. */
+        g.falta_enviar = g.etapa === 'faturado' && !g.enviado_cliente_em;
         /* O status de produtividade do grupo é o do conjunto: o mais
            atrasado entre as especialidades manda. */
         const ordemP = { previsto: 0, lancado: 1, confirmado: 2 };
@@ -15408,6 +15423,8 @@ ERP.store = (function () {
     if (f.pendentes) lista = lista.filter(function (l) { return l.etapa !== 'faturado'; });
     /* SÓ O QUE ESTÁ SEM DOCUMENTO. */
     if (f.sem_documento) lista = lista.filter(function (l) { return l.sem_documento; });
+    /* SÓ O QUE FOI FATURADO E AINDA NÃO FOI AO CLIENTE. */
+    if (f.falta_enviar) lista = lista.filter(function (l) { return l.falta_enviar; });
     /* PENDÊNCIAS ANTERIORES: o que ficou para trás de N competências
        e ainda não fechou. Em 01/11, com N=2, é setembro para trás.
        Ignora o filtro de competência de propósito — a pergunta é
@@ -16242,6 +16259,11 @@ ERP.store = (function () {
          adotado sozinho. */
       discriminacao_candidata: discriminacaoCandidata(pvAncora),
       /* O documento do faturamento, do jeito que a esteira conta. */
+      /* O ENVIO AO CLIENTE, como a esteira o lê. */
+      previsao_envio: pvAncora && pvAncora.enviado_cliente_em
+        ? { em: pvAncora.enviado_cliente_em, por: pvAncora.enviado_cliente_por || '',
+            como: pvAncora.enviado_cliente_como || '' }
+        : null,
       documento_dispensado: !!(pvAncora && pvAncora.documento_dispensado),
       documento_dispensado_por: pvAncora ? pvAncora.documento_dispensado_por : null,
       documento_dispensado_em: pvAncora ? pvAncora.documento_dispensado_em : null,
@@ -16307,13 +16329,11 @@ ERP.store = (function () {
     }
     if (d.protocolo !== undefined &&
         String(d.protocolo) !== String(pv.autorizacao_protocolo || '')) {
-      /* Protocolo em branco numa competência JÁ AUTORIZADA apagaria
-         a prova da autorização e deixaria a etapa de pé, dizendo que
-         o órgão autorizou sem dizer onde isso está escrito. */
-      if (pv.autorizado_em && !String(d.protocolo || '').trim()) {
-        return { erro: 'O protocolo é o que prova a autorização do órgão — não pode ficar em branco ' +
-          'numa competência já autorizada. Para tirá-lo, desfaça a autorização.' };
-      }
+      /* O PROTOCOLO É OPCIONAL AQUI TAMBÉM. Isto recusava apagar o
+         protocolo de uma competência já autorizada, e com isso
+         qualquer gravação nesta tela com o campo vazio voltava como
+         erro — inclusive a de quem só queria corrigir o texto da
+         nota. A falta do protocolo é dita na tela; não tranca. */
       pv.autorizacao_protocolo = String(d.protocolo || '').trim();
       mudou.push('protocolo');
     }
@@ -16524,6 +16544,56 @@ ERP.store = (function () {
       (grupoDe(centro) || (D.centro(centro) || {}).curto || '') + ' · ' + U.fComp(competencia) +
       (dispensar && motivo ? ' · ' + motivo : ''));
     return { ok: true, previsao: pv };
+  }
+
+  /* ── A NOTA FOI ENVIADA AO CLIENTE? ─────────────────────
+
+     Emitir a nota e enviá-la ao cliente são dois atos, e só o
+     primeiro deixava rastro. O envio vai por e-mail, por portal do
+     órgão ou por protocolo em papel, junto da AF e da escala — e
+     quem pergunta "essa já foi?" não tinha onde olhar: o
+     faturamento aparecia como "faturado" tanto no dia da emissão
+     quanto três semanas depois, sem ninguém ter mandado.
+
+     Marca na previsão âncora, como a dispensa de documento: é de lá
+     que a esteira lê o estado do faturamento. `como` guarda o
+     caminho do envio (e-mail de fulano, protocolo 123, portal), que
+     é o que se procura quando o cliente diz que não recebeu. */
+  function marcarEnvioAoCliente(centro, competencia, enviado, como) {
+    if (!podeMover('faturamento')) {
+      return { erro: 'Seu perfil vê o faturamento, mas não movimenta.' };
+    }
+    const etapa = etapaDaPrevisao(previsaoAncora(centro, competencia));
+    const temNota = st.receber.some(function (r) {
+      const g = grupoDe(centro);
+      const ids = g ? projetosDoGrupo(g) : [centro];
+      return ids.indexOf(r.centro) > -1 && r.competencia === competencia &&
+        ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0;
+    });
+    /* Marcar como enviado antes de existir nota é marcar o envio de
+       um documento que não existe — e some da conta de quem ainda
+       precisa enviar, que é justamente a pergunta da tela. */
+    if (enviado && !temNota && etapa !== 'faturado') {
+      return { erro: 'Este faturamento ainda não tem nota emitida: não há o que enviar ao cliente.' };
+    }
+    const g = garantirPrevisaoAncora(centro, competencia);
+    if (g.erro) return g;
+    const pv = g.previsao;
+    pv.enviado_cliente_em = enviado ? U.hoje() : null;
+    pv.enviado_cliente_por = enviado ? (usuario() || {}).nome || '' : null;
+    pv.enviado_cliente_como = enviado ? String(como || '') : null;
+    logar('previsao', pv.id, enviado ? 'marcou nota enviada ao cliente' : 'desfez o envio ao cliente',
+      (grupoDe(centro) || (D.centro(centro) || {}).curto || '') + ' · ' + U.fComp(competencia) +
+      (enviado && como ? ' · ' + como : ''));
+    return { ok: true, previsao: pv };
+  }
+
+  /* Faturado e ainda não enviado: a pergunta que a flag responde. */
+  function faltaEnviarAoCliente(centro, competencia, etapa) {
+    if (etapa !== 'faturado') return false;
+    const pv = previsaoAncora(centro, competencia);
+    return !(pv && pv.enviado_cliente_em);
   }
 
   /* A COMPETÊNCIA DE N MESES ATRÁS. A esteira abre no mês anterior
@@ -16918,6 +16988,98 @@ ERP.store = (function () {
     return { ok: true };
   }
 
+  /* ── TROCAR A PREVISÃO DO VÍNCULO ───────────────────────
+
+     O vínculo automático só casa projeto E competência iguais. Isso
+     acerta quase sempre e erra em dois casos reais: a nota saiu com
+     a competência do mês seguinte, e o projeto tem mais de uma
+     previsão aberta no mês. Nos dois, a sugestão não dava para
+     corrigir — só aceitar ou recusar, e recusar deixa a previsão
+     inteira de pé somando por fora.
+
+     Aqui estão as candidatas: previsões ABERTAS, sem vínculo já
+     pendurado, do mesmo projeto (ou dos projetos do grupo, porque a
+     nota do grupo cobre todos) e de competências vizinhas. */
+  function previsoesParaVincular(notaId, meses) {
+    const nota = st.receber.find(function (x) { return x.id === notaId; });
+    if (!nota) return { erro: 'Nota não encontrada.' };
+    const g = grupoDe(nota.centro);
+    const centros = (nota.rateio_centros && nota.rateio_centros.length)
+      ? nota.rateio_centros.map(function (x) { return x.centro; })
+      : (g ? projetosDoGrupo(g) : [nota.centro]);
+    const volta = Math.abs(meses === undefined ? 3 : meses);
+    const de = U.compDe(U.addMeses(nota.competencia + '-01', -volta));
+    const ate = U.compDe(U.addMeses(nota.competencia + '-01', volta));
+    const lista = st.receber.filter(function (r) {
+      return r.origem === 'previsao' && r.status === 'previsto' &&
+        centros.indexOf(r.centro) > -1 &&
+        r.competencia >= de && r.competencia <= ate &&
+        /* a que já está amarrada a ESTA nota entra, para a tela
+           poder mostrá-la como a escolhida; as amarradas a outra
+           nota não, senão trocar aqui desfaria o vínculo de lá */
+        (!r.conferir || r.conferir === notaId);
+    }).map(function (r) {
+      const c = D.centro(r.centro) || {};
+      return { id: r.id, centro: r.centro,
+        projeto: c.curto || c.nome || r.centro, competencia: r.competencia,
+        valor_liquido: r.valor_liquido, valor_bruto: r.valor_bruto,
+        atual: r.conferir === notaId,
+        diferenca: Math.round((nota.valor_liquido - r.valor_liquido) * 100) / 100 };
+    }).sort(function (a, b) {
+      /* A do mês da nota primeiro, depois as mais próximas — para
+         trás e para a frente igualmente, porque o erro de
+         competência acontece nos dois sentidos.
+
+         A distância sai da aritmética do próprio "AAAA-MM":
+         `U.mesesEntre` existe, mas devolve `Math.max(0, m)`, então
+         uma competência POSTERIOR à da nota daria distância zero e
+         empataria com a do mês exato. */
+      const dist = function (comp) {
+        const x = comp.split('-'), y = nota.competencia.split('-');
+        return Math.abs((Number(x[0]) - Number(y[0])) * 12 + (Number(x[1]) - Number(y[1])));
+      };
+      return dist(a.competencia) - dist(b.competencia) ||
+        String(a.projeto).localeCompare(String(b.projeto), 'pt-BR');
+    });
+    return { ok: true, nota: nota, previsoes: lista, de: de, ate: ate };
+  }
+
+  function vincularNotaAPrevisao(notaId, previsaoId) {
+    if (!pode('faturar') && !pode('pagar')) return { erro: 'Seu perfil não confere faturamento.' };
+    const nota = st.receber.find(function (x) { return x.id === notaId; });
+    if (!nota) return { erro: 'Nota não encontrada.' };
+    if (['cancelado', 'substituido'].indexOf(nota.status) > -1) {
+      return { erro: 'Esta nota está ' + nota.status + ': não há vínculo a trocar.' };
+    }
+    const nova = st.receber.find(function (x) { return x.id === previsaoId; });
+    if (!nova) return { erro: 'Previsão não encontrada.' };
+    if (nova.origem !== 'previsao' || nova.status !== 'previsto') {
+      return { erro: 'Só uma previsão em aberto pode ser vinculada à nota.' };
+    }
+    if (nova.conferir && nova.conferir !== notaId) {
+      const outra = st.receber.find(function (x) { return x.id === nova.conferir; });
+      return { erro: 'Esta previsão já está aguardando conferência com a NF ' +
+        ((outra || {}).numero || '') + '. Resolva aquele vínculo primeiro.' };
+    }
+    /* SOLTA AS ANTIGAS ANTES DE AMARRAR A NOVA: deixando a anterior
+       presa, a nota ficaria com dois vínculos pendentes e as duas
+       previsões fora das somas — o dobro do estrago que o vínculo
+       existe para evitar. */
+    st.receber.filter(function (x) { return x.conferir === notaId && x.id !== previsaoId; })
+      .forEach(function (x) {
+        delete x.conferir;
+        x.observacao = 'Vínculo com a NF ' + nota.numero + ' desfeito — previsão mantida';
+      });
+    nova.conferir = notaId;
+    nova.observacao = 'Aguardando conferência do vínculo com a NF ' + nota.numero;
+    nota.substitui = [previsaoId];
+    const c = D.centro(nova.centro) || {};
+    logar('conta_receber', nota.id, 'trocou a previsão do vínculo',
+      'NF ' + nota.numero + ' · ' + (c.curto || '') + ' · ' + U.fComp(nova.competencia) +
+      ' · ' + U.brl(nova.valor_liquido));
+    return { ok: true, previsao: nova, nota: nota };
+  }
+
   /* Correção de importação — muda competência, vencimento, número ou
      projeto de um título que ainda não foi recebido. Uma vez recebido,
      o dinheiro já está contado naquele mês; corrigir depois disso é
@@ -16962,6 +17124,39 @@ ERP.store = (function () {
   const contasReceber = () => st.receber.slice().sort(function (a, b) {
     return (a.vencimento || '').localeCompare(b.vencimento || '');
   });
+
+  /* ── O QUE É FATURAMENTO DE VERDADE, num lugar só ───────
+
+     Documento que representa faturamento REALIZADO: nota, fatura de
+     locação ou avulso, vivo (nem cancelado nem substituído) e sem
+     vínculo pendente pendurado nele.
+
+     A regra existia escrita duas vezes — na apuração por empresa e
+     no relatório de faturamento — e em lugar nenhum na aba Status,
+     que somava TUDO que havia no contas a receber daquele projeto e
+     competência. Com a nota emitida, a previsão de R$ 104.700,00 e a
+     nota de R$ 104.700,00 estavam as duas na lista: a aba Status
+     mostrava R$ 209.400,00 de um faturamento que o financeiro,
+     corretamente, contava uma vez só.
+
+     Dobro na tela é pior que erro na tela: o número parece
+     plausível, ninguém desconfia, e ele vai para dentro de uma
+     conversa com o cliente.
+
+     QUAL DAS TRÊS CLÁUSULAS FAZ O TRABALHO, hoje: a do ORIGEM. A
+     previsão é `origem: 'previsao'` e sai por ela — inclusive
+     depois de o vínculo ser recusado, quando a previsão volta a
+     valer inteira e já não tem `conferir`. A cláusula do `conferir`
+     não chega a disparar sozinha, porque só previsão recebe
+     `conferir`; ela fica como afirmação explícita de que documento
+     esperando conferência não entra em soma — e passa a valer de
+     verdade no dia em que uma `fatura` ou um `avulso` entrar na
+     conferência de vínculo. Está escrito aqui para ninguém apagar o
+     filtro de origem achando que o `conferir` segura. */
+  const faturamentoRealizado = r =>
+    ['cancelado', 'substituido'].indexOf(r.status) < 0 &&
+    ['nota', 'fatura', 'avulso'].indexOf(r.origem) > -1 &&
+    !r.conferir;
 
   /* Título que ainda representa dinheiro a entrar. Um lugar só decide
      isso. Antes cada tela repetia `status !== 'recebido'`, e com isso
@@ -19867,6 +20062,7 @@ ERP.store = (function () {
     vencimentoPrevistoDe, origemDoPrazo,
     saldoInicial, saldoInicialEm, saldoAtual, saldosAtuais,
     receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
+    previsoesParaVincular, vincularNotaAPrevisao,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
@@ -19902,7 +20098,7 @@ ERP.store = (function () {
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
     dadosParaEmissaoManual, salvarCliente, salvarArmazem,
-    dispensarDocumentoFaturamento, competenciaDeslocada, faltaDocumento,
+    dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,

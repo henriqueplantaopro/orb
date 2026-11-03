@@ -1543,6 +1543,36 @@ ERP.persistencia = (function () {
     agendado = setTimeout(function () { agendado = null; sincronizar(); }, ESPERA);
   }
 
+  /* HÁ ALTERAÇÃO ESPERANDO PARA SER GRAVADA?
+
+     Entre o clique em Salvar e o início da gravação passam 400ms de
+     espera — tempo em que o que foi digitado existe SÓ na memória.
+     A recarga automática (de cinco em cinco minutos, e em tempo
+     real a cada mudança que QUALQUER pessoa faz no banco) recusava
+     rodar durante a gravação, mas não durante essa espera: ela
+     reconstruía as listas a partir do banco, o que tinha acabado de
+     ser digitado sumia junto, e a gravação seguinte não achava
+     diferença nenhuma para gravar.
+
+     Resultado: cadastro salvo, nenhum erro, e o dado perdido no F5
+     seguinte — às vezes, dependendo de alguém ter mexido no sistema
+     naquele segundo. Era isso que fazia as retenções do cliente
+     sumirem na terceira vez e não na primeira.
+
+     A PERGUNTA É SOBRE DIFERENÇA, NÃO SOBRE AGENDAMENTO. A primeira
+     versão disto respondia `!!agendado` — e `agendar()` roda depois
+     de QUALQUER função do store, inclusive as que só leem
+     (`pode()`, chamada em todo redesenho de tela). Com isso a
+     resposta era "sim" quase sempre e a recarga nunca mais
+     aconteceria: a tela pararia de se atualizar, que é um estrago
+     maior que o original. Aqui a conta é a mesma que a gravação faz
+     — comparar a memória com a sombra — e ela só diz "sim" quando
+     há mesmo algo a gravar. */
+  function alteracaoNaoGravada() {
+    if (!ligado) return false;
+    try { return diferencas().length > 0; } catch (e) { return false; }
+  }
+
   /* ── observar o store ───────────────────────────────── */
   /* Envolve cada função do store: depois que ela roda, agenda a
      comparação. Não interfere no que a função faz nem no que
@@ -1615,6 +1645,7 @@ ERP.persistencia = (function () {
            limparMovimentoLocal: limparMovimentoLocal,
            aindaNaoGravados: aindaNaoGravados, refotografar: refotografar,
            esquecerDaFoto: esquecerDaFoto, gravando: () => salvando,
+           alteracaoNaoGravada: alteracaoNaoGravada,
            salvarUsuario: salvarUsuario,
            salvarPerfil: salvarPerfil, apagarPerfil: apagarPerfil,
            vincularLogin: vincularLogin,

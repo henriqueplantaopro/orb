@@ -276,6 +276,22 @@ ERP.faturamento = (function () {
      arquivo com o que está LIBERADO na esteira; o envio e o retorno
      (número da NF-e) continuam passando por uma pessoa. */
   let rpsComp = '';   // vazio = todas as competências liberadas
+  /* QUAIS COBRANÇAS ENTRAM NO ARQUIVO.
+
+     O lote levava TODAS as prontas, sem escolha. Ele tem cinco
+     faturamentos liberados e só um sai pela matriz por RPS — os
+     outros quatro são emitidos à mão, no portal da prefeitura de
+     onde o serviço foi prestado. Sem poder escolher, o único
+     caminho era não gerar nada.
+
+     Guarda a referência de cada item (`centro:pj01`, `grupo:GHC -
+     HGB`), que é estável entre redesenhos; `null` significa "ainda
+     não mexeu", e aí valem todas as prontas — o caso comum
+     continua sendo um clique só. */
+  let rpsSel = null;
+  const refRps = i => i.referencia || (i.grupo ? 'grupo:' + i.grupo : 'centro:' + i.centro);
+  const rpsEscolhido = (i, pronto) => pronto && (rpsSel === null || rpsSel.has(refRps(i)));
+
   function renderRPS() {
     const itens = S.itensParaRPS(rpsComp);
     const lotes = S.st.lotesRPS.filter(function (l) { return !rpsComp || l.competencia === rpsComp; });
@@ -289,7 +305,13 @@ ERP.faturamento = (function () {
       return { item: i, falta: ERP.rpsBarueri.pendencias(i, empRps) };
     });
     const prontos = pend.filter(function (p) { return !p.falta.length; });
-    const total = Math.round(prontos.reduce(function (a, p) { return a + p.item.valor; }, 0) * 100) / 100;
+    /* O que de fato vai no arquivo: pronto E escolhido. */
+    const escolhidos = prontos.filter(function (p) { return rpsEscolhido(p.item, true); });
+    const total = Math.round(escolhidos.reduce(function (a, p) { return a + p.item.valor; }, 0) * 100) / 100;
+    /* A empresa que vai no cabeçalho é a dos ESCOLHIDOS: o aviso de
+       "notas de empresas diferentes" olhava o lote inteiro e
+       acusava mistura que a escolha já tinha desfeito. */
+    const quemEscolhido = S.empresaDoLoteRps(escolhidos.map(function (p) { return p.item; }));
 
     U.el('fa-aba-rps').innerHTML =
       '<h2>RPS em lote<span class="sub">gera o arquivo que o portal da prefeitura converte em NF-e</span></h2>' +
@@ -297,8 +319,12 @@ ERP.faturamento = (function () {
         '<input type="month" id="rps-comp" value="' + rpsComp + '"></div>' +
         (rpsComp ? '<button class="btn-sm" id="rps-todas" style="align-self:flex-end">Todas as liberadas</button>' : '') +
         '<button class="btn-linha" id="rps-gerar" style="align-self:flex-end"' +
-          (prontos.length ? '' : ' disabled title="Nenhuma cobrança está pronta — veja a coluna Situação"') +
-          '>Gerar arquivo (' + prontos.length + ' RPS)</button></div>' +
+          (escolhidos.length ? '' : ' disabled title="Nenhuma cobrança marcada — marque na primeira coluna"') +
+          '>Gerar arquivo (' + escolhidos.length + ' RPS)</button>' +
+        (prontos.length > 1
+          ? '<button class="btn-sm" id="rps-todos" style="align-self:flex-end">Marcar todas</button>' +
+            '<button class="btn-sm" id="rps-nenhum" style="align-self:flex-end">Desmarcar</button>'
+          : '') + '</div>' +
         /* BOTÃO DESLIGADO TEM DE DIZER POR QUÊ. Clicar e não
            acontecer nada deixa a pessoa procurando defeito onde não
            há: o motivo está na coluna Situação, logo abaixo, mas
@@ -309,6 +335,19 @@ ERP.faturamento = (function () {
             '<b>Situação</b> da tabela abaixo — em geral falta dado no cadastro do tomador.'
             : '. Libere uma cobrança no faturamento para que ela apareça aqui.') +
           '</div>') +
+        (prontos.length && !escolhidos.length
+          ? '<div class="ajuda">Nenhuma cobrança marcada. Marque na primeira coluna as que vão ' +
+            'neste arquivo — as outras ficam aqui, esperando o próximo lote.</div>'
+          : '') +
+        (escolhidos.length && escolhidos.length < prontos.length
+          ? '<div class="ajuda">O arquivo vai com <b>' + escolhidos.length + ' de ' + prontos.length +
+            '</b> cobranças prontas. As não marcadas continuam liberadas e aparecem no próximo lote.</div>'
+          : '') +
+        (quemEscolhido.misturado
+          ? '<div class="ajuda erro">As marcadas são de <b>' + quemEscolhido.empresas.length +
+            ' empresas diferentes</b> (' + U.esc(quemEscolhido.empresas.map(S.apelidoEmpresa).join(', ')) +
+            '). O arquivo de RPS é de um prestador só — desmarque até sobrar uma empresa.</div>'
+          : '') +
       '<div class="pr-confere">' +
         '<span>Liberados para faturar <b>' + itens.length + '</b></span>' +
         '<span>Prontos <b>' + prontos.length + '</b></span>' +
@@ -317,14 +356,27 @@ ERP.faturamento = (function () {
         '<span>Valor do lote <b>' + U.brl(total) + '</b></span>' +
       '</div>' +
       (itens.length
-        ? '<table><thead><tr><th>Cobrança</th><th>Tomador</th><th class="num">Valor</th>' +
+        ? '<table><thead><tr><th style="width:24px"></th><th>Cobrança</th><th>Emite</th>' +
+          '<th>Tomador</th><th class="num">Valor</th>' +
           '<th class="num">Retenções</th><th>Situação</th></tr></thead><tbody>' +
           pend.map(function (p) {
             const i = p.item;
             const ret = Math.round((i.retencoes || []).reduce(function (a, r) { return a + r.valor; }, 0) * 100) / 100;
-            return '<tr' + (p.falta.length ? ' class="atrasada"' : '') + '>' +
+            const marcado = rpsEscolhido(i, !p.falta.length);
+            return '<tr' + (p.falta.length ? ' class="atrasada"' : (marcado ? '' : ' class="cancelada"')) + '>' +
+              /* Com pendência não se marca: o item não pode ir no
+                 arquivo de jeito nenhum, e uma caixa que não faz
+                 nada é pior que caixa nenhuma. */
+              '<td>' + (p.falta.length
+                ? '<span class="sub" title="falta cadastro — não pode ir no arquivo">—</span>'
+                : '<input type="checkbox" style="width:auto" data-rps-sel="' + U.esc(refRps(i)) + '"' +
+                  (marcado ? ' checked' : '') + '>') + '</td>' +
               '<td class="desc">' + U.esc(i.grupo ? 'Nota única · ' + i.grupo : (D.centro(i.centro) || {}).curto || '') +
                 '<div class="sub">' + U.esc(String(i.discriminacao).slice(0, 70)) + '</div></td>' +
+              /* POR QUAL CNPJ ESTA SAI. É a coluna que faltava para
+                 ele escolher: sem ela, decidir quais marcar era
+                 abrir a esteira e conferir uma a uma. */
+              '<td class="sub">' + U.esc(S.apelidoEmpresa(S.empresaEmissora(i.centro, i.competencia))) + '</td>' +
               '<td class="desc">' + U.esc(i.tomador_nome || '—') + '</td>' +
               '<td class="num">' + U.brl(i.valor) + '</td>' +
               '<td class="num sub">' + (ret ? U.brl(ret) : '—') + '</td>' +
@@ -368,16 +420,47 @@ ERP.faturamento = (function () {
   }
 
   function ligarRPS() {
-    U.el('rps-comp').addEventListener('change', function () { rpsComp = this.value; renderRPS(); });
+    U.el('rps-comp').addEventListener('change', function () {
+      rpsComp = this.value;
+      /* Trocou de competência: a escolha era da lista anterior. */
+      rpsSel = null;
+      renderRPS();
+    });
     if (U.el('rps-todas')) {
-      U.el('rps-todas').addEventListener('click', function () { rpsComp = ''; renderRPS(); });
+      U.el('rps-todas').addEventListener('click', function () { rpsComp = ''; rpsSel = null; renderRPS(); });
     }
+    const prontasAgora = function () {
+      const emp = S.dadosDaEmpresaParaRps(S.empresaDoLoteRps(S.itensParaRPS(rpsComp)).empresa);
+      return S.itensParaRPS(rpsComp)
+        .filter(function (i) { return !ERP.rpsBarueri.pendencias(i, emp).length; })
+        .map(refRps);
+    };
+    if (U.el('rps-todos')) {
+      U.el('rps-todos').addEventListener('click', function () { rpsSel = null; renderRPS(); });
+    }
+    if (U.el('rps-nenhum')) {
+      U.el('rps-nenhum').addEventListener('click', function () { rpsSel = new Set(); renderRPS(); });
+    }
+    document.querySelectorAll('[data-rps-sel]').forEach(function (cx) {
+      cx.addEventListener('change', function () {
+        /* Primeira mexida: parte de todas marcadas, que é o que a
+           tela estava mostrando. */
+        if (rpsSel === null) rpsSel = new Set(prontasAgora());
+        if (this.checked) rpsSel.add(this.dataset.rpsSel);
+        else rpsSel.delete(this.dataset.rpsSel);
+        renderRPS();
+      });
+    });
     if (U.el('rps-gerar')) {
       U.el('rps-gerar').addEventListener('click', function () {
         /* A EMPRESA DO LOTE VEM DO CADASTRO, não da cópia escrita
            no código — é o que faz corrigir a inscrição municipal em
            Cadastros › Empresas chegar ao arquivo. */
-        const todos = S.itensParaRPS(rpsComp);
+        /* SÓ AS MARCADAS. Levava todas as prontas, e com isso o
+           lote de cinco saía inteiro quando só uma devia sair. */
+        const todos = S.itensParaRPS(rpsComp).filter(function (i) {
+          return rpsSel === null || rpsSel.has(refRps(i));
+        });
         const quem = S.empresaDoLoteRps(todos);
         /* UM ARQUIVO, UM PRESTADOR. O cabeçalho do RPS tem uma
            inscrição só: misturar emitentes num lote produziria um
@@ -497,7 +580,7 @@ ERP.faturamento = (function () {
      da mesa é outubro. Abrindo no mês corrente, a tela abria quase
      vazia e a primeira ação de todo dia era trocar a competência. */
   let fEst = { pendentes: true, competencia: '', etapa: '',
-    sem_doc: false, anteriores: false };
+    sem_doc: false, anteriores: false, falta_enviar: false };
   /* Quantas competências para trás contam como ATRASADO. Dia 01/11,
      com 2, é setembro para trás. */
   const COMPETENCIAS_DE_ATRASO = 2;
@@ -518,11 +601,17 @@ ERP.faturamento = (function () {
        competências, o número da etiqueta prometia uma coisa e o
        clique entregava outra: "Previsão (71)" com setenta e um de
        todos os meses, e a lista mostrando os quatro do mês aberto. */
+    /* "A ENVIAR" ATRAVESSA A COMPETÊNCIA, como "sem documento" e como
+       "anteriores": a nota esquecida é justamente a do mês que
+       ninguém está mais olhando. Filtrar dentro do mês aberto
+       responderia outra pergunta. */
     const base = fEst.anteriores
       ? S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO,
-          sem_documento: fEst.sem_doc })
-      : S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia,
-          sem_documento: fEst.sem_doc });
+          sem_documento: fEst.sem_doc, falta_enviar: fEst.falta_enviar })
+      : (fEst.falta_enviar
+          ? S.esteiraFaturamento({ falta_enviar: true, sem_documento: fEst.sem_doc })
+          : S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia,
+              sem_documento: fEst.sem_doc }));
     const conta = {};
     ORDEM_ETAPAS.forEach(function (e) {
       conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
@@ -534,6 +623,10 @@ ERP.faturamento = (function () {
        aberto: o que está confirmado sem documento, e o que ficou
        para trás de duas competências sem fechar. */
     const semDoc = todas.filter(function (l) { return l.sem_documento; }).length;
+    /* FATURADAS E AINDA NÃO ENVIADAS. Conta sobre TODAS as
+       competências, como "sem documento": a nota esquecida é
+       justamente a do mês que ninguém está mais olhando. */
+    const aEnviar = todas.filter(function (l) { return l.falta_enviar; }).length;
     const atrasadas = S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO }).length;
     const limiteAtraso = S.competenciaDeslocada(COMPETENCIAS_DE_ATRASO);
 
@@ -555,7 +648,7 @@ ERP.faturamento = (function () {
       '<h2>Esteira do faturamento<span class="sub">confirmar o valor não é autorizar, e autorizar não é liberar</span></h2>' +
       '<div class="filtros">' +
         '<div class="f"><label for="es-comp">Competência</label><select id="es-comp"' +
-          (fEst.anteriores ? ' disabled' : '') + '>' +
+          (fEst.anteriores || fEst.falta_enviar ? ' disabled' : '') + '>' +
           /* Sem a opção "Todas": uma competência por vez, sempre. E
              o mês corrente entra na lista mesmo quando ainda não
              tem nada lançado — senão a tela abriria vazia e sem
@@ -566,7 +659,8 @@ ERP.faturamento = (function () {
                 U.fComp(c) + '</option>';
             }).join('') + '</select></div>' +
         '<label style="align-self:flex-end;font-weight:400"><input type="checkbox" id="es-pend" style="width:auto"' +
-          (fEst.pendentes ? ' checked' : '') + (fEst.anteriores ? ' disabled' : '') +
+          (fEst.pendentes ? ' checked' : '') +
+          (fEst.anteriores || fEst.falta_enviar ? ' disabled' : '') +
           '> esconder os já faturados</label>' +
       '</div>' +
       /* AS ETAPAS LADO A LADO, e não num menu suspenso. Elas são
@@ -590,6 +684,13 @@ ERP.faturamento = (function () {
         '<button class="chip chip-falta' + (fEst.sem_doc ? ' sel' : '') + '" data-es-semdoc ' +
           'title="valor confirmado, nenhum documento anexado e ninguém marcou que este caso não tem">' +
           'Sem documento<b>' + semDoc + '</b></button>' +
+        /* A ENVIAR fica ao lado de SEM DOCUMENTO: são as duas
+           pendências que sobrevivem ao faturamento, e as duas se
+           perdem de vista pelo mesmo motivo — o mês fechou e
+           ninguém olha mais para ele. */
+        '<button class="chip chip-falta' + (fEst.falta_enviar ? ' sel' : '') + '" data-es-enviar ' +
+          'title="nota emitida e ainda não enviada ao cliente">' +
+          'A enviar<b>' + aEnviar + '</b></button>' +
         '<button class="chip chip-atraso' + (fEst.anteriores ? ' sel' : '') + '" data-es-atraso ' +
           'title="não fechados de ' + U.fComp(limiteAtraso) + ' para trás">' +
           'Anteriores<b>' + atrasadas + '</b></button>' +
@@ -602,6 +703,10 @@ ERP.faturamento = (function () {
       (fEst.sem_doc
         ? '<div class="ajuda">Mostrando só os que estão <b>sem documento</b>. Anexe a AF ou a escala, ' +
           'ou marque que este faturamento não tem documento — aí ele sai desta conta.</div>'
+        : '') +
+      (fEst.falta_enviar
+        ? '<div class="ajuda">Mostrando só as notas <b>emitidas e ainda não enviadas ao cliente</b>. ' +
+          'O botão <b>Enviar</b> na linha mostra o que vai no pacote e registra o envio.</div>'
         : '') +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
         /* Cabeçalhos curtos e colunas de etapa estreitas: eram quatro
@@ -1770,6 +1875,71 @@ ERP.faturamento = (function () {
     });
   }
 
+  /* ── A NOTA FOI AO CLIENTE? ─────────────────────────────
+
+     O envio sai daqui porque é daqui que sai o pacote: a nota mais
+     a AF e a escala, que o cliente exige juntas. A tela mostra o
+     que vai no envio antes de marcar — marcar "enviada" com a AF
+     faltando é registrar um envio incompleto. */
+  function envioAoCliente(ref) {
+    const par = String(ref).split('|');
+    const d = S.dossieFaturamento(par[0], par[1]);
+    if (ERP.app.erroDoRetorno(d)) return;
+    const podeMexer = S.podeMover('faturamento');
+    const jaEnviado = !!(d.previsao_envio && d.previsao_envio.em);
+    const env = d.previsao_envio || {};
+    ERP.app.modal({
+      titulo: 'Envio ao cliente · ' + U.esc(d.grupo || d.projeto.curto || '') +
+        ' · ' + U.fComp(d.competencia),
+      fecharTxt: 'Fechar',
+      corpo:
+        '<div class="resumo-linha"><span>Cliente</span><span class="v">' +
+          U.esc(d.cliente ? d.cliente.nome : '— sem cliente amarrado —') + '</span></div>' +
+        '<div class="resumo-linha"><span>Valor faturado</span><span class="v">' +
+          U.brl(d.valor) + '</span></div>' +
+        /* O QUE VAI NO ENVIO, listado antes de marcar. */
+        '<div style="margin-top:10px"><b>O que vai junto</b>' +
+          (d.documentos.length
+            ? '<ul class="historico">' + d.documentos.map(function (doc) {
+                return '<li><span class="badge b-pago">NF ' + U.esc(doc.numero || '') + '</span> ' +
+                  '<span class="sub">' + U.brl(doc.valor) + '</span></li>';
+              }).join('') + '</ul>'
+            : '<div class="ajuda erro">Nenhuma nota emitida neste faturamento.</div>') +
+          (d.anexos.length
+            ? '<ul class="historico">' + d.anexos.map(function (an) {
+                return '<li><span class="badge b-aguardando">' + U.esc(S.nomeTipoAnexoFat(an.tipo)) +
+                  '</span> <span class="mono">' + U.esc(an.nome) + '</span></li>';
+              }).join('') + '</ul>'
+            : '<div class="ajuda">Nenhum documento anexado — o cliente costuma exigir a AF ou a ' +
+              'escala junto da nota. Dá para baixar o pacote em <b>Ver / editar</b>.</div>') +
+        '</div>' +
+        (jaEnviado
+          ? '<div class="ajuda" style="margin-top:8px">Marcada como <b>enviada ao cliente</b> em ' +
+            U.fData(env.em) + (env.por ? ' por ' + U.esc(String(env.por).split(' ')[0]) : '') +
+            (env.como ? '.<br>Por: ' + U.esc(env.como) : '.') + '</div>'
+          : (podeMexer
+              ? '<label style="margin-top:10px">Como foi enviada <span class="sub">(e-mail, portal, ' +
+                'protocolo — é o que se procura quando o cliente diz que não recebeu)</span></label>' +
+                '<input id="env-como" placeholder="ex.: e-mail faturamento@cliente.com.br em 03/11, protocolo 4471">'
+              : '')),
+      acoes: (podeMexer
+        ? [jaEnviado
+            ? { txt: 'Desfazer o envio', cls: 'btn-sm', fn: function () {
+                const r = S.marcarEnvioAoCliente(par[0], par[1], false);
+                if (ERP.app.erroDoRetorno(r)) return;
+                ERP.app.fecharModal(); renderEsteira();
+                ERP.app.aviso('Volta a contar como nota a enviar.', 'ok');
+              } }
+            : { txt: 'Marcar como enviada ao cliente', cls: 'btn-aprovar', fn: function () {
+                const r = S.marcarEnvioAoCliente(par[0], par[1], true, U.val('env-como'));
+                if (ERP.app.erroDoRetorno(r)) return;
+                ERP.app.fecharModal(); renderEsteira();
+                ERP.app.aviso('Marcada como enviada ao cliente.', 'ok');
+              } }]
+        : [])
+    });
+  }
+
   function acoesEsteira(l) {
     const ref = l.centro + '|' + l.competencia;
     /* VER E EDITAR O QUE FOI LANÇADO, em toda linha e em toda etapa.
@@ -1841,6 +2011,20 @@ ERP.faturamento = (function () {
       return rever + doc + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
         'aguarda produtividade</span>';
     }
+    /* FATURADO AINDA NÃO É ENVIADO. A nota sai do sistema e vai ao
+       cliente por e-mail, portal ou protocolo, junto da AF e da
+       escala — e até aqui nada disso deixava rastro: "faturado"
+       dizia a mesma coisa no dia da emissão e três semanas depois.
+       Avermelhado enquanto não foi; verde com a data depois. */
+    if (l.etapa === 'faturado') {
+      return rever + doc + (l.enviado_cliente_em
+        ? ' <button class="btn-sm btn-nf-ok" data-est-env="' + ref + '" title="enviado ao cliente em ' +
+          U.fData(l.enviado_cliente_em) + (l.enviado_cliente_como ? ' · ' + U.esc(l.enviado_cliente_como) : '') +
+          (l.enviado_cliente_por ? ' · por ' + U.esc(String(l.enviado_cliente_por).split(' ')[0]) : '') +
+          '">Enviada</button>'
+        : ' <button class="btn-sm btn-nf-falta" data-est-env="' + ref + '" ' +
+          'title="nota emitida e ainda não enviada ao cliente">Enviar</button>');
+    }
     return rever + doc;
   }
 
@@ -1861,6 +2045,9 @@ ERP.faturamento = (function () {
     box.querySelectorAll('[data-est-doc]').forEach(function (b) {
       b.addEventListener('click', function () { documentoDoFaturamento(this.dataset.estDoc); });
     });
+    box.querySelectorAll('[data-est-env]').forEach(function (b) {
+      b.addEventListener('click', function () { envioAoCliente(this.dataset.estEnv); });
+    });
     /* AS ETAPAS LADO A LADO. Um clique troca a etapa; clicar na que
        já está escolhida volta para "Todas". */
     box.querySelectorAll('[data-es-etapa]').forEach(function (b) {
@@ -1873,6 +2060,16 @@ ERP.faturamento = (function () {
     if (box.querySelector('[data-es-semdoc]')) {
       box.querySelector('[data-es-semdoc]').addEventListener('click', function () {
         fEst.sem_doc = !fEst.sem_doc;
+        renderEsteira();
+      });
+    }
+    if (box.querySelector('[data-es-enviar]')) {
+      box.querySelector('[data-es-enviar]').addEventListener('click', function () {
+        fEst.falta_enviar = !fEst.falta_enviar;
+        /* A pergunta é sobre nota JÁ emitida: deixar "esconder os já
+           faturados" ligado esvaziaria a lista justamente ao ligar
+           este filtro. */
+        if (fEst.falta_enviar) { fEst.pendentes = false; fEst.etapa = ''; }
         renderEsteira();
       });
     }
@@ -1931,11 +2128,26 @@ ERP.faturamento = (function () {
           fecharTxt: 'Cancelar',
           corpo: '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(par[1]) + '</span></div>' +
             '<div class="resumo-linha"><span>Valor confirmado</span><span class="v">' + U.brl(l.valor || 0) + '</span></div>' +
-            '<div class="ajuda">Registre como o órgão autorizou este valor — ofício, e-mail, ata de medição. ' +
-            'Sem isso, faturar é risco de glosa.</div>' +
+            '<div class="ajuda">Registre como o órgão autorizou este valor — ofício, e-mail, ata de ' +
+            'medição. Sem isso, faturar é risco de glosa — mas o faturamento <b>não fica parado ' +
+            'por causa do protocolo</b>: dá para registrar a autorização agora e preencher o ' +
+            'número quando ele chegar, em <b>Ver / editar</b>.</div>' +
             '<div class="row2">' +
-              '<div><label>Protocolo / referência</label><input id="es-prot" placeholder="ex.: Ofício 55/2026 — medição agosto"></div>' +
-              '<div><label>Data da autorização</label><input type="date" id="es-data" value="' + U.hoje() + '"></div></div>' +
+              /* O CAMPO VEM PREENCHIDO COM O QUE JÁ ESTÁ GRAVADO.
+                 Vinha vazio mesmo numa competência já autorizada:
+                 quem reabria não via o número registrado, digitava
+                 outro parecido e o sistema recusava dizendo que já
+                 estava autorizado por um protocolo que a tela não
+                 mostrava. Campo vazio que esconde o valor gravado é
+                 convite a divergir dele. */
+              '<div><label>Protocolo / referência</label><input id="es-prot" value="' +
+                U.esc(l.protocolo || '') + '" placeholder="ex.: Ofício 55/2026 — medição agosto"></div>' +
+              '<div><label>Data da autorização</label><input type="date" id="es-data" value="' +
+                (l.autorizado_em ? U.dataLocal(l.autorizado_em) : U.hoje()) + '"></div></div>' +
+            (l.protocolo
+              ? '<div class="ajuda">Já autorizado pelo protocolo <b>' + U.esc(l.protocolo) +
+                '</b>. Trocando o número aqui, o anterior fica no histórico deste faturamento.</div>'
+              : '') +
             /* Aqui entra o texto que vai na DISCRIMINAÇÃO da nota, e
                às vezes é longo: competência, ofício, medição, relação
                de plantões. Campo de uma linha não servia — e, vazio,
