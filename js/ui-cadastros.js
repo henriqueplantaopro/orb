@@ -11,7 +11,11 @@ ERP.cadastros = (function () {
   let verInativos = false;
   let soPendentes = false;   // filtro: só credores sem dados de pagamento completos
   const TRIB = ['ISS', 'IRRF', 'PIS', 'COFINS', 'CSLL', 'INSS'];
-  const IMP = [['iss', 'ISS'], ['iss_ce', 'ISS CE'], ['pis_cofins', 'PIS/COFINS'], ['irpj', 'IRPJ'], ['csll', 'CSLL']];
+  /* O terceiro item é o nome por extenso, para o balão do mouse: o
+     título da coluna foi abreviado para a tabela caber na tela, e
+     abreviação sem o nome inteiro em algum lugar é adivinhação. */
+  const IMP = [['iss', 'ISS', 'ISS'], ['iss_ce', 'ISS CE', 'ISS retido no Ceará'],
+    ['pis_cofins', 'Pis/Cof', 'PIS/COFINS'], ['irpj', 'IRPJ', 'IRPJ'], ['csll', 'CSLL', 'CSLL']];
 
   /* O menu é agrupado por assunto e fica todo visível: quem cadastra
      um armazém costuma cadastrar projeto e produto na mesma sentada. */
@@ -436,15 +440,31 @@ ERP.cadastros = (function () {
 
   /* ── projetos ───────────────────────────────────────────*/
   function projetos() {
+    /* AGRUPADO PELO CLIENTE, não pela unidade.
+
+       A unidade é texto livre do cadastro e dizia o lugar, não o
+       dono: "Fortaleza" juntava numa faixa só projetos de clientes
+       diferentes que por acaso ficam na mesma cidade, e o título da
+       faixa não dizia de quem eram. Quem olha esta tela procura os
+       projetos de um cliente — é por ele que se agrupa, e é o nome
+       dele que encabeça o bloco. */
+    const nomeCliente = function (c) {
+      const cl = D.clienteDoCentro(c.id);
+      return cl ? (cl.nome || '') : '';
+    };
     const lista = D.centros.filter(function (c) {
       return c.tipo === 'projeto' && (verInativos || c.ativo);
     })
       .sort(function (a, b) {
-        return String(a.unidade || '\u0000').localeCompare(String(b.unidade || '\u0000')) ||
-               String(a.curto).localeCompare(String(b.curto));
+        /* Projeto sem cliente vai para o fim: é pendência de
+           cadastro, e no meio da lista ela se esconde. */
+        const na = nomeCliente(a), nb = nomeCliente(b);
+        if (!na !== !nb) return na ? -1 : 1;
+        return U.porNome({ nome: na }, { nome: nb }) ||
+               U.porNome({ nome: a.curto || a.nome }, { nome: b.curto || b.nome });
       });
     const marcados = lista.filter(function (c) { return sel.has(c.id); });
-    let uniAtual = null;
+    let cliAtual = null;
 
     return '<div class="ap-acoes">' +
         '<button class="btn-linha" id="cad-novo-projeto">+ Novo projeto</button>' +
@@ -468,25 +488,56 @@ ERP.cadastros = (function () {
             '<button class="btn-sm btn-cancelar" id="cad-excluir">Excluir</button>' +
           '</div>'
         : '') +
-      '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
-      '<th style="width:24px"><input type="checkbox" id="cad-chk-todos" style="width:auto"></th>' +
-      '<th>Projeto</th><th>Empresa</th><th>Tipo</th><th class="num">Prazo</th>' +
-      IMP.map(function (i) { return '<th class="num">' + i[1] + '</th>'; }).join('') +
-      '<th class="num">% Ret.</th><th class="num">Faturamento previsto</th>' +
-      '<th class="num">Repasse previsto</th><th>Situação</th><th></th></tr></thead><tbody>' +
+      /* A TABELA INTEIRA NA TELA. Eram quinze colunas e 187px para
+         fora: o botão de Editar ficava do lado de lá da borda e
+         só aparecia rolando a tela. As colunas ganharam largura
+         fixa, os títulos longos foram abreviados (o nome inteiro
+         fica no balão do mouse) e o nome do projeto trunca. */
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-cabe"><thead><tr>' +
+      '<th style="width:4.2%"><input type="checkbox" id="cad-chk-todos" style="width:auto"></th>' +
+      '<th style="width:13%">Projeto</th><th style="width:6.5%">Empresa</th>' +
+      /* "Serviços médicos" e "R$ 355.713,60" são os textos mais
+         largos de cada coluna: a porcentagem sai do que eles medem,
+         não de um arredondamento bonito. Faltando 2px, o "Editar"
+         da última coluna transborda e a tela volta a rolar. */
+      '<th style="width:10.4%">Tipo</th><th class="num" style="width:5.2%">Prazo</th>' +
+      /* As colunas de alíquota com a MESMA largura entre si, como em
+         todo relatório desta casa. */
+      IMP.map(function (i) {
+        /* A largura sai do TÍTULO, não do valor: "Pis/Cof" é mais
+           largo que "3,65%", e em 4,9% o próprio título aparecia
+           cortado ("Pis/..."). Rótulo cortado é rótulo que não se
+           lê — pior que a tabela ficar um pouco mais apertada. */
+        return '<th class="num" style="width:5.2%" title="' + U.esc(i[2] || i[1]) + '">' + i[1] + '</th>';
+      }).join('') +
+      '<th class="num" style="width:5.2%" title="percentual de retenção do projeto">% Ret.</th>' +
+      /* As duas colunas de dinheiro com a MESMA largura, e larga o
+         bastante para "R$ 2.043.819,83": valor cortado na tela é
+         valor errado, pior que nome cortado. */
+      '<th class="num" style="width:10.3%" title="Faturamento previsto">Fat. previsto</th>' +
+      '<th class="num" style="width:10.3%" title="Repasse previsto">Repasse prev.</th>' +
+      '<th style="width:6.1%">Situação</th><th style="width:5.3%"></th></tr></thead><tbody>' +
       lista.map(function (c) {
         let cab = '';
-        const uni = c.unidade || '— estruturais —';
-        if (uni !== uniAtual) {
-          uniAtual = uni;
-          cab = '<tr><td class="g" colspan="14" style="font-weight:650;background:#f2f4f5">' +
-            U.esc(uni) + '</td></tr>';
+        const cli = nomeCliente(c) || '— sem cliente vinculado —';
+        if (cli !== cliAtual) {
+          cliAtual = cli;
+          /* colspan 15, que é o número de colunas: estava 14 e a
+             faixa do título parava uma coluna antes do fim. */
+          cab = '<tr><td class="g" colspan="15" style="font-weight:650;background:#f2f4f5">' +
+            U.esc(cli) + '</td></tr>';
         }
         const imp = c.impostos || {};
         return cab + '<tr class="' + (sel.has(c.id) ? 'sel ' : '') + (c.ativo ? '' : 'cancelada') + '">' +
           '<td><input type="checkbox" style="width:auto" data-sel="' + c.id + '"' + (sel.has(c.id) ? ' checked' : '') + '></td>' +
-          '<td class="desc">' + U.esc(c.curto || c.nome) + '<div class="sub">' + U.esc(c.codigo || '') +
-            (c.codigo_hospital ? ' · ' + U.esc(c.codigo_hospital) : '') + '</div></td>' +
+          /* A unidade saiu do título da faixa (que agora é o cliente) e
+             veio para a linha de apoio do projeto, junto do código:
+             continua à vista de quem procura por lugar. */
+          '<td class="desc trunca" title="' + U.esc((c.curto || c.nome) +
+            (c.unidade ? ' · ' + c.unidade : '')) + '">' + U.esc(c.curto || c.nome) +
+            '<div class="sub">' + U.esc(c.codigo || '') +
+            (c.codigo_hospital ? ' · ' + U.esc(c.codigo_hospital) : '') +
+            (c.unidade ? ' · ' + U.esc(c.unidade) : '') + '</div></td>' +
           /* Sem empresa definida o projeto cai na matriz por padrão, e
              isso precisa ficar visível: é conferência de cadastro, não
              um dado que o sistema possa adivinhar. */
@@ -626,7 +677,9 @@ ERP.cadastros = (function () {
         '<div class="ajuda">O vínculo é o mesmo dos dois lados: escolher aqui já deixa o projeto marcado no cadastro do cliente.</div>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Impostos do projeto (%)</h2>' +
         '<div class="row3">' + IMP.map(function (i) {
-          return '<div><label>' + i[1] + '</label><input id="pj-' + i[0] + '" class="num" inputmode="decimal" value="' +
+          /* No formulário cabe o nome por extenso: a abreviação existe
+             por causa da largura da COLUNA, não do campo. */
+          return '<div><label>' + U.esc(i[2] || i[1]) + '</label><input id="pj-' + i[0] + '" class="num" inputmode="decimal" value="' +
             U.num(imp[i[0]] || 0) + '"></div>';
         }).join('') + '</div>' +
         '<div class="row2" style="margin-top:8px">' +
@@ -1290,20 +1343,29 @@ ERP.cadastros = (function () {
   /* ── clientes ───────────────────────────────────────────*/
   function clientes() {
     return '<div class="ap-acoes"><button class="btn-linha" id="cad-novo-cliente">+ Novo cliente</button></div>' +
-      '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
-      '<th>Cliente</th><th>CNPJ</th><th>Projetos</th><th class="num">Prazo</th>' +
-      '<th>Retenções</th><th></th></tr></thead><tbody>' +
+      /* A coluna de projetos empurrava o botão de Editar para fora da
+         tela quando o cliente tinha nome de projeto comprido. Largura
+         fixa e truncagem: o que não couber fica no balão do mouse. */
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="tab-cabe"><thead><tr>' +
+      '<th style="width:30%">Cliente</th><th style="width:13%">CNPJ</th>' +
+      '<th style="width:28%">Projetos</th><th class="num" style="width:7%">Prazo</th>' +
+      '<th style="width:15%">Retenções</th><th style="width:7%"></th></tr></thead><tbody>' +
       D.clientes.map(function (c) {
         /* TODOS os projetos, não "o projeto padrão": um cliente tem
            quantos tiver, e mostrar um só escondia os outros. */
         const pjs = D.projetosDoCliente(c.id);
         const pz = S.prazoDe(c.centro_padrao || (pjs[0] || {}).id, c.documento);
-        return '<tr><td class="desc">' + U.esc(c.nome) + '</td>' +
-          '<td class="mono">' + U.esc(c.documento) + '</td>' +
-          '<td class="desc">' + (pjs.length
-            ? U.esc(pjs.slice(0, 2).map(function (p) { return p.curto || p.nome; }).join(', ')) +
-              (pjs.length > 2 ? '<div class="sub">e mais ' + (pjs.length - 2) + '</div>' : '')
-            : '<span class="sub">— nenhum —</span>') + '</td>' +
+        /* TODOS os projetos no balão, dois na linha: o cliente que tem
+           oito especialidades não cabe na célula, e cortar sem dizer
+           quais são esconde justamente o que se procura aqui. */
+        const todosPjs = pjs.map(function (p) { return p.curto || p.nome; });
+        return '<tr><td class="desc trunca" title="' + U.esc(c.nome) + '">' + U.esc(c.nome) + '</td>' +
+          '<td class="mono trunca">' + U.esc(c.documento) + '</td>' +
+          '<td class="desc trunca"' + (pjs.length ? ' title="' + U.esc(todosPjs.join(', ')) + '"' : '') + '>' +
+            (pjs.length
+              ? U.esc(todosPjs.slice(0, 2).join(', ')) +
+                (pjs.length > 2 ? '<div class="sub">e mais ' + (pjs.length - 2) + '</div>' : '')
+              : '<span class="sub">— nenhum —</span>') + '</td>' +
           '<td class="num">' + pz.dias + 'd<div class="sub">' + pz.origem + '</div></td>' +
           '<td>' + ((c.retencoes || []).length
             ? '<span class="badge b-pago">cadastrada</span><div class="sub">' +

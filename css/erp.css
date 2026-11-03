@@ -181,17 +181,32 @@ button:focus-visible{outline:2px solid var(--brand);outline-offset:1px;}
 .parcelas .rodape .ok{color:var(--ink);}
 .parcelas .rodape .erro{color:var(--red);}
 
-/* ── grade do fechamento da folha ────────────────────────
-   Dezesseis colunas numa tela que não rola de lado. Largura fixa em
-   porcentagem (`table-layout:fixed`) para o nome poder truncar: sem
-   isso o navegador alarga a coluna do nome até caber o nome inteiro
-   e empurra o líquido para fora da tela. `cv` são as colunas de
-   valor e `ce` as de digitação — mesma largura entre iguais, que é
-   a simetria que todo relatório desta casa segue. */
-table.tab-folha{table-layout:fixed;width:100%;font-size:11px;}
+/* ── tabela que TEM de caber na tela ─────────────────────
+   Largura fixa por coluna, declarada no `th` em porcentagem, e as
+   células de texto truncando com reticências.
+
+   Sem `table-layout:fixed` o navegador alarga a coluna de texto até
+   caber a frase inteira e empurra as últimas colunas — entre elas o
+   botão de Editar — para fora da tela: o botão existe, ninguém
+   alcança, e a casa inteira passa a rolar de lado. Com largura
+   fixa, o texto comprido é cortado com "..." e o nome inteiro fica
+   no balão do mouse, que é a troca certa: ler meio nome é menos
+   pior que não alcançar o botão.
+
+   `.trunca` vai nas células de texto — inclusive na linha de apoio
+   (`.sub`) dentro delas, que senão estica a célula por fora. */
+table.tab-cabe{table-layout:fixed;width:100%;}
+table.tab-cabe th{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+table.tab-cabe td.trunca,table.tab-cabe td.trunca .sub{
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+
+/* A grade do fechamento da folha: a mesma contenção, mais apertada
+   — são dezesseis colunas. `cv` são as colunas de valor e `ce` as de
+   digitação: mesma largura entre iguais, que é a simetria que todo
+   relatório desta casa segue. */
+table.tab-folha{font-size:11px;}
 table.tab-folha th,table.tab-folha td{padding:4px 3px;}
 table.tab-folha th.cv,table.tab-folha th.ce{width:6%;}
-table.tab-folha td.nome{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 table.tab-folha input.num{width:100%;min-width:0;padding:3px 4px;font-size:11px;}
 table.tab-folha td.col-acoes,table.tab-folha td:last-child{white-space:nowrap;}
 table.tab-folha button.btn-sm{padding:2px 5px;font-size:10.5px;}

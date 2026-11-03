@@ -585,7 +585,7 @@ ERP.dp = (function () {
        guardando o nome inteiro no `title`. Truncar um nome é menos
        pior que esconder o líquido. */
     box.innerHTML =
-      '<table class="parcelas tab-folha"><thead><tr><th style="width:12%">Funcionário</th>' +
+      '<table class="parcelas tab-cabe tab-folha"><thead><tr><th style="width:12%">Funcionário</th>' +
         '<th class="num cv">Sal. base</th>' +
         '<th class="num ce">HE 50%</th><th class="num ce">HE 100%</th>' +
         /* ADICIONAL NOTURNO NA GRADE. Existia só dentro de "Mais
@@ -611,7 +611,7 @@ ERP.dp = (function () {
           const credito = somaCodigos(x.h.descontos, ['906']);
           const ajusteAtual = ajustesFolha[x.f.id] || {};
           return '<tr>' +
-            '<td class="nome" title="' + U.esc(x.f.nome) + '">' + U.esc(x.f.nome) + '</td>' +
+            '<td class="nome trunca" title="' + U.esc(x.f.nome) + '">' + U.esc(x.f.nome) + '</td>' +
             '<td class="num">' + U.brl(x.f.salario_base) + '</td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he50_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he50_horas || 0) + '"></td>' +
             '<td><input class="num" data-fn="' + x.f.id + '" data-c="he100_horas" inputmode="decimal" min="0" value="' + U.num(ajusteAtual.he100_horas || 0) + '"></td>' +

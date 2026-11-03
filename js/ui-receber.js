@@ -116,25 +116,104 @@ ERP.receber = (function () {
       '<div class="ajuda">A nota bateu com uma previsão do mesmo projeto e competência. ' +
       'Confirme o que ela é: substitui o mês inteiro, é só uma parte dele, ou não tem relação. ' +
       'Até você decidir, a previsão fica fora das somas.</div>' +
-      '<table style="margin-top:8px"><thead><tr><th>Projeto</th><th>Comp.</th>' +
-      '<th>Previsão</th><th class="num">Previsto</th><th>Nota</th><th class="num">Faturado</th>' +
+      /* OS DOIS LADOS ESCRITOS POR INTEIRO.
+
+         A coluna "Previsão" trazia o número interno dela —
+         "PREV-037-202610" — que parece código de nota fiscal e não
+         diz nada sobre o que está sendo comparado. Quem decide o
+         vínculo precisa ver, dos dois lados, QUAL PROJETO e QUAL
+         COMPETÊNCIA, porque é exatamente aí que a sugestão
+         automática erra: nota emitida com a competência do mês
+         seguinte, ou projeto com duas previsões abertas no mês. */
+      '<table style="margin-top:8px"><thead><tr>' +
+      '<th>Previsão sugerida</th><th class="num">Previsto</th>' +
+      '<th>Nota emitida</th><th class="num">Faturado</th>' +
       '<th class="num">Diferença</th><th></th></tr></thead><tbody>' +
       vs.map(function (v) {
-        const c = D.centro(v.previsto.centro) || {};
-        return '<tr><td>' + U.esc(c.curto || '—') + '</td>' +
-          '<td class="mono">' + U.fComp(v.previsto.competencia) + '</td>' +
-          '<td class="mono sub">' + U.esc(v.previsto.numero) + '</td>' +
+        const cp = D.centro(v.previsto.centro) || {};
+        const cn = D.centro(v.nota.centro) || {};
+        const mesmoProjeto = v.previsto.centro === v.nota.centro;
+        const mesmaComp = v.previsto.competencia === v.nota.competencia;
+        const lado = function (c, r, alerta) {
+          return '<td><b>' + U.esc(c.curto || c.nome || '— sem projeto —') + '</b>' +
+            '<div class="sub' + (alerta ? ' erro' : '') + '">' + U.fComp(r.competencia) +
+            (r.numero ? ' · ' + U.esc(r.numero) : '') + '</div></td>';
+        };
+        return '<tr>' +
+          lado(cp, v.previsto, false) +
           '<td class="num">' + U.brl(v.previsto.valor_liquido) + '</td>' +
-          '<td class="mono sub">' + U.esc(v.nota.numero) + '</td>' +
+          /* Projeto ou competência diferentes acendem em vermelho do
+             lado da NOTA: é o sinal de que a sugestão pode estar
+             errada, e é a hora de trocar a previsão em vez de
+             aceitar. */
+          lado(cn, v.nota, !mesmoProjeto || !mesmaComp) +
           '<td class="num">' + U.brl(v.nota.valor_liquido) + '</td>' +
           '<td class="num"' + (Math.abs(v.diferenca) > 0.05 ? ' style="color:var(--amber)"' : '') + '>' +
             (v.diferenca ? U.brl(v.diferenca) : '—') + '</td>' +
           '<td class="acoes">' +
             '<button class="btn-sm btn-aprovar" data-vinc-int="' + v.previsto.id + '">Substitui o mês</button>' +
             '<button class="btn-sm" data-vinc-parc="' + v.previsto.id + '">Faturamento parcial</button>' +
+            '<button class="btn-sm" data-vinc-troca="' + v.nota.id + '" ' +
+              'title="a sugestão não é esta previsão — escolher outra">Trocar previsão</button>' +
             '<button class="btn-sm btn-cancelar" data-vinc-nao="' + v.previsto.id + '">Não tem relação</button>' +
-          '</td></tr>';
+          '</td></tr>' +
+          ((!mesmoProjeto || !mesmaComp)
+            ? '<tr><td colspan="6" class="sub erro" style="padding-top:0">' +
+              (mesmoProjeto ? '' : 'Projeto diferente dos dois lados. ') +
+              (mesmaComp ? '' : 'Competência diferente dos dois lados. ') +
+              'Confira antes de aceitar — ou use <b>Trocar previsão</b>.</td></tr>'
+            : '');
       }).join('') + '</tbody></table></div>';
+  }
+
+  /* ESCOLHER OUTRA PREVISÃO. Até aqui só dava para aceitar ou
+     recusar a sugestão, e recusar deixa a previsão inteira de pé
+     somando por fora do faturamento real. */
+  function trocarPrevisao(notaId) {
+    const r = S.previsoesParaVincular(notaId);
+    if (ERP.app.erroDoRetorno(r)) return;
+    const nota = r.nota;
+    ERP.app.modal({
+      titulo: 'Previsão da NF ' + U.esc(nota.numero || ''),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="resumo-linha"><span>Nota</span><span class="v">' +
+          U.esc((D.centro(nota.centro) || {}).curto || '—') + ' · ' + U.fComp(nota.competencia) +
+          ' · ' + U.brl(nota.valor_liquido) + '</span></div>' +
+        '<div class="ajuda">Previsões em aberto do mesmo projeto (ou dos projetos do grupo), de ' +
+          U.fComp(r.de) + ' a ' + U.fComp(r.ate) + '. A escolhida passa a ser a que esta nota ' +
+          'substitui; a anterior volta a valer inteira.</div>' +
+        (r.previsoes.length
+          ? '<table style="margin-top:8px"><thead><tr><th>Projeto</th><th>Competência</th>' +
+            '<th class="num">Previsto</th><th class="num">Diferença</th><th></th></tr></thead><tbody>' +
+            r.previsoes.map(function (p) {
+              return '<tr' + (p.atual ? ' class="sel"' : '') + '><td>' + U.esc(p.projeto) + '</td>' +
+                '<td class="mono">' + U.fComp(p.competencia) + '</td>' +
+                '<td class="num">' + U.brl(p.valor_liquido) + '</td>' +
+                '<td class="num"' + (Math.abs(p.diferenca) > 0.05 ? ' style="color:var(--amber)"' : '') + '>' +
+                  (p.diferenca ? U.brl(p.diferenca) : '—') + '</td>' +
+                '<td class="acoes">' + (p.atual
+                  ? '<span class="badge b-aprovado">é a sugerida</span>'
+                  : '<button class="btn-sm btn-aprovar" data-troca-pv="' + p.id + '">Usar esta</button>') +
+                '</td></tr>';
+            }).join('') + '</tbody></table>'
+          : '<div class="ajuda erro">Nenhuma previsão em aberto neste projeto por perto desta ' +
+            'competência. Se a previsão existe em outro projeto, corrija o projeto da nota antes.</div>'),
+      acoes: [],
+      aoAbrir: function () {
+        document.querySelectorAll('[data-troca-pv]').forEach(function (b) {
+          b.addEventListener('click', function () {
+            const res = S.vincularNotaAPrevisao(notaId, this.dataset.trocaPv);
+            if (ERP.app.erroDoRetorno(res)) return;
+            ERP.app.fecharModal();
+            render();
+            ERP.app.atualizarContadores();
+            ERP.app.aviso('Vínculo agora é com a previsão de ' +
+              U.fComp(res.previsao.competencia) + '. Confirme o que a nota é.', 'ok');
+          });
+        });
+      }
+    });
   }
 
   function ligarVinculos() {
@@ -154,6 +233,9 @@ ERP.receber = (function () {
       'Faturamento parcial: a previsão ficou com o resíduo.');
     agir('data-vinc-nao', S.recusarVinculo,
       'Vínculo recusado. A previsão continua valendo inteira.');
+    box.querySelectorAll('[data-vinc-troca]').forEach(function (b) {
+      b.addEventListener('click', function () { trocarPrevisao(this.dataset.vincTroca); });
+    });
   }
 
   function render() {

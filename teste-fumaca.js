@@ -6531,15 +6531,28 @@ function liberarParaFaturar(centro, competencia) {
   const compA = '2053-06';
   S.salvarPrevisao({ centro: 'pj37', competencia: compA, faturamento: 50000, produtividade: 0 });
   S.marcarPrevisoes(compA, 'confirmada_prod', 'pj37');
-  verificar('v26 — autorizar sem protocolo é recusado',
-    !!S.autorizarFaturamento('pj37', compA, { sem_produtividade: true }).erro, '');
+  /* v151: O PROTOCOLO NÃO TRAVA O FATURAMENTO. Era obrigatório aqui
+     e a ausência recusava a etapa inteira — a receita parava para
+     cobrar um número que, em metade dos contratos, só chega depois.
+     Continua sendo registrado e cobrado na tela; não tranca. */
+  verificar('v151 — autorizar SEM protocolo passa',
+    S.autorizarFaturamento('pj37', compA, { sem_produtividade: true }).ok, '');
   verificar('v26 — com protocolo é aceito',
     S.autorizarFaturamento('pj37', compA, { protocolo: 'OF-A', sem_produtividade: true }).ok, '');
+  /* Reautorizar com outro número é CORREÇÃO, não erro: recusava, e
+     a tela nunca mandava a confirmação que destravaria. */
   const subst = S.autorizarFaturamento('pj37', compA, { protocolo: 'OF-B', sem_produtividade: true });
-  verificar('v26 — substituir a autorização pede confirmação', !!subst.substitui_autorizacao, '');
-  verificar('v26 — e confirmando, a anterior fica no histórico',
-    S.autorizarFaturamento('pj37', compA,
-      { protocolo: 'OF-B', sem_produtividade: true, confirmar_substituicao: true }).ok, '');
+  verificar('v151 — trocar o protocolo passa, sem pedir confirmação',
+    subst.ok && !subst.substitui_autorizacao, JSON.stringify(subst.erro));
+  verificar('v151 — o protocolo novo passa a valer',
+    (S.previsaoDe('pj37', compA) || {}).autorizacao_protocolo === 'OF-B', '');
+  verificar('v151 — e o anterior fica no histórico da previsão',
+    ((S.previsaoDe('pj37', compA) || {}).autorizacoes_anteriores || [])
+      .some(a => a.protocolo === 'OF-A'), '');
+  /* Em branco não apaga o que já estava escrito. */
+  S.autorizarFaturamento('pj37', compA, { sem_produtividade: true });
+  verificar('v151 — autorizar com o campo vazio nao apaga o protocolo gravado',
+    (S.previsaoDe('pj37', compA) || {}).autorizacao_protocolo === 'OF-B', '');
 
   /* 6 e 7 — lote de RPS. */
   const loteA = S.registrarLoteRPS({ remessa: '20800599001', rps: [] });
@@ -8066,7 +8079,28 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v99 — sem perder a vez de ser gravado na próxima vez',
     /esquecerDaFoto/.test(rem) && /esquecerDaFoto/.test(pers), '');
   verificar('v99 — a recarga não roda no meio de uma gravação',
-    /gravando\(\)\) \{\s*\n\s*return \{ ok: false, motivo: 'gravação em andamento' \}/.test(rem), '');
+    /gravando\(\)\) \{\s*\n\s*return maisTarde\('gravação em andamento'\)/.test(rem), '');
+  /* v151: a trava da v99 só pegava registro NOVO (`aindaNaoGravados`
+     devolve o que a sombra não conhece) e gravação JÁ EM CURSO. A
+     ALTERAÇÃO de um cadastro que já existe não entrava em nenhuma
+     das duas: entre o clique em Salvar e o início do envio há 400ms
+     em que ela só existe na memória, e a recarga ali reconstruía a
+     lista pelo banco e levava a alteração junto — sem erro, e a
+     gravação seguinte não achava mais diferença. Era isso que
+     apagava as retenções do cliente salvas três vezes. */
+  verificar('v151 — nem com alteração esperando para ser gravada',
+    /alteracaoNaoGravada\(\)\) \{\s*\n\s*return maisTarde\('alteração ainda não gravada'\)/.test(rem) &&
+    /function alteracaoNaoGravada\(\)/.test(pers), '');
+  /* A PERGUNTA É SOBRE DIFERENÇA, não sobre agendamento: `agendar()`
+     roda depois de QUALQUER função do store, inclusive as que só
+     leem (`pode()`, em todo redesenho). Respondendo pelo
+     agendamento, a resposta seria "sim" quase sempre e a tela
+     pararia de se atualizar — estrago maior que o original. */
+  verificar('v151 — e a pergunta compara memória e sombra, não olha o temporizador',
+    /return diferencas\(\)\.length > 0;/.test(pers) &&
+    !/function alteracaoNaoGravada\(\) \{ return !!agendado/.test(pers), '');
+  verificar('v151 — e a recarga adiada volta sozinha, para a tela nao envelhecer',
+    /esperando = setTimeout\(function \(\) \{ esperando = null; recarregar\(true\); \}, 1000\)/.test(rem), '');
 
   /* E a sombra acompanha a recarga: sem isso, o cadastro que veio
      do banco era comparado com a foto antiga e reenviado a cada
@@ -11225,9 +11259,13 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     d.discriminacao_escrita === '' && d.discriminacao === d.discriminacao_padrao, '');
 
   /* A EDICAO, com as duas travas. */
+  /* v151: apagar o protocolo deixou de ser recusado. A trava fazia
+     QUALQUER gravação desta tela com o campo vazio voltar como erro
+     — inclusive a de quem só queria corrigir o texto da nota. */
   const ed = S.editarFaturamento({ centro: centro, competencia: comp, protocolo: '' });
-  verificar('v142 — apagar o protocolo de competencia autorizada e recusado',
-    !!ed.erro && S.dossieFaturamento(centro, comp).protocolo === 'QA-142', ed.erro || '(aceitou)');
+  verificar('v151 — apagar o protocolo e aceito, e nao trava a tela',
+    ed.ok && S.dossieFaturamento(centro, comp).protocolo === '', JSON.stringify(ed.erro));
+  S.editarFaturamento({ centro: centro, competencia: comp, protocolo: 'QA-142' });
   const ok = S.editarFaturamento({ centro: centro, competencia: comp,
     discriminacao: 'corrigido pela diretoria', protocolo: 'QA-142-B' });
   verificar('v142 — e a edicao legitima grava e diz o que mudou',
@@ -11693,12 +11731,16 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     />Insal\/Peric</.test(dpTela) && !/Insalubridade\/Pericul\./.test(dpTela), '');
   verificar('v148 — a grade da folha nao tem mais rolagem lateral propria',
     !/parcelas" style="overflow-x:auto;display:block"/.test(dpTela) &&
-    /table class="parcelas tab-folha"/.test(dpTela), '');
+    /table class="parcelas tab-cabe tab-folha"/.test(dpTela), '');
+  /* v149: a largura fixa e a truncagem saíram para `tab-cabe`, que a
+     folha e os cadastros dividem. A grade da folha guarda só o que é
+     dela: a fonte menor e as colunas simétricas. */
   verificar('v148 — as colunas tem largura fixa, para o nome poder truncar',
-    /table\.tab-folha\{table-layout:fixed;width:100%;font-size:11px;\}/.test(cssG) &&
-    /table\.tab-folha td\.nome\{overflow:hidden;text-overflow:ellipsis/.test(cssG), '');
+    /table\.tab-cabe\{table-layout:fixed;width:100%;\}/.test(cssG) &&
+    /table\.tab-cabe td\.trunca,table\.tab-cabe td\.trunca \.sub\{/.test(cssG) &&
+    /table\.tab-folha th\.cv,table\.tab-folha th\.ce\{width:6%;\}/.test(cssG), '');
   verificar('v148 — o nome truncado guarda o nome inteiro no title',
-    /<td class="nome" title="/.test(dpTela), '');
+    /<td class="nome trunca" title="/.test(dpTela), '');
 
   /* A TELA DO CONTRATO: o seletor de lado e o botao de excluir. */
   const ctTela = fsG.readFileSync(__dirname + '/js/ui-contratos.js', 'utf8');
@@ -11722,6 +11764,224 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /U\.esc\(e\.centro \+ '\|' \+ e\.competencia\)/.test(fatTela), '');
   verificar('v148 — e a composicao do "Ver / editar" e digitavel por setor',
     /data-rv-setor=/.test(fatTela) && /id="rv-setor-total"/.test(fatTela), '');
+  S.setUsuario('u8');
+})();
+
+/* ── v149: cadastros agrupados por cliente e cabendo na tela ───── */
+(function () {
+  const fsH = require('fs');
+  const S = sandbox.window.ERP.store, D = sandbox.window.ERP.dados, Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+  const cad = fsH.readFileSync(__dirname + '/js/ui-cadastros.js', 'utf8');
+  const cssH = fsH.readFileSync(__dirname + '/css/erp.css', 'utf8');
+
+  /* AGRUPAR PELO CLIENTE, não pela unidade. "Fortaleza" juntava numa
+     faixa só projetos de clientes diferentes que por acaso ficam na
+     mesma cidade — e o título não dizia de quem eram. */
+  verificar('v149 — a lista de projetos agrupa pelo cliente, nao pela unidade',
+    /const cli = nomeCliente\(c\) \|\| '— sem cliente vinculado —';/.test(cad) &&
+    !/const uni = c\.unidade \|\| '— estruturais —';/.test(cad), '');
+  verificar('v149 — a faixa do titulo cobre as 15 colunas da tabela',
+    /colspan="15"/.test(cad) && !/colspan="14"/.test(cad), '');
+  /* O cliente de um projeto tem porta própria no cadastro: a tela
+     agrupa pelo que ela diz, não por uma regra paralela. */
+  const pjComCliente = D.centros.find(c => c.tipo === 'projeto' && D.clienteDoCentro(c.id));
+  verificar('v149 — o cliente do projeto vem de clienteDoCentro',
+    !!pjComCliente && !!D.clienteDoCentro(pjComCliente.id).nome, '');
+  /* Todo projeto do mesmo cliente cai no mesmo grupo: se dois
+     projetos do HGB saissem em faixas diferentes, o agrupamento nao
+     estaria agrupando nada. */
+  const doGrupo = D.centros.filter(c => c.tipo === 'projeto' && c.grupo_faturamento === 'GHC - HGB');
+  const clientesDoGrupo = doGrupo.map(c => (D.clienteDoCentro(c.id) || {}).id);
+  verificar('v149 — os 7 setores do HGB tem todos o mesmo cliente',
+    doGrupo.length === 7 && new Set(clientesDoGrupo).size === 1, clientesDoGrupo.join(','));
+
+  /* AS DUAS TABELAS TEM DE CABER NA TELA. */
+  verificar('v149 — a tabela de projetos usa a contencao de largura',
+    /<table class="tab-cabe"><thead><tr>' \+\s*\n\s*'<th style="width:4\.2%">/.test(cad), '');
+  verificar('v149 — e a de clientes tambem',
+    /<table class="tab-cabe"><thead><tr>' \+\s*\n\s*'<th style="width:30%">Cliente<\/th>/.test(cad), '');
+  verificar('v149 — o mecanismo de caber na tela mora num lugar so',
+    /table\.tab-cabe\{table-layout:fixed;width:100%;\}/.test(cssH) &&
+    /table\.tab-cabe td\.trunca,table\.tab-cabe td\.trunca \.sub\{/.test(cssH), '');
+  verificar('v149 — a grade da folha reaproveita o mesmo mecanismo',
+    /table class="parcelas tab-cabe tab-folha"/.test(
+      fsH.readFileSync(__dirname + '/js/ui-dp.js', 'utf8')) &&
+    !/table\.tab-folha\{table-layout:fixed/.test(cssH), '');
+  /* PIS/COFINS abreviado na COLUNA, inteiro no balao e no formulario:
+     abreviacao sem o nome inteiro em algum lugar e adivinhacao. */
+  verificar('v149 — PIS/COFINS vira "Pis/Cof" na coluna',
+    /\['pis_cofins', 'Pis\/Cof', 'PIS\/COFINS'\]/.test(cad), '');
+  verificar('v149 — e o nome inteiro fica no balao da coluna',
+    /title="' \+ U\.esc\(i\[2\] \|\| i\[1\]\) \+ '">' \+ i\[1\]/.test(cad), '');
+  verificar('v149 — e tambem no rotulo do formulario do projeto',
+    /<label>' \+ U\.esc\(i\[2\] \|\| i\[1\]\) \+ '<\/label>/.test(cad), '');
+  /* A coluna de projetos do cliente trunca, mas guarda TODOS no
+     balao: cortar sem dizer quais sao esconde o que se procura ali. */
+  verificar('v149 — a coluna de projetos do cliente trunca',
+    /<td class="desc trunca"' \+ \(pjs\.length \? ' title="' \+ U\.esc\(todosPjs\.join\(', '\)\)/.test(cad), '');
+  /* A unidade saiu do titulo da faixa e foi para a linha de apoio do
+     projeto: continua a vista de quem procura por lugar. */
+  verificar('v149 — a unidade continua visivel na linha do projeto',
+    /\(c\.unidade \? ' · ' \+ U\.esc\(c\.unidade\) : ''\)/.test(cad), '');
+  S.setUsuario('u8');
+})();
+
+/* ── v150: o dobro na aba Status, o envio ao cliente e o vinculo ── */
+(function () {
+  const fsI = require('fs');
+  const S = sandbox.window.ERP.store, D = sandbox.window.ERP.dados, Ut = sandbox.window.ERP.util;
+  S.setUsuario('u5');
+
+  /* O DOBRO. Com a nota emitida, a previsao e a nota estavam as duas
+     na soma da aba Status: R$ 104.700,00 + R$ 104.700,00 de um
+     faturamento que o financeiro contava uma vez so. */
+  const comp = '2069-03';
+  const pj = D.centros.find(c => c.tipo === 'projeto' && !c.grupo_faturamento && c.ativo !== false);
+  S.confirmarFaturamentoProdutividade({ centro: pj.id, competencia: comp,
+    faturamento: 104700, produtividade: 0, forcar: true });
+  S.autorizarFaturamento(pj.id, comp, { protocolo: 'OF-150', sem_produtividade: true });
+  const nf = S.criarReceber({ numero: 'QA150', emissao: comp + '-20', centro: pj.id,
+    competencia: comp, valor_bruto: 104700, cliente_nome: 'QA', origem: 'nota',
+    forcar_sem_liberacao: true });
+  verificar('v150 — o cenario tem previsao E nota no contas a receber',
+    S.st.receber.filter(r => r.centro === pj.id && r.competencia === comp &&
+      ['cancelado', 'substituido'].indexOf(r.status) < 0).length === 2, '');
+  const linha = () => S.statusFaturamento({ centro: pj.id, competencia: comp })[0] || {};
+  verificar('v150 — a aba Status conta a nota uma vez so, nao o dobro',
+    Math.abs(linha().faturado_bruto - 104700) < 0.01, linha().faturado_bruto);
+  verificar('v150 — e o Resultado por projeto le o mesmo numero',
+    Math.abs((S.resultadoFaturamento({ centro: pj.id, competencia: comp })[0] || {}).faturamento - 104700) < 0.01, '');
+  /* Recusado o vinculo, a previsao volta a valer e ja nao tem
+     `conferir`: dai em diante e o filtro de ORIGEM, sozinho, que
+     impede a soma dobrada. */
+  const pvId = S.st.receber.find(r => r.origem === 'previsao' && r.centro === pj.id &&
+    r.competencia === comp).id;
+  S.recusarVinculo(pvId);
+  verificar('v150 — recusado o vinculo, a previsao volta a valer inteira',
+    (S.st.receber.find(x => x.id === pvId) || {}).status === 'previsto' &&
+    !(S.st.receber.find(x => x.id === pvId) || {}).conferir, '');
+  verificar('v150 — e mesmo assim a aba Status nao soma previsao com nota',
+    Math.abs(linha().faturado_bruto - 104700) < 0.01, linha().faturado_bruto);
+
+  /* ENVIADA AO CLIENTE: emitir e enviar sao dois atos. */
+  verificar('v150 — faturado e nao enviado conta como pendencia',
+    linha().etapa === undefined || S.esteiraFaturamento({ centro: pj.id, competencia: comp,
+      sem_agrupar: true })[0].falta_enviar === true, '');
+  const env = S.marcarEnvioAoCliente(pj.id, comp, true, 'e-mail faturamento@cliente · protocolo 4471');
+  const le = () => S.esteiraFaturamento({ centro: pj.id, competencia: comp, sem_agrupar: true })[0] || {};
+  verificar('v150 — marcar como enviada guarda data, nome e caminho',
+    env.ok && !!le().enviado_cliente_em && !!le().enviado_cliente_por &&
+    /protocolo 4471/.test(le().enviado_cliente_como || ''), JSON.stringify(env.erro));
+  verificar('v150 — e sai da conta de "a enviar"', le().falta_enviar === false, '');
+  verificar('v150 — desfazer devolve a pendencia',
+    S.marcarEnvioAoCliente(pj.id, comp, false).ok && le().falta_enviar === true, '');
+  /* Nao se marca o envio de um documento que nao existe. */
+  const semNota = D.centros.find(c => c.tipo === 'projeto' && !c.grupo_faturamento &&
+    c.ativo !== false && c.id !== pj.id);
+  S.confirmarFaturamentoProdutividade({ centro: semNota.id, competencia: comp,
+    faturamento: 5000, produtividade: 0, forcar: true });
+  verificar('v150 — marcar envio sem nota emitida e recusado',
+    !!S.marcarEnvioAoCliente(semNota.id, comp, true, 'x').erro, '');
+  verificar('v150 — e quem nem faturou nao aparece como "a enviar"',
+    S.esteiraFaturamento({ centro: semNota.id, competencia: comp, sem_agrupar: true })[0]
+      .falta_enviar === false, '');
+  verificar('v150 — o filtro "a enviar" existe na esteira',
+    S.esteiraFaturamento({ falta_enviar: true }).every(l => l.falta_enviar === true), '');
+
+  /* O VINCULO: escolher outra previsao. */
+  S.vincularNotaAPrevisao(nf.receber.id, pvId);
+  const compAntes = Ut.compDe(Ut.addMeses(comp + '-01', -1));
+  const compDepois = Ut.compDe(Ut.addMeses(comp + '-01', 2));
+  S.confirmarFaturamentoProdutividade({ centro: pj.id, competencia: compAntes,
+    faturamento: 98000, produtividade: 0, forcar: true });
+  S.confirmarFaturamentoProdutividade({ centro: pj.id, competencia: compDepois,
+    faturamento: 91000, produtividade: 0, forcar: true });
+  const cand = S.previsoesParaVincular(nf.receber.id);
+  const comps = (cand.previsoes || []).map(p => p.competencia);
+  verificar('v150 — as candidatas trazem as previsoes abertas por perto',
+    comps.indexOf(comp) > -1 && comps.indexOf(compAntes) > -1 && comps.indexOf(compDepois) > -1,
+    comps.join(', '));
+  verificar('v150 — a do mes da nota vem primeiro, marcada como a sugerida',
+    comps[0] === comp && cand.previsoes[0].atual === true, comps[0]);
+  /* A proximidade vale para os dois sentidos: 1 mes antes vem antes
+     de 2 meses depois. */
+  verificar('v150 — e a ordem por proximidade vai para os dois lados',
+    comps.indexOf(compAntes) < comps.indexOf(compDepois), comps.join(' < '));
+  /* Candidata presa a OUTRA nota nao se oferece nem se aceita. */
+  const comp2 = Ut.compDe(Ut.addMeses(comp + '-01', -2));
+  S.confirmarFaturamentoProdutividade({ centro: pj.id, competencia: comp2,
+    faturamento: 7000, produtividade: 0, forcar: true });
+  S.autorizarFaturamento(pj.id, comp2, { protocolo: 'OF-151', sem_produtividade: true });
+  S.criarReceber({ numero: 'QA150-B', emissao: comp2 + '-20', centro: pj.id,
+    competencia: comp2, valor_bruto: 7000, cliente_nome: 'QA', origem: 'nota',
+    forcar_sem_liberacao: true });
+  const presa = S.st.receber.find(x => x.origem === 'previsao' && x.centro === pj.id &&
+    x.competencia === comp2);
+  verificar('v150 — previsao presa a outra nota e recusada',
+    !!S.vincularNotaAPrevisao(nf.receber.id, presa.id).erro, '');
+  verificar('v150 — e nem aparece entre as candidatas',
+    (S.previsoesParaVincular(nf.receber.id).previsoes || [])
+      .every(p => p.id !== presa.id), '');
+  /* Trocar solta a anterior: presa, ela ficaria fora das somas para
+     sempre — o dobro do estrago que o vinculo existe para evitar. */
+  const alvo = (S.previsoesParaVincular(nf.receber.id).previsoes || [])
+    .find(p => p.competencia === compAntes);
+  const tr = S.vincularNotaAPrevisao(nf.receber.id, alvo.id);
+  verificar('v150 — trocar a previsao amarra a nova',
+    tr.ok && (S.st.receber.find(x => x.id === alvo.id) || {}).conferir === nf.receber.id, '');
+  verificar('v150 — e solta a anterior, que volta a valer inteira',
+    !(S.st.receber.find(x => x.id === pvId) || {}).conferir &&
+    (S.st.receber.find(x => x.id === pvId) || {}).status === 'previsto', '');
+
+  /* A TELA. */
+  const fatT = fsI.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const recT = fsI.readFileSync(__dirname + '/js/ui-receber.js', 'utf8');
+  verificar('v150 — a linha faturada tem a flag de envio, avermelhada quando falta',
+    /btn-nf-falta" data-est-env/.test(fatT) && /data-est-env=/.test(fatT), '');
+  verificar('v150 — e a contagem "A enviar" fica no topo, com os outros filtros',
+    /data-es-enviar/.test(fatT) && /A enviar<b>/.test(fatT), '');
+  verificar('v150 — o filtro chega na consulta, e nao so no estado da tela',
+    /S\.esteiraFaturamento\(\{ falta_enviar: true/.test(fatT), '');
+  /* O codigo interno da previsao ("PREV-037-202610") nao identifica
+     nada para quem decide o vinculo. */
+  verificar('v150 — o vinculo mostra os dois lados por projeto e competencia',
+    /<th>Previsão sugerida<\/th>/.test(recT) && /<th>Nota emitida<\/th>/.test(recT) &&
+    !/U\.esc\(v\.previsto\.numero\)/.test(recT), '');
+  verificar('v150 — e tem como trocar a previsao sugerida',
+    /data-vinc-troca=/.test(recT) && /function trocarPrevisao/.test(recT), '');
+  S.setUsuario('u8');
+})();
+
+/* ── v151: o RPS so com o que for marcado ───────────────────────── */
+(function () {
+  const fsJ = require('fs');
+  const S = sandbox.window.ERP.store, D = sandbox.window.ERP.dados;
+  const fatK = fsJ.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  S.setUsuario('u5');
+
+  /* Cinco liberados, so um pela matriz: o arquivo levava os cinco e
+     nao havia como gerar so o que ele precisava. */
+  verificar('v151 — cada cobranca pronta tem caixa de marcar no RPS',
+    /data-rps-sel=/.test(fatK), '');
+  verificar('v151 — e o arquivo leva so as marcadas',
+    /S\.itensParaRPS\(rpsComp\)\.filter\(function \(i\) \{\s*\n\s*return rpsSel === null \|\| rpsSel\.has\(refRps\(i\)\);/.test(fatK), '');
+  verificar('v151 — todas comecam marcadas: o caso comum segue um clique so',
+    /let rpsSel = null;/.test(fatK) &&
+    /rpsEscolhido = \(i, pronto\) => pronto && \(rpsSel === null \|\| rpsSel\.has\(refRps\(i\)\)\)/.test(fatK), '');
+  verificar('v151 — o botao conta as MARCADAS, nao as prontas',
+    /'>Gerar arquivo \(' \+ escolhidos\.length \+ ' RPS\)<\/button>'/.test(fatK), '');
+  verificar('v151 — a tabela diz por qual empresa cada cobranca sai',
+    /<th>Emite<\/th>/.test(fatK) &&
+    /U\.esc\(S\.apelidoEmpresa\(S\.empresaEmissora\(i\.centro, i\.competencia\)\)\)/.test(fatK), '');
+  verificar('v151 — e o aviso de "empresas diferentes" olha as marcadas',
+    /const quemEscolhido = S\.empresaDoLoteRps\(escolhidos\.map/.test(fatK), '');
+  /* O campo do protocolo abre com o que ja esta gravado: vazio, ele
+     escondia o numero e convidava a digitar outro parecido. */
+  verificar('v151 — o campo do protocolo abre com o numero ja gravado',
+    /id="es-prot" value="' \+\s*\n\s*U\.esc\(l\.protocolo \|\| ''\)/.test(fatK), '');
+  verificar('v151 — e a tela diz que o faturamento nao fica parado por causa dele',
+    /não fica parado /.test(fatK), '');
   S.setUsuario('u8');
 })();
 

@@ -179,6 +179,7 @@ ERP.dadosRemoto = (function () {
      ficar visível, que é quando a pessoa realmente vai olhar. */
   let recarregando = false;
 
+  let esperando = null;
   async function recarregar(silencioso) {
     if (recarregando) return { ok: false, motivo: 'já em andamento' };
     /* Nunca no meio de uma gravação. O que está sendo enviado ainda
@@ -186,8 +187,36 @@ ERP.dadosRemoto = (function () {
        trocar o chão enquanto alguém anda nele. A recarga seguinte
        pega tudo — são cinco minutos, ou o próximo aviso de tempo
        real, que chega assim que a gravação terminar. */
+    /* QUANDO A RECARGA SE SEGURA, ELA VOLTA SOZINHA.
+
+       As duas travas abaixo adiam a recarga. Sem voltar, o aviso de
+       tempo real que chegou naquele instante se perderia e a tela
+       ficaria velha até o tique de cinco minutos. Um segundo depois
+       a gravação já terminou, e a recarga acontece. */
+    const maisTarde = function (motivo) {
+      if (esperando) clearTimeout(esperando);
+      esperando = setTimeout(function () { esperando = null; recarregar(true); }, 1000);
+      return { ok: false, motivo: motivo };
+    };
     if (ERP.persistencia && ERP.persistencia.gravando && ERP.persistencia.gravando()) {
-      return { ok: false, motivo: 'gravação em andamento' };
+      return maisTarde('gravação em andamento');
+    }
+    /* NEM COM ALTERAÇÃO ESPERANDO PARA SER GRAVADA.
+
+       A trava acima só pegava a gravação JÁ EM CURSO. Entre o
+       clique em Salvar e o início do envio passam 400ms em que o
+       que foi digitado existe só na memória — e recarregar ali
+       reconstruía as listas a partir do banco, levando junto o que
+       ainda não tinha sido enviado. A gravação seguinte não achava
+       diferença nenhuma, e o cadastro se perdia sem erro.
+
+       Em tempo real isso dispara a cada mudança que qualquer pessoa
+       faz no banco, então basta alguém do financeiro salvar no
+       mesmo segundo. Daí "salvei três vezes e não grava": não era
+       sempre, era quando dava o azar. */
+    if (ERP.persistencia && ERP.persistencia.alteracaoNaoGravada &&
+        ERP.persistencia.alteracaoNaoGravada()) {
+      return maisTarde('alteração ainda não gravada');
     }
     recarregando = true;
     try {
