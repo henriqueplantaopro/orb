@@ -45,15 +45,62 @@ ERP.rpsBarueri = (function () {
   const data8 = d => String(d || '').replace(/\D/g, '').slice(0, 8);
 
   /* A discriminação é impressa num retângulo de 100 colunas por 13
-     linhas, com "|" marcando a quebra — o manual exige a barra a cada
-     100 caracteres. */
+     linhas, com "|" marcando a quebra de linha.
+
+     v153: ela saía como uma tira só. Três coisas estragavam a nota,
+     e as três eram escolha nossa, não exigência do layout:
+
+       1. As quebras de linha que a pessoa digitou viravam espaço, e
+          a barra entrava a cada 100 caracteres contados — cortando
+          no meio da palavra ("RODRIG|UES"). O manual pede a barra
+          como delimitador de quebra, não a cada 100 caracteres
+          exatos: 100 é o LIMITE da linha, não a medida dela.
+       2. O texto ia em maiúsculas, porque `txt` sobe a caixa. O
+          layout pede Texto; quem emite à mão manda caixa mista, e
+          fica legível.
+       3. Linha além da 13ª sumia sem avisar.
+
+     Agora: respeita a quebra que a pessoa digitou, quebra por
+     PALAVRA quando a linha passa de 100, e preserva a caixa. */
+  function quebrarEm100(linha) {
+    if (linha.length <= 100) return [linha];
+    const fora = [];
+    let atual = '';
+    linha.split(' ').forEach(function (p) {
+      /* Palavra sozinha maior que a coluna: aí não há onde quebrar
+         sem cortar, e cortar é melhor que estourar a linha. */
+      while (p.length > 100) {
+        if (atual) { fora.push(atual); atual = ''; }
+        fora.push(p.slice(0, 100));
+        p = p.slice(100);
+      }
+      if (!atual) { atual = p; return; }
+      if ((atual + ' ' + p).length <= 100) atual += ' ' + p;
+      else { fora.push(atual); atual = p; }
+    });
+    if (atual) fora.push(atual);
+    return fora;
+  }
+
   function discriminacao(texto) {
-    const limpo = semAcento(texto).replace(/[\r\n]+/g, ' ').replace(/\s+/g, ' ').trim();
     const linhas = [];
-    for (let i = 0; i < limpo.length && linhas.length < 13; i += 100) {
-      linhas.push(limpo.slice(i, i + 100));
+    /* A QUEBRA É SEPARADA ANTES DE `semAcento`. Ela troca por espaço
+       tudo o que está fora de 0x20-0xFF, e `\n` é 0x0A — ou seja,
+       chamá-la primeiro apaga justamente as quebras que queremos
+       respeitar. Foi assim que a primeira tentativa desta correção
+       saiu idêntica ao defeito. */
+    String(texto === null || texto === undefined ? '' : texto)
+      .replace(/\r\n?/g, '\n').split('\n').forEach(function (l) {
+        quebrarEm100(semAcento(l).replace(/[ \t]+/g, ' ').trim())
+          .forEach(function (p) { linhas.push(p); });
+      });
+    /* O retângulo tem 13 linhas. Cortar em silêncio esconde texto
+       que o cliente exigiu na nota, então a última linha avisa. */
+    if (linhas.length > 13) {
+      linhas.length = 12;
+      linhas.push('(continua - texto maior que as 13 linhas da nota)');
     }
-    return txt(linhas.join('|'), 1000);
+    return semAcento(linhas.join('|')).slice(0, 1000).padEnd(1000, ' ');
   }
 
   /* ── o que falta pra emitir ─────────────────────────────
@@ -135,9 +182,18 @@ ERP.rpsBarueri = (function () {
       txt(item.tomador_uf, 2) +
       num(item.tomador_cep, 8) +
       txt(item.tomador_email || '', 152) +
+      /* v153: O VALOR DA FATURA É O LÍQUIDO.
+
+         Saía o bruto, e só quando havia número de fatura — então na
+         prática saía vazio e a nota imprimia "Fatura Nº 000000" sem
+         valor nenhum. O que o cliente precisa ver é quanto vai
+         receber: total da nota menos as retenções. É assim que sai
+         na nota emitida à mão (NF 198: 190.800,00 de serviço,
+         11.734,20 retidos, 179.065,80 de fatura). */
       num(item.fatura || '', 6) +
-      (item.fatura ? val(item.valor, 15) : num('', 15)) +
-      txt(item.fatura ? (item.forma_pagamento || 'DEPOSITO') : '', 15) +
+      val(Math.max(0, (item.valor || 0) * (item.quantidade || 1) -
+        (item.retencoes_total || 0)), 15) +
+      txt(item.forma_pagamento || 'DEPOSITO', 15) +
       discriminacao(item.discriminacao);
   }
 

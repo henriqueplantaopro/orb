@@ -783,6 +783,28 @@ ERP.persistencia = (function () {
      que tem coluna) de casa própria (campo que só existe no extra),
      e ela mora aqui, no MAPA. */
   const colunasDe = nome => (MAPA[nome] && MAPA[nome].colunas) || null;
+
+  /* Quais campos o banco devolveu e a leitura descartou.
+
+     Só conta o que NÃO tem coluna declarada: para esses, o `extra` é
+     a única casa e sumiço é perda de dado. Campo COM coluna é outra
+     história — ali o `extra` é resíduo antigo e ser ignorado é o
+     comportamento certo (v97), não defeito. */
+  let perdaNaLeitura = [];
+  function camposPerdidos(nome, linhas) {
+    const cols = colunasDe(nome);
+    if (!cols) return [];
+    const perdidos = {};
+    (linhas || []).forEach(function (l) {
+      if (!l || !l.extra || typeof l.extra !== 'object') return;
+      const o = doBanco(l, nome);
+      Object.keys(l.extra).forEach(function (k) {
+        if (l.extra[k] === null || cols.indexOf(k) >= 0) return;
+        if (o[k] === undefined) perdidos[k] = true;
+      });
+    });
+    return Object.keys(perdidos);
+  }
   const doBanco = (linha, nome) => ERP.util.doBanco(linha, colunasDe(nome));
 
   /* ── carga inicial ──────────────────────────────────── */
@@ -838,6 +860,7 @@ ERP.persistencia = (function () {
        deixava 26 módulos em memória. Agora o módulo problemático
        fica indisponível e o resto funciona. */
     degradadas = [];
+    perdaNaLeitura = [];
     /* As 25 leituras vão JUNTAS, não uma esperando a outra. Em fila
        o tempo era a soma de todas — uns segundos em internet boa, e
        bem mais em internet ruim. Em paralelo é o tempo da mais
@@ -865,7 +888,27 @@ ERP.persistencia = (function () {
       if (!Array.isArray(alvo)) return;
       alvo.length = 0;
       (r.data || []).forEach(function (l) { alvo.push(doBanco(l, r.nome)); });
+      const perdidos = camposPerdidos(r.nome, r.data);
+      if (perdidos.length) perdaNaLeitura.push(r.nome + ': ' + perdidos.join(', '));
     });
+    /* O ALARME QUE FALTAVA.
+
+       As retenções do cliente sumiram três vezes, em três causas
+       diferentes, e as três vezes o sistema não disse NADA: gravava,
+       mostrava, e o F5 trazia o valor velho. Cada rodada custou uma
+       noite porque a perda era invisível — só dava para descobrir
+       comparando o que foi digitado com o que voltou, à mão.
+
+       Isto não impede um defeito novo; impede que ele seja mudo. Se
+       algum dia um campo guardado no `extra` deixar de voltar, a
+       faixa vermelha nomeia a coleção e o campo na hora, em vez de
+       alguém notar semanas depois que um cadastro "não salva". */
+    if (perdaNaLeitura.length) {
+      console.error('Campos que nao voltaram do banco:', perdaNaLeitura);
+      marcarPendencia(perdaNaLeitura.map(function (p) {
+        return 'o banco devolveu sem gravar: ' + p;
+      }));
+    }
 
     /* O que já está na trilha não é reenviado. Lê só os ids, que é
        o suficiente e não traz a trilha inteira para a memória. */
