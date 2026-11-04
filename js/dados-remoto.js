@@ -69,7 +69,7 @@ ERP.dadosRemoto = (function () {
       return 'não foi possível ler ' + fonte + ': ' + error.message;
     }
     D.funcionarios.length = 0;
-    (data || []).forEach(function (f) { D.funcionarios.push(limpar(f)); });
+    (data || []).forEach(function (f) { D.funcionarios.push(limpar(f, 'funcionarios')); });
     /* Marca o que veio do banco como já gravado, para a primeira
        sincronização não reenviar a lista inteira. */
     if (ERP.persistencia && ERP.persistencia.fotoFuncionarios) {
@@ -107,32 +107,12 @@ ERP.dadosRemoto = (function () {
   /* O banco guarda `null`; o sistema, em vários pontos, testa
      `if (x.campo)` e trata string vazia e ausência igual. Tirar os
      nulos evita que um `null` vire o texto "null" numa tela. */
-  function limpar(linha) {
-    const o = {};
-    Object.keys(linha).forEach(function (k) {
-      if (k === 'extra') return;
-      if (linha[k] !== null) o[k] = linha[k];
-    });
-    /* RESGATE DO QUE FICOU PRESO NO `extra`.
-
-       A gravacao manda para `extra`, em JSON, tudo o que nao tem
-       coluna propria. As outras tabelas desempacotam isso na
-       leitura; funcionarios nunca desempacotou — e por isso nove
-       campos digitados na ficha sumiam na recarga, sem erro e sem
-       aviso.
-
-       As colunas foram criadas (SQL 65), entao daqui pra frente o
-       caminho normal e a coluna. Isto aqui resgata o que ja foi
-       salvo antes dela existir, e e por isso que a COLUNA MANDA:
-       `extra` so preenche o que a linha nao trouxe. */
-    if (linha.extra && typeof linha.extra === 'object') {
-      Object.keys(linha.extra).forEach(function (k) {
-        if (o[k] !== undefined) return;
-        if (linha.extra[k] !== null) o[k] = linha.extra[k];
-      });
-    }
-    return o;
-  }
+  /* v152: a mesma função da carga inicial, não uma segunda cópia
+     da regra — ver ERP.util.doBanco. As duas discordavam, e a
+     discordância custou as retenções do cliente. */
+  const colunasDe = nome => (ERP.persistencia && ERP.persistencia.colunasDe
+    ? ERP.persistencia.colunasDe(nome) : null);
+  const limpar = (linha, nome) => ERP.util.doBanco(linha, colunasDe(nome));
 
   /* A matriz vem como uma linha por cruzamento e vira o formato do
      sistema: { perfil: { modulo: 'VMFA' } }. */
@@ -386,7 +366,7 @@ ERP.dadosRemoto = (function () {
       alvo.length = 0;
       data.slice()
         .sort(function (x, y) { return compararNatural(x[item.ordem], y[item.ordem]); })
-        .forEach(function (l) { alvo.push(limpar(l)); });
+        .forEach(function (l) { alvo.push(limpar(l, item.destino)); });
       guardados.forEach(function (x) {
         if (!alvo.some(function (y) { return y.id === x.id; })) alvo.push(x);
       });

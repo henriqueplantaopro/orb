@@ -777,22 +777,13 @@ ERP.persistencia = (function () {
 
      Então a coluna manda. `extra` só preenche o que a linha não
      trouxe. */
-  function doBanco(linha) {
-    const o = {};
-    const temColuna = {};
-    Object.keys(linha).forEach(function (k) {
-      if (k === 'extra') return;
-      temColuna[k] = true;
-      if (linha[k] !== null) o[k] = linha[k];
-    });
-    if (linha.extra && typeof linha.extra === 'object') {
-      Object.keys(linha.extra).forEach(function (k) {
-        if (temColuna[k]) return;
-        o[k] = linha.extra[k];
-      });
-    }
-    return o;
-  }
+  /* v152: era aqui que o F5 perdia o que estava no `extra`. A regra
+     agora é uma só, em ERP.util.doBanco — ver o comentário de lá.
+     A lista de colunas DECLARADAS é o que distingue resíduo (campo
+     que tem coluna) de casa própria (campo que só existe no extra),
+     e ela mora aqui, no MAPA. */
+  const colunasDe = nome => (MAPA[nome] && MAPA[nome].colunas) || null;
+  const doBanco = (linha, nome) => ERP.util.doBanco(linha, colunasDe(nome));
 
   /* ── carga inicial ──────────────────────────────────── */
   /* Com banco configurado, o movimento de EXEMPLO sai antes de a
@@ -873,7 +864,7 @@ ERP.persistencia = (function () {
       const alvo = st[r.nome];
       if (!Array.isArray(alvo)) return;
       alvo.length = 0;
-      (r.data || []).forEach(function (l) { alvo.push(doBanco(l)); });
+      (r.data || []).forEach(function (l) { alvo.push(doBanco(l, r.nome)); });
     });
 
     /* O que já está na trilha não é reenviado. Lê só os ids, que é
@@ -1657,5 +1648,9 @@ ERP.persistencia = (function () {
            referenciasDescartadas: referenciasDescartadas,
            pendencias: () => diferencas().length + funcionariosPendentes(),
            fotoFuncionarios: fotoFuncionarios, ligado: () => ligado,
-           degradadas: () => degradadas.slice() };
+           degradadas: () => degradadas.slice(),
+           /* v152: a recarga em tempo real precisa da MESMA lista de
+              colunas declaradas que a carga inicial usa, senão as
+              duas voltam a discordar — que foi o defeito. */
+           colunasDe: colunasDe };
 })();

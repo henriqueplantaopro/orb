@@ -556,7 +556,67 @@ ERP.util = (function () {
     try { ouvinteCarga(texto, feitos, total); } catch (e) {}
   }
 
+  /* v152: UMA REGRA SÓ PARA DESEMPACOTAR O `extra`.
+
+     O banco guarda em `extra` (jsonb) tudo o que não tem coluna
+     própria. Havia DUAS funções que desfaziam isso — `doBanco`, na
+     carga inicial, e `limpar`, na recarga em tempo real — e elas
+     discordavam:
+
+       doBanco:  se a COLUNA EXISTE na linha, ignora o extra
+       limpar:   se a coluna tem VALOR, ignora o extra
+
+     Numa tabela com coluna vazia de mesmo nome, as duas davam
+     respostas opostas: a recarga trazia o valor e o F5 trazia nada.
+     Foi o que fez as retenções do cliente sumirem três vezes — elas
+     gravavam certo, o banco guardava certo, e só a carga inicial as
+     descartava. Nenhum erro, nenhum aviso: a tela simplesmente
+     voltava ao que era antes.
+
+     Nenhuma das duas estava certa, e a distinção que faltava é
+     outra: importa se o campo TEM COLUNA DECLARADA no mapa de
+     gravação, não se a linha trouxe a coluna.
+
+       campo COM coluna declarada → a coluna manda, mesmo vazia.
+         É a regra da v97, e ela existe por um caso caro: uma conta
+         inválida ficou presa no `extra` de quando a coluna ainda
+         não existia, o banco mostrava a conta certa, o sistema
+         usava a velha, e a gravação caía em "produtos_conta_fkey"
+         apontando para algo que ninguém achava. Para esses campos
+         `extra` é resíduo, e resíduo não ressuscita.
+
+       campo SEM coluna declarada → o `extra` é a casa dele.
+         `paraBanco` só escreve nas colunas conhecidas, então esse
+         campo nunca terá valor em coluna nenhuma. Coluna vazia de
+         mesmo nome ganhando dele é sempre perda de dado.
+
+     Sem a lista de colunas, vale o meio-termo seguro: coluna com
+     valor manda, coluna vazia deixa o `extra` passar.
+
+     Fica aqui, em util, porque é o único arquivo que carrega antes
+     dos dois — e porque regra em dois lugares foi o defeito. */
+  function doBanco(linha, colunas) {
+    const o = {};
+    if (!linha || typeof linha !== 'object') return o;
+    const declarada = Array.isArray(colunas)
+      ? function (k) { return colunas.indexOf(k) >= 0; }
+      : null;
+    Object.keys(linha).forEach(function (k) {
+      if (k === 'extra') return;
+      if (linha[k] !== null && linha[k] !== undefined) o[k] = linha[k];
+    });
+    if (linha.extra && typeof linha.extra === 'object') {
+      Object.keys(linha.extra).forEach(function (k) {
+        if (o[k] !== undefined) return;
+        if (declarada && declarada(k)) return;
+        if (linha.extra[k] !== null) o[k] = linha.extra[k];
+      });
+    }
+    return o;
+  }
+
   return {
+    doBanco: doBanco,
     ligarData: ligarData,
     ajustarColunas: ajustarColunas,
     PRAZO_CARGA: PRAZO_CARGA,

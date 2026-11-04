@@ -142,9 +142,23 @@ ERP.cadastros = (function () {
       'cadastro que nasceu errado.</div>';
   }
 
+  /* v152: um campo do bloco de RPS. Mostra o que ESTA empresa tem;
+     vazio significa "herda do grupo", e o placeholder mostra o que
+     seria herdado, para a pessoa ver o que vai sair no arquivo sem
+     ter de adivinhar. */
+  function campoRps(sufixo, rotulo, chave, herdado, ajuda) {
+    const meu = herdado.meu[chave];
+    const pad = herdado.base[chave];
+    return '<div><label for="em-rps-' + sufixo + '">' + rotulo + '</label>' +
+      '<input id="em-rps-' + sufixo + '" value="' + U.esc(meu == null ? '' : meu) + '"' +
+      (pad ? ' placeholder="' + U.esc(pad) + ' (do grupo)"' : '') + '>' +
+      (ajuda ? '<div class="sub">' + ajuda + '</div>' : '') + '</div>';
+  }
+
   function editarEmpresa(id) {
     const e = id ? (D.empresas || []).find(function (x) { return x.id === id; }) : null;
     const v = (campo, pad) => U.esc(e ? (e[campo] == null ? '' : e[campo]) : (pad || ''));
+    const r = { meu: (e && e.rps) || {}, base: (D.empresa && D.empresa.rps) || {} };
     ERP.app.modal({
       titulo: e ? 'Empresa · ' + (e.apelido || e.nome) : 'Nova empresa',
       corpo:
@@ -166,6 +180,31 @@ ERP.cadastros = (function () {
           '<div><label for="em-im">Inscrição municipal <span class="sub">(opcional)</span></label>' +
             '<input id="em-im" value="' + v('inscricao_municipal') + '"></div>' +
         '</div>' +
+        /* v152: OS CÓDIGOS FISCAIS DO RPS GANHARAM TELA.
+
+           Eles existiam nos dados e só podiam ser mudados por
+           script no banco. Foi isso que fez a prefeitura devolver
+           216, 807, 817 e 818 a noite inteira: o código de
+           atividade errado estava trancado no código-fonte, e não
+           havia onde corrigir. */
+        '<h2 style="font-size:12px;margin:16px 0 6px">Emissão de RPS <span class="sub">— ' +
+          'códigos fiscais desta empresa, como a prefeitura dela os conhece</span></h2>' +
+        '<div class="row3">' +
+          campoRps('serv', 'Código de atividade', 'codigo_servico', r,
+            'O da prefeitura, não o item da LC 116. Aparece em qualquer NF já emitida.') +
+          campoRps('nbs', 'Código NBS', 'nbs', r,
+            'Corresponde aos 4 primeiros dígitos do código de atividade.') +
+          campoRps('indop', 'Indicador de operação', 'ind_operacao', r,
+            'Anexo VII do portal nacional.') +
+        '</div>' +
+        '<div class="row3">' +
+          campoRps('ctrib', 'Classificação tributária IBS/CBS', 'class_trib', r,
+            'Tabela da SVRS. O CST abaixo tem de ser os 3 primeiros dígitos dela.') +
+          campoRps('strib', 'Situação tributária (CST)', 'sit_trib', r, '') +
+          campoRps('serie', 'Série do RPS', 'serie', r, '') +
+        '</div>' +
+        '<div class="ajuda">Em branco, a empresa herda o que estiver configurado para o grupo. ' +
+          'Código errado aqui não trava nada aqui — volta como arquivo recusado pela prefeitura.</div>' +
         '<label class="hb-marca" style="display:flex;margin-top:10px">' +
           '<input type="checkbox" id="em-matriz"' + (e && e.matriz ? ' checked' : '') + '> ' +
           '<span>É a matriz do grupo <span class="sub">— o documento marcado como "Único" em ' +
@@ -202,9 +241,37 @@ ERP.cadastros = (function () {
       municipio: U.val('em-mun') || null,
       uf: (U.val('em-uf') || '').toUpperCase().slice(0, 2) || null,
       codigo_ibge: (U.val('em-ibge') || '').replace(/\D/g, '') || null,
-      inscricao_municipal: U.val('em-im') || null,
+      /* v152: a prefeitura MOSTRA a inscrição pontuada (4.BX896-2) e
+         o campo do arquivo tem 7 posições exatas — a pontuação
+         empurra o último caractere para fora e a remessa volta com
+         erro 101, sem dizer por quê. Guarda limpo, aceite como
+         vier. */
+      inscricao_municipal: (U.val('em-im') || '').replace(/[^0-9A-Za-z]/g, '').toUpperCase() || null,
       matriz: !!(U.el('em-matriz') && U.el('em-matriz').checked)
     };
+
+    /* v152: os códigos fiscais do RPS. Vazio quer dizer "herda do
+       grupo", então campo em branco é omissão, não zero. */
+    const rps = {};
+    [['serv', 'codigo_servico'], ['nbs', 'nbs'], ['indop', 'ind_operacao'],
+     ['ctrib', 'class_trib'], ['strib', 'sit_trib'], ['serie', 'serie']
+    ].forEach(function (par) {
+      const el = U.el('em-rps-' + par[0]);
+      if (!el) return;
+      const txt = String(el.value || '').trim().toUpperCase();
+      if (txt) rps[par[1]] = txt;
+    });
+    /* A ÚNICA correspondência que dá para conferir sem as tabelas
+       oficiais, e o layout a enuncia: o CST é exatamente os 3
+       primeiros dígitos da classificação tributária. As outras
+       (atividade × NBS × indicador × classificação) dependem dos
+       Anexos VII e VIII e só a prefeitura valida. */
+    if (rps.class_trib && rps.sit_trib && rps.class_trib.slice(0, 3) !== rps.sit_trib) {
+      return ERP.app.erroCampo('em-rps-strib',
+        'O CST tem de ser os 3 primeiros dígitos da classificação tributária (' +
+        rps.class_trib.slice(0, 3) + ').');
+    }
+    if (U.el('em-rps-serv') || Object.keys(rps).length) campos.rps = rps;
     if (id) {
       const e = (D.empresas || []).find(function (x) { return x.id === id; });
       Object.assign(e, campos);

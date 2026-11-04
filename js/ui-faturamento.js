@@ -2961,7 +2961,12 @@ ERP.faturamento = (function () {
 
   /* Alíquotas de retenção do cliente: é daqui que sai a retenção. */
   function abrirCliente(doc) {
-    const nota = lote.notas.find(function (n) { return n.tomador.documento === doc; }) || { tomador: {} };
+    /* v152: `lote` é nulo até alguém importar um XML. A função já
+       previa nota ausente; faltava prever lote ausente, e assim ela
+       serve também para corrigir a retenção de um cliente sem ter
+       nota nenhuma na mão. */
+    const nota = ((lote && lote.notas) || [])
+      .find(function (n) { return n.tomador.documento === doc; }) || { tomador: {} };
     const cli = clientePorDoc(doc);
     const atuais = {};
     (cli && cli.retencoes ? cli.retencoes : []).forEach(function (r) { atuais[r.tributo] = r.aliquota; });
@@ -2991,16 +2996,15 @@ ERP.faturamento = (function () {
         const retencoes = TRIB.map(function (t) {
           return { tributo: t, aliquota: U.parseValor(U.val('rt-' + t)) };
         }).filter(function (r) { return r.aliquota > 0; });
-        if (cli) {
-          cli.retencoes = retencoes;
-          cli.centro_padrao = U.val('rt-centro') || null;
-        } else {
-          D.clientes.push({
-            id: 'og' + (D.clientes.length + 1) + '-' + Date.now().toString(36),
-            documento: doc, nome: nota.tomador.nome,
-            esfera: '', centro_padrao: U.val('rt-centro') || null, retencoes: retencoes
-          });
-        }
+        /* v152: PELO STORE, não direto na memória. Era aqui que a
+           retenção cadastrada se perdia: o formulário escrevia no
+           objeto vivo e nunca chamava o store — e é a chamada ao
+           store que agenda a gravação no banco. O mesmo defeito já
+           tinha sido corrigido em Cadastros › Clientes e sobreviveu
+           aqui, porque a regra morava em dois lugares. */
+        const res = S.salvarRetencoesCliente(doc, retencoes,
+          U.val('rt-centro') || null, nota.tomador.nome);
+        if (ERP.app.erroDoRetorno(res)) return;
         ERP.app.fecharModal();
         ERP.app.aviso(retencoes.length
           ? 'Retenções salvas: ' + retencoes.map(function (r) { return r.tributo + ' ' + U.num(r.aliquota) + '%'; }).join(', ') + '.'
@@ -3176,5 +3180,11 @@ ERP.faturamento = (function () {
   }
 
   return { montar: montar, render: render, baixar: baixar, renderCobertura: renderCobertura,
-    renderStatus: renderStatus, renderResultado: renderResultado, atualizarAlertaFat: atualizarAlertaFat };
+    renderStatus: renderStatus, renderResultado: renderResultado, atualizarAlertaFat: atualizarAlertaFat,
+    /* v152: exposta para que a prova consiga ABRIR esta janela e
+       clicar em Salvar. O defeito das retenções perdidas estava
+       exatamente aqui — no que a tela faz ao salvar, não no store,
+       que estava certo. Prova que chama o store direto não vê esse
+       defeito: foi o que deixou ele passar. */
+    abrirCliente: abrirCliente };
 })();
