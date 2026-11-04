@@ -15308,10 +15308,60 @@ ERP.store = (function () {
     });
   }
 
+  /* Uma linha da esteira está inativa quando o projeto está inativo
+     ou quando o CLIENTE dele está. Vale para a linha de grupo também:
+     o grupo some só quando todas as especialidades sumiram, e isso
+     acontece sozinho, porque a filtragem é feita antes de agrupar. */
+  function esteiraInativa(l) {
+    /* LINHA DE GRUPO: o grupo só é inativo quando TODAS as
+       especialidades dele são. Ela não tem `centro`, e sem este
+       desvio cairia no `clienteDoCentro(null)` abaixo — que, se
+       algum cliente tiver `centro_padrao` nulo gravado, casaria com
+       ele e marcaria todo grupo como inativo. */
+    if (l.eh_grupo) {
+      const esp = l.especialidades || [];
+      return esp.length > 0 && esp.every(function (e) { return esteiraInativa(e); });
+    }
+    const c = l.projeto || {};
+    if (c.ativo === false) return true;
+    if (!l.centro) return false;
+    const cli = D.clienteDoCentro(l.centro);
+    return !!(cli && cli.ativo === false);
+  }
+  /* Uma implementação só, chamada com o mínimo que ela precisa: a
+     regra do inativo em dois lugares daria duas respostas. */
+  const marcaInativo = (projeto, centro) => esteiraInativa({ projeto: projeto, centro: centro });
+
+  /* O QUE FICOU ESCONDIDO E AINDA TEM COISA PRA FAZER.
+
+     Esconder em silêncio é o jeito de perder nota emitida e não
+     enviada. A esteira esconde o inativo, e esta função é o que a
+     tela usa para dizer, numa linha, quantos escondeu e quantos
+     deles ainda têm faturamento em aberto — com o nome. */
+  function esteiraAberta(l) {
+    if (l.etapa !== 'faturado') return (l.valor || 0) > 0 || !!l.sem_documento;
+    return !!l.falta_enviar || !!l.sem_documento;
+  }
+  function inativosNaEsteira(f) {
+    /* Sem agrupar: o que a linha precisa dizer é QUAL projeto ficou
+       escondido, pelo nome — não "um grupo". */
+    f = Object.assign({}, f || {}, { incluir_inativos: true, sem_agrupar: true });
+    delete f.centro;
+    const ocultos = esteiraFaturamento(f).filter(esteiraInativa);
+    const abertos = ocultos.filter(esteiraAberta);
+    return {
+      total: ocultos.length,
+      abertos: abertos.length,
+      nomes: abertos.map(function (l) {
+        return (l.projeto.curto || l.projeto.nome || l.centro) + ' (' + U.fComp(l.competencia) + ')';
+      })
+    };
+  }
+
   function esteiraFaturamento(f) {
     f = f || {};
     const hoje = U.hoje();
-    const linhas = [];
+    let linhas = [];
     const vistos = {};
     const add = function (centro, competencia) {
       const chave = centro + '|' + competencia;
@@ -15332,6 +15382,9 @@ ERP.store = (function () {
       linhas.push({
         centro: centro, projeto: c, competencia: competencia, previsao: pv || null,
         etapa: etapa, indice: ETAPAS.indexOf(etapa),
+        /* Para a tela marcar a linha quando alguém pede para ver os
+           escondidos. */
+        inativo: marcaInativo(c, centro),
         /* Projeto SEM PREVISÃO salva no mês é um estado em si, e o
            mais acionável da tela: é o que alguém precisa lançar. Sem
            distinguir, ele se confundia com quem já tem previsão e
@@ -15406,6 +15459,29 @@ ERP.store = (function () {
        especialidade e nota ÚNICA. Na esteira ele é uma linha só, com as
        especialidades dentro — cada uma continua visível, mas o
        faturamento (valor, autorização, liberação) é do conjunto. */
+    /* PROJETO OU CLIENTE INATIVO SAI DA ESTEIRA.
+
+       O filtro de ativo existia só na semeadura "todo projeto ativo
+       aparece na competência pedida". Mas a lista também nasce do
+       que tem PREVISÃO salva e do que tem NOTA — e por esses dois
+       caminhos o projeto inativado voltava, com a inativação feita
+       e sem efeito nenhum na tela que mais importa.
+
+       Inativo é do PROJETO ou do CLIENTE: inativar o cliente tem de
+       limpar os projetos dele, senão a inativação precisa ser feita
+       duas vezes para ter um efeito.
+
+       Duas exceções, as duas necessárias:
+       - `f.centro`: a pergunta é sobre UM projeto, e quem abre o
+         faturamento de um projeto recém-inativado precisa ver e
+         terminar o que ficou em aberto. Filtrar aqui devolveria
+         tela vazia sem dizer por quê.
+       - `f.incluir_inativos`: é como a tela mostra os escondidos
+         quando alguém pede para ver. */
+    if (!f.centro && !f.incluir_inativos) {
+      linhas = linhas.filter(function (l) { return !esteiraInativa(l); });
+    }
+
     let lista = linhas;
     if (!f.sem_agrupar) {
       const grupos = {};
@@ -15464,6 +15540,12 @@ ERP.store = (function () {
           valor: Math.round(sts.reduce(function (t, x) { return t + x.valor; }, 0) * 100) / 100,
           lotes: sts.reduce(function (t, x) { return t + x.lotes; }, 0)
         };
+        /* A linha de grupo nasce aqui, DEPOIS da marcacao feita em
+           `add()` — então ela não tinha a marca, e um grupo todo
+           inativo voltava sem etiqueta quando alguém pedia para ver
+           os escondidos. Ela não tem `ativo` próprio: é inativa
+           quando todas as especialidades dela são. */
+        g.inativo = esteiraInativa(g);
         soltas.push(g);
       });
       lista = soltas;
@@ -20282,7 +20364,7 @@ ERP.store = (function () {
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
     statusProdutividade, NOME_STATUS_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
-    editarEstimativaEsteira, desfazerEtapaFaturamento, esteiraFaturamento, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
+    editarEstimativaEsteira, desfazerEtapaFaturamento, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
     residuoPrevisao, marcarPrevisoes, marcarParcial, salvarPrevisaoDespesa, previsoesDespesa,
     excluirPrevisaoDespesa, replicarSerieDespesa, realizadoDespesa, residuoDespesa,
     parametros, salvarParametros, salvarUsuario, eventos,

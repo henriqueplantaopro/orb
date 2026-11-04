@@ -1,0 +1,25 @@
+O QUE MUDOU NESTA VERSAO:
+
+   PROJETO E CLIENTE INATIVOS SAEM DA ESTEIRA. O filtro de ativo
+   existia so na semeadura "todo projeto ativo aparece na competencia
+   pedida". Mas a lista tambem nasce do que tem PREVISAO salva e do
+   que tem NOTA emitida - e por esses dois caminhos o inativado
+   voltava, com a inativacao feita e sem efeito nenhum na tela.
+   Inativar o CLIENTE agora tambem limpa os projetos dele.
+
+   E ESCONDIDO NAO E PERDIDO. Acima da lista, uma linha diz quantos
+   foram escondidos e NOMEIA os que ainda tem faturamento em aberto
+   (nota emitida e nao enviada, por exemplo). O botao "Inativos"
+   mostra todos, marcados. Abrir o faturamento de um projeto
+   recem-inativado continua funcionando - senao a nota em aberto
+   ficaria inalcancavel.
+
+O QUE MUDOU NA PUBLICACAO (este script):
+
+   De 1311 para 291 linhas, e de uma versao para a outra so muda a
+   linha do $VERSAO. As 362 guardas de frase sairam: o pacote traz um
+   MANIFEST.sha256 com o hash de cada arquivo. Guarda de frase so
+   pegava o que eu lembrei de listar; o hash pega qualquer arquivo
+   truncado, corrompido ou de outra versao. Este texto tambem saiu de
+   dentro do script - vem do NOTAS.txt do pacote, para nunca mais
+   descrever uma versao enquanto publica outra.

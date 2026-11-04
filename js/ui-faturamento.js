@@ -736,13 +736,21 @@ ERP.faturamento = (function () {
        "anteriores": a nota esquecida é justamente a do mês que
        ninguém está mais olhando. Filtrar dentro do mês aberto
        responderia outra pergunta. */
+    /* PROJETO E CLIENTE INATIVOS NÃO APARECEM MAIS.
+
+       Some da lista, mas não some da tela: `ocultos` é o que a
+       esteira escondeu, e dele sai a linha que diz quantos foram e
+       quais ainda têm faturamento em aberto. Inativar não pode ser
+       um jeito de perder nota emitida e não enviada. */
+    const ocultos = S.inativosNaEsteira({ competencia: fEst.competencia });
+    const incl = fEst.inativos ? true : undefined;
     const base = fEst.anteriores
-      ? S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO,
+      ? S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO, incluir_inativos: incl,
           sem_documento: fEst.sem_doc, falta_enviar: fEst.falta_enviar })
       : (fEst.falta_enviar
-          ? S.esteiraFaturamento({ falta_enviar: true, sem_documento: fEst.sem_doc })
+          ? S.esteiraFaturamento({ falta_enviar: true, incluir_inativos: incl, sem_documento: fEst.sem_doc })
           : S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia,
-              sem_documento: fEst.sem_doc }));
+              incluir_inativos: incl, sem_documento: fEst.sem_doc }));
     const conta = {};
     ORDEM_ETAPAS.forEach(function (e) {
       conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
@@ -825,7 +833,33 @@ ERP.faturamento = (function () {
         '<button class="chip chip-atraso' + (fEst.anteriores ? ' sel' : '') + '" data-es-atraso ' +
           'title="não fechados de ' + U.fComp(limiteAtraso) + ' para trás">' +
           'Anteriores<b>' + atrasadas + '</b></button>' +
+        /* O botão dos inativos só existe quando há inativo escondido:
+           chip zerado numa barra de seis é ruído. */
+        (ocultos.total
+          ? '<button class="chip' + (fEst.inativos ? ' sel' : '') + '" data-es-inativos ' +
+            'title="projetos ou clientes inativados — escondidos da esteira">' +
+            'Inativos<b' + (ocultos.abertos ? ' class="erro"' : '') + '>' + ocultos.total + '</b></button>'
+          : '') +
       '</div>' +
+      /* ESCONDIDO NÃO É PERDIDO. Se um inativo ainda tem faturamento
+         em aberto, a tela diz quais são — pelo nome — em vez de
+         deixar a nota emitida desaparecer junto com o cadastro. */
+      (ocultos.total && !fEst.inativos
+        ? '<div class="ajuda' + (ocultos.abertos ? ' erro' : '') + '">' +
+          'Escondi <b>' + ocultos.total + '</b> ' +
+          (ocultos.total === 1 ? 'faturamento de projeto ou cliente inativo'
+            : 'faturamentos de projetos ou clientes inativos') + '. ' +
+          (ocultos.abertos
+            ? '<b>' + ocultos.abertos + (ocultos.abertos === 1 ? ' ainda tem' : ' ainda têm') +
+              ' coisa em aberto</b>: ' + U.esc(ocultos.nomes.slice(0, 6).join(', ')) +
+              (ocultos.nomes.length > 6 ? ' e mais ' + (ocultos.nomes.length - 6) : '') + '. '
+            : 'Nenhum deles tem pendência. ') +
+          'O botão <b>Inativos</b> acima mostra todos.</div>'
+        : '') +
+      (fEst.inativos
+        ? '<div class="ajuda">Mostrando também os <b>inativos</b>, marcados na lista. ' +
+          'Clique em <b>Inativos</b> de novo para esconder.</div>'
+        : '') +
       (fEst.anteriores
         ? '<div class="ajuda erro">Mostrando o que ficou para trás: faturamentos de <b>' +
           U.fComp(limiteAtraso) + ' para trás</b> que ainda não fecharam. A competência fica ' +
@@ -859,7 +893,7 @@ ERP.faturamento = (function () {
         '<th class="num col-parado">Parado</th><th class="col-acoes"></th></tr></thead><tbody>' +
         (lista.length ? lista.map(function (l) {
           const atrasado = l.etapa !== 'faturado' && l.dias > 15;
-          return '<tr' + (atrasado ? ' class="atrasada"' : '') + '>' +
+          return '<tr' + (l.inativo ? ' class="cancelada"' : atrasado ? ' class="atrasada"' : '') + '>' +
             /* UMA LINHA DE APOIO, não duas. O emitente nasceu na v141
                numa linha própria embaixo do nome, e com isso TODA
                linha da esteira passou a ocupar três alturas de
@@ -872,6 +906,7 @@ ERP.faturamento = (function () {
                     'title="ver especialidades">' + (expandidos[l.grupo + '|' + l.competencia] ? '▾' : '▸') + '</button> ' +
                   U.esc(l.projeto.curto)
                 : U.esc(l.projeto.curto || l.projeto.nome)) +
+              (l.inativo ? ' <span class="badge b-pendente">inativo</span>' : '') +
               /* POR QUAL CNPJ ESTA NOTA SAI.
 
                  Antes o CNPJ emitente não estava escrito em lugar
@@ -2229,6 +2264,12 @@ ERP.faturamento = (function () {
         /* A visão de atraso é de VÁRIOS meses: a etapa escolhida
            para um mês não quer dizer nada aqui. */
         if (fEst.anteriores) fEst.etapa = '';
+        renderEsteira();
+      });
+    }
+    if (box.querySelector('[data-es-inativos]')) {
+      box.querySelector('[data-es-inativos]').addEventListener('click', function () {
+        fEst.inativos = !fEst.inativos;
         renderEsteira();
       });
     }
