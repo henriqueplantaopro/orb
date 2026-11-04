@@ -639,8 +639,13 @@ ERP.cadastros = (function () {
     const cl = D.clientes.find(function (x) { return x.centro_padrao === c.id; });
     return cl ? cl.id : '';
   }
+  /* v154: inativo sai do seletor — MENOS o que já está escolhido
+     neste registro. Sumir com ele faria o select abrir em "Sem
+     cliente" e, ao salvar sem tocar no campo, apagar em silêncio um
+     vínculo que ninguém pediu para mexer. */
   function opcoesCliente(sel) {
-    return '<option value="">Sem cliente</option>' + D.clientes.slice()
+    return '<option value="">Sem cliente</option>' + D.clientes
+      .filter(function (x) { return x.ativo !== false || x.id === sel; })
       .sort(function (a, b) { return (a.nome || '').localeCompare(b.nome || ''); })
       .map(function (x) {
         return '<option value="' + x.id + '"' + (x.id === sel ? ' selected' : '') + '>' + U.esc(x.nome) + '</option>';
@@ -1409,7 +1414,15 @@ ERP.cadastros = (function () {
 
   /* ── clientes ───────────────────────────────────────────*/
   function clientes() {
-    return '<div class="ap-acoes"><button class="btn-linha" id="cad-novo-cliente">+ Novo cliente</button></div>' +
+    /* v154: inativo sai da lista, como já acontece em projetos,
+       produtos, armazéns e empresas. Mesmo botão, mesmo lugar. */
+    const lista = D.clientes.filter(function (c) { return verInativos || c.ativo !== false; });
+    const inativos = D.clientes.filter(function (c) { return c.ativo === false; }).length;
+    return '<div class="ap-acoes"><button class="btn-linha" id="cad-novo-cliente">+ Novo cliente</button>' +
+      (inativos || verInativos
+        ? '<button class="btn-sm" id="cad-ver-inativos">' +
+          (verInativos ? 'Esconder inativos' : 'Mostrar inativos (' + inativos + ')') + '</button>'
+        : '') + '</div>' +
       /* A coluna de projetos empurrava o botão de Editar para fora da
          tela quando o cliente tinha nome de projeto comprido. Largura
          fixa e truncagem: o que não couber fica no balão do mouse. */
@@ -1417,7 +1430,7 @@ ERP.cadastros = (function () {
       '<th style="width:30%">Cliente</th><th style="width:13%">CNPJ</th>' +
       '<th style="width:28%">Projetos</th><th class="num" style="width:7%">Prazo</th>' +
       '<th style="width:15%">Retenções</th><th style="width:7%"></th></tr></thead><tbody>' +
-      D.clientes.map(function (c) {
+      lista.map(function (c) {
         /* TODOS os projetos, não "o projeto padrão": um cliente tem
            quantos tiver, e mostrar um só escondia os outros. */
         const pjs = D.projetosDoCliente(c.id);
@@ -1426,7 +1439,9 @@ ERP.cadastros = (function () {
            oito especialidades não cabe na célula, e cortar sem dizer
            quais são esconde justamente o que se procura aqui. */
         const todosPjs = pjs.map(function (p) { return p.curto || p.nome; });
-        return '<tr><td class="desc trunca" title="' + U.esc(c.nome) + '">' + U.esc(c.nome) + '</td>' +
+        return '<tr' + (c.ativo === false ? ' style="opacity:.55"' : '') +
+          '><td class="desc trunca" title="' + U.esc(c.nome) + '">' + U.esc(c.nome) +
+          (c.ativo === false ? ' <span class="badge b-pendente">inativo</span>' : '') + '</td>' +
           '<td class="mono trunca">' + U.esc(c.documento) + '</td>' +
           '<td class="desc trunca"' + (pjs.length ? ' title="' + U.esc(todosPjs.join(', ')) + '"' : '') + '>' +
             (pjs.length
@@ -1517,7 +1532,25 @@ ERP.cadastros = (function () {
         '<div class="row3">' + TRIB.map(function (t) {
           return '<div><label>' + t + '</label><input id="cl-' + t + '" class="num" inputmode="decimal" value="' +
             U.num(atuais[t] || 0) + '"></div>';
-        }).join('') + '</div>',
+        }).join('') + '</div>' +
+        /* v154: inativar e excluir. O aviso diz o que prende o
+           cliente ANTES de ele clicar, em vez de recusar depois. */
+        (c ? '<label class="hb-marca" style="display:flex;margin-top:14px">' +
+             '<input type="checkbox" id="cl-ativo"' + (c.ativo !== false ? ' checked' : '') + '> ' +
+             '<span>Ativo</span></label>' +
+             '<div class="ajuda">Desmarcar tira o cliente das listas e dos seletores. Nada é ' +
+             'apagado, e as notas e contratos dele continuam como estão.' +
+             (function () {
+               const p = S.clientePreso(c.id);
+               const n = p.notas.length + p.contratos.length + p.projetos.length;
+               return n
+                 ? '<br>Excluir não é possível: o cliente está em ' +
+                   [p.notas.length ? p.notas.length + ' lançamento(s) a receber' : '',
+                    p.contratos.length ? p.contratos.length + ' contrato(s)' : '',
+                    p.projetos.length ? p.projetos.length + ' projeto(s)' : '']
+                     .filter(Boolean).join(', ') + '.'
+                 : '<br>Este cliente não tem nota, contrato nem projeto — dá para excluir.';
+             })() + '</div>' : ''),
       acoes: [{ txt: c ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const retencoes = TRIB.map(function (t) {
           return { tributo: t, aliquota: U.parseValor(U.val('cl-' + t)) };
@@ -1539,11 +1572,27 @@ ERP.cadastros = (function () {
           empresa: U.val('cl-empresa') || null
         });
         if (ERP.app.erroDoRetorno(r)) return;
+        /* O estado de ativo vai pelo store também, e DEPOIS do
+           salvar: antes, o salvarCliente sobrescreveria. */
+        if (c && U.el('cl-ativo')) {
+          const ra = S.inativarCliente(c.id, U.el('cl-ativo').checked);
+          if (ERP.app.erroDoRetorno(ra)) return;
+        }
         ERP.app.fecharModal();
         ERP.app.aviso('Cliente salvo.', 'ok');
         if (aoFechar) aoFechar(r.cliente.id);
         else render();
-      } }]
+      } }].concat(c ? [{ txt: 'Excluir', cls: 'btn-cancelar', fn: function () {
+        const p = S.clientePreso(c.id);
+        if (p.notas.length + p.contratos.length + p.projetos.length === 0 &&
+            !confirm('Excluir o cliente "' + (c.nome || '') + '"? Não dá para desfazer.\n\n' +
+              'Se a ideia é só tirá-lo das listas, feche aqui e desmarque "Ativo".')) return;
+        const r = S.excluirCliente(c.id);
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        ERP.app.aviso('Cliente excluído.', 'ok');
+        render();
+      } }] : [])
     });
   }
 
@@ -1698,5 +1747,9 @@ ERP.cadastros = (function () {
 
   return { montar: montar, render: render, editarCliente: editarCliente,
            editarProjeto: editarProjeto, editarCredor: editarCredor,
-           editarProduto: editarProduto, editarArmazem: editarArmazem };
+           editarProduto: editarProduto, editarArmazem: editarArmazem,
+           /* v154: exposta para a prova medir que o cliente inativo
+              sai do seletor mas FICA quando ja e o escolhido. Sem
+              isso a prova mede uma string vazia e passa a toa. */
+           opcoesCliente: opcoesCliente };
 })();

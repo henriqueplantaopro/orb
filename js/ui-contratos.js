@@ -532,9 +532,14 @@ ERP.contratos = (function () {
           : '<label>Cliente * <button class="btn-ghost" id="ct-novo-cli" type="button" ' +
             'style="float:right;padding:0">+ cadastrar cliente</button></label><select id="ct-cli">' +
             '<option value="">Escolher…</option>' +
-            D.clientes.map(function (x) {
+            /* v154: cliente inativo sai da lista, menos o que já
+               está escolhido neste contrato — senão o select abriria
+               em "Escolher…" e salvar apagaria o vínculo sozinho. */
+            D.clientes.filter(function (x) {
+              return x.ativo !== false || (c && c.cliente === x.id);
+            }).map(function (x) {
               return '<option value="' + x.id + '"' + (c && c.cliente === x.id ? ' selected' : '') + '>' +
-                U.esc(x.nome) + '</option>';
+                U.esc(x.nome) + (x.ativo === false ? ' (inativo)' : '') + '</option>';
             }).join('') + '</select>') +
         '<label>Objeto</label><textarea id="ct-obj">' + U.esc(c ? (c.objeto || '') : '') + '</textarea>' +
         '<div class="row3"><div><label>Início da vigência *</label><input type="date" id="ct-ini" value="' +
