@@ -16517,6 +16517,67 @@ ERP.store = (function () {
     return { ok: true, cliente: alvo, criado: !atual };
   }
 
+  /* v154: O QUE PRENDE UM CLIENTE.
+
+     Três coisas apontam para ele, e duas são chave estrangeira de
+     verdade no banco (`receber.cliente` e `contratos.cliente`):
+     apagar o cliente faria o Postgres recusar a linha, ou — pior, se
+     a referência fosse só por texto — deixaria nota no contas a
+     receber apontando para um cliente que não existe mais.
+
+     A nota é procurada por id E por CNPJ: nota importada de XML
+     grava `cliente_doc` e pode não ter o id preenchido, e foi assim
+     que ela entrou no sistema. Procurar só pelo id diria "nenhuma
+     nota" para um cliente com dois anos de faturamento. */
+  function clientePreso(id) {
+    const cli = D.clientes.find(function (x) { return x.id === id; });
+    const doc = String((cli && cli.documento) || '').replace(/\D/g, '');
+    const mesmoDoc = r => doc && String(r.cliente_doc || '').replace(/\D/g, '') === doc;
+    return {
+      notas: (st.receber || []).filter(function (r) { return r.cliente === id || mesmoDoc(r); }),
+      contratos: (st.contratos || []).filter(function (c) { return c.cliente === id; }),
+      projetos: (D.centros || []).filter(function (c) { return c.cliente === id; })
+    };
+  }
+
+  /* Inativar é o caminho normal; excluir é a exceção estreita para o
+     cadastro que nasceu errado. Inativo some das listas e dos
+     seletores, mas continua existindo — o histórico não muda. */
+  function inativarCliente(id, ativo) {
+    if (!podeMover('cadastros')) {
+      return { erro: 'Seu perfil vê os cadastros, mas não altera.' };
+    }
+    const cli = D.clientes.find(function (x) { return x.id === id; });
+    if (!cli) return { erro: 'Cliente não encontrado.' };
+    cli.ativo = ativo !== false;
+    logar('cliente', id, cli.ativo ? 'reativou cliente' : 'inativou cliente', cli.nome || '');
+    return { ok: true, cliente: cli };
+  }
+
+  function excluirCliente(id) {
+    if (!pode('admin')) return { erro: 'Só o perfil de administração exclui cliente.' };
+    const i = D.clientes.findIndex(function (x) { return x.id === id; });
+    if (i < 0) return { erro: 'Cliente não encontrado.' };
+    const cli = D.clientes[i];
+    const p = clientePreso(id);
+    const partes = [];
+    if (p.notas.length) partes.push(p.notas.length + ' lançamento(s) no contas a receber');
+    if (p.contratos.length) partes.push(p.contratos.length + ' contrato(s)');
+    if (p.projetos.length) {
+      partes.push(p.projetos.length + ' projeto(s) (' +
+        p.projetos.slice(0, 3).map(function (c) { return c.curto || c.nome; }).join(', ') +
+        (p.projetos.length > 3 ? '…' : '') + ')');
+    }
+    if (partes.length) {
+      return { erro: 'Este cliente está em ' + partes.join(', ') +
+        '. Excluir deixaria esses registros apontando para um cliente que não existe. ' +
+        'Inative em vez de excluir — ele sai das listas e o histórico fica de pé.' };
+    }
+    D.clientes.splice(i, 1);
+    logar('cliente', id, 'excluiu cliente', (cli.nome || '') + ' · ' + (cli.documento || ''));
+    return { ok: true };
+  }
+
   /* v152: AS RETENÇÕES DO CLIENTE, PELA TELA DO FATURAMENTO.
 
      A janela "Retenções de <cliente>" da esteira fazia
@@ -20192,7 +20253,8 @@ ERP.store = (function () {
     dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
-    dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente, salvarArmazem,
+    dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente,
+    inativarCliente, excluirCliente, clientePreso, salvarArmazem,
     dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
