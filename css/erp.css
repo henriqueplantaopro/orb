@@ -255,6 +255,8 @@ tbody tr:hover td{background:#eef1f3;}
 tr.sel td{background:var(--brand-soft) !important;}
 tr.cancelada td{color:var(--ink3);}
 td.desc{max-width:420px;overflow:hidden;text-overflow:ellipsis;font-weight:500;}
+/* Na esteira a coluna de projeto cede espaco para a de cliente. */
+#fa-aba-esteira td.desc{max-width:260px;}
 .num{font-variant-numeric:tabular-nums;text-align:right;}
 .mono{font-variant-numeric:tabular-nums;}
 .sub{font-size:11px;color:var(--ink3);font-weight:400;}
@@ -1054,6 +1056,11 @@ header .sessao > span { display: none; }
    Eram oito colunas com títulos longos, e a pessoa tinha de rolar
    para o lado para ver o fim da linha — numa tela cujo propósito é
    justamente bater o olho e ver onde cada projeto parou. */
+/* A coluna de cliente: a esteira nao diz de quem e o projeto sem
+   ela, e a de projeto tinha folga de sobra (420px de maximo para
+   nomes que raramente passam de 30 caracteres). */
+.col-cliente { width: 160px; max-width: 160px; overflow: hidden;
+               text-overflow: ellipsis; white-space: nowrap; }
 .col-comp   { width: 74px; }
 .col-prod   { width: 92px; }
 .col-val    { width: 104px; }

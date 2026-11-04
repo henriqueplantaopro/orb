@@ -710,7 +710,7 @@ ERP.faturamento = (function () {
      novembro não há o que faturar de novembro — o que está em cima
      da mesa é outubro. Abrindo no mês corrente, a tela abria quase
      vazia e a primeira ação de todo dia era trocar a competência. */
-  let fEst = { pendentes: true, competencia: '', etapa: '',
+  let fEst = { competencia: '', etapa: '',
     sem_doc: false, anteriores: false, falta_enviar: false };
   /* Quantas competências para trás contam como ATRASADO. Dia 01/11,
      com 2, é setembro para trás. */
@@ -749,7 +749,7 @@ ERP.faturamento = (function () {
           sem_documento: fEst.sem_doc, falta_enviar: fEst.falta_enviar })
       : (fEst.falta_enviar
           ? S.esteiraFaturamento({ falta_enviar: true, incluir_inativos: incl, sem_documento: fEst.sem_doc })
-          : S.esteiraFaturamento({ pendentes: fEst.pendentes, competencia: fEst.competencia,
+          : S.esteiraFaturamento({ competencia: fEst.competencia,
               incluir_inativos: incl, sem_documento: fEst.sem_doc }));
     const conta = {};
     ORDEM_ETAPAS.forEach(function (e) {
@@ -797,10 +797,6 @@ ERP.faturamento = (function () {
               return '<option value="' + c + '"' + (fEst.competencia === c ? ' selected' : '') + '>' +
                 U.fComp(c) + '</option>';
             }).join('') + '</select></div>' +
-        '<label style="align-self:flex-end;font-weight:400"><input type="checkbox" id="es-pend" style="width:auto"' +
-          (fEst.pendentes ? ' checked' : '') +
-          (fEst.anteriores || fEst.falta_enviar ? ' disabled' : '') +
-          '> esconder os já faturados</label>' +
       '</div>' +
       /* AS ETAPAS LADO A LADO, e não num menu suspenso. Elas são
          seis: cabem numa linha, e escolher entre seis coisas
@@ -884,7 +880,8 @@ ERP.faturamento = (function () {
            duas colunas de valor eram lidas como se fossem a mesma
            coisa. O acompanhamento da produtividade está na aba
            Previsões e no módulo de Produtividade. */
-        '<th>Projeto</th><th class="col-comp">Comp.</th>' +
+        '<th>Projeto</th><th class="col-cliente">Cliente</th>' +
+        '<th class="col-comp">Comp.</th>' +
         '<th class="num col-val">Valor</th>' +
         ORDEM_ETAPAS.slice(1).map(function (e) {
           return '<th class="num col-etapa" title="' + ETAPAS_NOME[e] + '">' +
@@ -922,14 +919,34 @@ ERP.faturamento = (function () {
                    total que é soma de setores é a confusão que fez
                    alguém digitar o valor negociado inteiro numa
                    especialidade só. */
+                /* O RÓTULO DO GRUPO vive aqui agora. O nome da
+                   linha passou a ser o do cliente, e dois grupos do
+                   mesmo cliente ficariam indistinguíveis sem ele. */
                 l.eh_grupo
                   ? '<span title="nota única do grupo — o valor é a soma dos setores' +
                     (l.especialidades.length < (l.total_especialidades || 0)
-                      ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '">nota única · ' +
+                      ? ' · ' + l.especialidades.length + ' com lançamento no mês' : '') + '">' +
+                    U.esc(l.projeto.rotulo_grupo || '') + ' · nota única · ' +
                     (l.total_especialidades || l.especialidades.length) + ' setores</span>'
-                  : U.esc(l.projeto.unidade || ''),
+                  : '',
                 linhaEmitente(l)
               ].filter(Boolean).join(' · ') + '</div></td>' +
+            /* DE QUEM É. Era a informação que faltava na tela: o
+               projeto aparecia com a `unidade` do cadastro embaixo
+               do nome, que não é o cliente e frequentemente não é
+               nada ("Fortaleza" embaixo do PRISIONAL, que é da
+               Polícia Militar do Ceará). O nome inteiro fica no
+               `title`, porque razão social de cliente passa de
+               sessenta caracteres e a esteira não rola de lado. */
+            '<td class="col-cliente"' +
+              (l.cliente_nome ? ' title="' + U.esc(l.cliente_nome) + '"' : '') + '>' +
+              /* NA LINHA DE GRUPO A CÉLULA FICA VAZIA: o nome da
+                 linha JÁ É o do cliente, e repeti-lo ao lado lê como
+                 defeito. O que distingue dois grupos do mesmo
+                 cliente é o rótulo, que está na linha de apoio. */
+              (l.eh_grupo ? ''
+                : l.cliente_curto ? U.esc(l.cliente_curto)
+                : '<span class="sub">sem cliente</span>') + '</td>' +
             '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
             /* Em que pé está a produtividade, e o valor que corresponde
                a esse estágio — sem misturar estimativa com o que já é
@@ -984,6 +1001,10 @@ ERP.faturamento = (function () {
                      abrir o modal de confirmação. */
                   return '<tr class="sub-linha"><td class="desc" style="padding-left:28px">' +
                     '<span class="sub">' + U.esc(e.projeto.curto) + '</span></td>' +
+                    /* Vazia de propósito: o cliente é o do grupo, na
+                       linha de cima. Repetir em cada setor encheria
+                       a coluna de seis vezes o mesmo nome. */
+                    '<td class="col-cliente"></td>' +
                     '<td class="mono sub">' + U.fComp(e.competencia) + '</td>' +
                     '<td class="num">' +
                       (podeEditarEstimativa() && !e.confirmado_em && e.etapa !== 'faturado'
@@ -997,7 +1018,7 @@ ERP.faturamento = (function () {
                 }).join('')
               : '');
         }).join('')
-          : '<tr><td colspan="8" class="vazio"><strong>Nada na esteira nesta competência.</strong></td></tr>') +
+          : '<tr><td colspan="9" class="vazio"><strong>Nada na esteira nesta competência.</strong></td></tr>') +
       '</tbody></table></div>' +
       '<div class="ajuda">Linha em vermelho está parada há mais de 15 dias na mesma etapa. ' +
         'Quem confirma o fechamento registra a autorização do órgão; a liberação é de quem responde pelo ' +
@@ -1304,37 +1325,49 @@ ERP.faturamento = (function () {
       .find(function (x) { return x.eh_grupo && x.grupo === grupo; }) : null;
     const sugerido = grupo ? (linhaGrupo || {}).valor : (l.valor || (l.previsao || {}).faturamento || 0);
     const emp = D.empresaPor(S.empresaEmissora(par[0], par[1])) || {};
+    /* CLIENTE QUE SÓ RECEBE FATURA: a janela é a mesma, o documento
+       não. Chamar de "NF" o que ele vai anexar faz a pessoa
+       procurar um número de nota que não existe. */
+    const soFatura = S.clienteSoFatura(par[0]);
+    const DOC = soFatura ? 'fatura' : 'NF';
     let arquivo = null;
     ERP.app.modal({
-      titulo: 'Anexar NF emitida · ' + U.esc(grupo || c.curto || c.nome || ''),
+      titulo: 'Anexar ' + DOC + (soFatura ? '' : ' emitida') + ' · ' +
+        U.esc(grupo || c.curto || c.nome || ''),
       fecharTxt: 'Cancelar',
       corpo:
-        '<div class="ajuda">Para a nota que foi emitida <b>fora deste sistema</b> — pelo portal da ' +
-          'prefeitura da filial, por exemplo. Informe os dados do documento e anexe o arquivo: ' +
-          'é o que fecha este faturamento.</div>' +
+        (soFatura
+          ? '<div class="ajuda">Este cliente <b>não recebe nota fiscal</b>: o que fecha o ' +
+            'faturamento dele é a fatura. Informe os dados do documento e anexe o arquivo.</div>'
+          : '<div class="ajuda">Para a nota que foi emitida <b>fora deste sistema</b> — pelo portal da ' +
+            'prefeitura da filial, por exemplo. Informe os dados do documento e anexe o arquivo: ' +
+            'é o que fecha este faturamento.</div>') +
         '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(par[1]) + '</span></div>' +
         (grupo ? '<div class="resumo-linha"><span>Faturamento</span><span class="v">único do grupo ' +
           U.esc(grupo) + ' — a nota é rateada entre as especialidades</span></div>' : '') +
         '<div class="resumo-linha"><span>Emitida por</span><span class="v">' +
           U.esc(emp.apelido || '—') + ' <span class="sub">' + U.esc(emp.cnpj || '') + '</span></span></div>' +
         '<div class="row3" style="margin-top:8px">' +
-          '<div><label>Número da NF *</label><input id="nfe-num"></div>' +
+          '<div><label>Número da ' + DOC + ' *</label><input id="nfe-num"></div>' +
           '<div><label>Série</label><input id="nfe-serie"></div>' +
           '<div><label>Emissão *</label><input type="date" id="nfe-emissao" value="' + U.hoje() + '"></div>' +
         '</div>' +
         '<div class="row3">' +
-          '<div><label>Valor da nota (R$) *</label><input class="num" id="nfe-valor" inputmode="decimal" value="' +
+          '<div><label>Valor da ' + DOC + ' (R$) *</label><input class="num" id="nfe-valor" inputmode="decimal" value="' +
             U.num(sugerido || 0) + '"></div>' +
           '<div><label>Vencimento</label><input type="date" id="nfe-venc"></div>' +
-          '<div><label>Chave de acesso</label><input id="nfe-chave" placeholder="se houver"></div>' +
+          /* Chave de acesso é de NF-e: fatura não tem. O campo
+             continua existindo escondido para o código que o lê. */
+          (soFatura ? '<div></div><input type="hidden" id="nfe-chave" value="">'
+            : '<div><label>Chave de acesso</label><input id="nfe-chave" placeholder="se houver"></div>') +
         '</div>' +
-        '<label>Discriminação (como saiu na nota)</label>' +
+        '<label>Discriminação (como saiu na ' + DOC + ')</label>' +
         '<textarea id="nfe-disc" rows="3" placeholder="o texto que consta no documento">' +
           U.esc(S.discriminacaoDaNota(par[0], par[1], grupo, '')) + '</textarea>' +
-        '<label style="margin-top:8px">Arquivo da nota (PDF ou XML) *</label>' +
+        '<label style="margin-top:8px">Arquivo da ' + DOC + ' (PDF ou XML) *</label>' +
         '<input type="file" id="nfe-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0">' +
-        '<div class="ajuda" id="nfe-aviso">O valor sugerido é o que a esteira confirmou. Se a nota saiu por outro ' +
-          'valor, informe o da nota — é ele que vai para o contas a receber.</div>',
+        '<div class="ajuda" id="nfe-aviso">O valor sugerido é o que a esteira confirmou. Se a ' + DOC +
+          ' saiu por outro valor, informe o do documento — é ele que vai para o contas a receber.</div>',
       acoes: [{ txt: 'Anexar e fechar o faturamento', cls: 'btn-aprovar', fn: async function () {
         const arq = U.el('nfe-arq').files && U.el('nfe-arq').files[0];
         if (arq) {
@@ -1358,7 +1391,7 @@ ERP.faturamento = (function () {
         renderEsteira();
         atualizarAlertaFat();
         ERP.receber.render();
-        ERP.app.aviso('NF ' + r.receber.numero + ' anexada — faturamento fechado (' +
+        ERP.app.aviso(DOC + ' ' + r.receber.numero + ' anexada — faturamento fechado (' +
           U.brl(r.receber.valor_bruto) + ').' + (r.aviso ? ' ' + r.aviso : ''), 'ok');
       } }]
     });
@@ -2180,17 +2213,25 @@ ERP.faturamento = (function () {
          esta casa não rola de lado. A etapa já está dita duas
          vezes: na coluna "Liberado", com data e nome, e no filtro
          do topo. A terceira era a que não cabia. */
+      /* CLIENTE QUE SÓ RECEBE FATURA não tem NF nenhuma: nem a folha
+         para digitar no portal da prefeitura, nem o anexo da nota.
+         O que fecha o faturamento dele é a FATURA. */
+      const soFatura = !!l.so_fatura;
       return rever + doc +
         /* A FOLHA PARA EMITIR À MÃO fica na linha liberada, que é
            onde a pessoa está quando vai emitir — e ao lado de
            "Anexar NF emitida", que é o passo seguinte dela. */
-        ' <button class="btn-sm" data-est-pdf="' + ref + '" ' +
-          'title="PDF com os dados para digitar a nota no portal da prefeitura">Emitir à mão</button>' +
+        (soFatura ? ''
+          : ' <button class="btn-sm" data-est-pdf="' + ref + '" ' +
+            'title="PDF com os dados para digitar a nota no portal da prefeitura">Emitir à mão</button>') +
         (S.pode('liberar_faturamento')
           ? ' <button class="btn-sm" data-est-des="liberado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('faturar')
           ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + ref + '" ' +
-            'title="anexar a NF emitida fora do sistema e fechar o faturamento">Anexar NF</button>' : '');
+            (soFatura
+              ? 'title="este cliente não recebe nota fiscal — anexe a fatura e feche o faturamento">Anexar fatura</button>'
+              : 'title="anexar a NF emitida fora do sistema e fechar o faturamento">Anexar NF</button>')
+          : '');
     }
     if (l.etapa === 'previsao') {
       return rever + doc + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
@@ -2254,7 +2295,7 @@ ERP.faturamento = (function () {
         /* A pergunta é sobre nota JÁ emitida: deixar "esconder os já
            faturados" ligado esvaziaria a lista justamente ao ligar
            este filtro. */
-        if (fEst.falta_enviar) { fEst.pendentes = false; fEst.etapa = ''; }
+        if (fEst.falta_enviar) { fEst.etapa = ''; }
         renderEsteira();
       });
     }
@@ -2305,7 +2346,6 @@ ERP.faturamento = (function () {
       b.addEventListener('click', function () { confirmarEAutorizar(this.dataset.estConf); });
     });
     U.el('es-comp').addEventListener('change', function () { fEst.competencia = this.value; renderEsteira(); });
-    U.el('es-pend').addEventListener('change', function () { fEst.pendentes = this.checked; renderEsteira(); });
 
     box.querySelectorAll('[data-est-aut]').forEach(function (b) {
       b.addEventListener('click', function () {

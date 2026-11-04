@@ -1,25 +1,34 @@
 O QUE MUDOU NESTA VERSAO:
 
-   PROJETO E CLIENTE INATIVOS SAEM DA ESTEIRA. O filtro de ativo
-   existia so na semeadura "todo projeto ativo aparece na competencia
-   pedida". Mas a lista tambem nasce do que tem PREVISAO salva e do
-   que tem NOTA emitida - e por esses dois caminhos o inativado
-   voltava, com a inativacao feita e sem efeito nenhum na tela.
-   Inativar o CLIENTE agora tambem limpa os projetos dele.
+   A ESTEIRA DIZ DE QUEM E CADA PROJETO. Coluna nova de Cliente, com
+   o nome curto; o nome completo aparece ao passar o mouse. A coluna
+   de projeto cedeu a largura que sobrava.
 
-   E ESCONDIDO NAO E PERDIDO. Acima da lista, uma linha diz quantos
-   foram escondidos e NOMEIA os que ainda tem faturamento em aberto
-   (nota emitida e nao enviada, por exemplo). O botao "Inativos"
-   mostra todos, marcados. Abrir o faturamento de um projeto
-   recem-inativado continua funcionando - senao a nota em aberto
-   ficaria inalcancavel.
+   E SAIU A "UNIDADE" DE BAIXO DO NOME. Era ela o texto sem sentido:
+   "Fortaleza" embaixo do PRISIONAL, que e da Policia Militar do
+   Ceara. O campo virou um saco de coisas diferentes ao longo do
+   tempo - cidade, sigla de hospital, nome de cliente - e por isso
+   lia-se como ruido.
 
-O QUE MUDOU NA PUBLICACAO (este script):
+   A LINHA DE GRUPO SE CHAMA PELO CLIENTE. "GHC - HGB MUTIRAO" era o
+   rotulo de agrupamento: texto livre, digitado uma vez e congelado.
+   Quando os projetos do mutirao mudaram de cliente, o rotulo ficou
+   para tras - era essa a divergencia. Agora o nome e lido do
+   cliente na hora; o rotulo continua agrupando e aparece na linha
+   de apoio, que e o que distingue dois grupos do mesmo cliente.
 
-   De 1311 para 291 linhas, e de uma versao para a outra so muda a
-   linha do $VERSAO. As 362 guardas de frase sairam: o pacote traz um
-   MANIFEST.sha256 com o hash de cada arquivo. Guarda de frase so
-   pegava o que eu lembrei de listar; o hash pega qualquer arquivo
-   truncado, corrompido ou de outra versao. Este texto tambem saiu de
-   dentro do script - vem do NOTAS.txt do pacote, para nunca mais
-   descrever uma versao enquanto publica outra.
+   APELIDO DO CLIENTE, no cadastro. Vazio, o sistema usa o lado mais
+   curto do travessao - "Instituto Dr. Jose Frota - IJF" vira "IJF".
+   Acerta na maioria e erra em algumas; o campo e como se corrige.
+
+   CLIENTE QUE SO RECEBE FATURA, SEM NOTA FISCAL. Marca no cadastro
+   do cliente. Marcado, a linha liberada oferece "Anexar fatura" no
+   lugar de "Anexar NF", sem a folha de "Emitir a mao", e os
+   projetos dele saem da geracao de RPS em lote - RPS existe para
+   virar NF-e no portal da prefeitura.
+
+   SAIU O FILTRO "ESCONDER OS JA FATURADOS" da esteira.
+
+   O RELATORIO DE FATURAMENTO FILTRA POR CLIENTE, no lugar do filtro
+   de unidade, pelo mesmo motivo do item acima: dezessete valores de
+   naturezas diferentes na mesma lista.

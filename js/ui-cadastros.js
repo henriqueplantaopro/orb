@@ -1526,7 +1526,19 @@ ERP.cadastros = (function () {
     ERP.app.modal({
       titulo: c ? 'Cliente · ' + c.nome : 'Novo cliente',
       corpo:
-        '<label>Razão social</label><input id="cl-nome" value="' + U.esc(c ? c.nome : '') + '">' +
+        '<div class="row2">' +
+          '<div><label>Razão social</label><input id="cl-nome" value="' +
+            U.esc(c ? c.nome : '') + '"></div>' +
+          /* O NOME QUE CABE NA COLUNA. Razão social de cliente vai a
+             sessenta e quatro caracteres, e a esteira mostra o
+             cliente numa coluna estreita. Vazio, o sistema usa o
+             lado mais curto do travessão — que acerta na maioria
+             ("Instituto Dr. José Frota — IJF" vira "IJF") e erra em
+             algumas; este campo é como se corrige sem adivinhação. */
+          '<div><label>Apelido <span class="sub">(opcional)</span></label><input id="cl-apelido" value="' +
+            U.esc(c ? c.apelido || '' : '') + '" placeholder="' +
+            U.esc(c ? S.nomeCurtoCliente({ nome: c.nome }) : 'como aparece na esteira') + '"></div>' +
+        '</div>' +
         /* Endereço e IBGE não são enfeite: sem eles a prefeitura recusa
            o RPS, e a nota não sai. */
         '<div class="row3">' +
@@ -1603,6 +1615,14 @@ ERP.cadastros = (function () {
           '<span>Exige boleto junto com a nota</span></label>' +
         '<div class="ajuda">Marcado, o faturamento deste cliente passa a cobrar o boleto na hora de ' +
           'anexar a nota, e o envio ao cliente só fica completo com ele.</div>' +
+        /* v159: cliente que não recebe nota fiscal. */
+        '<label class="hb-marca" style="display:flex;margin-top:14px">' +
+          '<input type="checkbox" id="cl-sofatura"' + (c && c.so_fatura ? ' checked' : '') + '> ' +
+          '<span>Emitimos só fatura, sem nota fiscal</span></label>' +
+        '<div class="ajuda">Marcado, os projetos deste cliente saem da geração de RPS em lote e a ' +
+          'linha liberada da esteira passa a oferecer <b>Anexar fatura</b> no lugar de ' +
+          '<b>Anexar NF</b> — sem a folha de "Emitir à mão", que serve para digitar a nota no ' +
+          'portal da prefeitura.</div>' +
         (c ? '<label class="hb-marca" style="display:flex;margin-top:14px">' +
              '<input type="checkbox" id="cl-ativo"' + (c.ativo !== false ? ' checked' : '') + '> ' +
              '<span>Ativo</span></label>' +
@@ -1635,6 +1655,11 @@ ERP.cadastros = (function () {
           email: U.val('cl-email'),
           prazo_dias: parseInt(U.val('cl-prazo'), 10) || null, retencoes: retencoes,
           boleto: !!(U.el('cl-boleto') && U.el('cl-boleto').checked),
+          so_fatura: !!(U.el('cl-sofatura') && U.el('cl-sofatura').checked),
+          /* Vazio é apagar o apelido, não manter o antigo: sem
+             gravar o vazio, tirar um apelido errado seria
+             impossível pela tela. */
+          apelido: U.val('cl-apelido').trim(),
           /* Vazio volta a seguir o cadastro do projeto — e precisa
              gravar o vazio, não ignorá-lo, senão desfazer a escolha
              seria impossível. */
