@@ -585,10 +585,18 @@ ERP.util = (function () {
          apontando para algo que ninguém achava. Para esses campos
          `extra` é resíduo, e resíduo não ressuscita.
 
-       campo SEM coluna declarada → o `extra` é a casa dele.
-         `paraBanco` só escreve nas colunas conhecidas, então esse
-         campo nunca terá valor em coluna nenhuma. Coluna vazia de
-         mesmo nome ganhando dele é sempre perda de dado.
+       campo SEM coluna declarada → o `extra` manda SEMPRE.
+         `paraBanco` só escreve nas colunas CONHECIDAS. Para um campo
+         fora dessa lista, o sistema nunca escreveu a coluna de mesmo
+         nome — então o que estiver lá não é dado dele, é o padrão de
+         quem criou a coluna. Não pode ganhar do `extra` em hipótese
+         alguma: nem NULL, nem `[]`, nem `{}`, nem zero.
+
+         Isto NÃO é detalhe. A primeira versão desta função deixava
+         o `extra` passar só quando a coluna era NULL, e uma coluna
+         `retencoes jsonb default '[]'` continuava engolindo as
+         retenções do cliente na recarga — mesmo sintoma, mesma
+         ausência de erro, mais uma noite perdida. `[]` não é NULL.
 
      Sem a lista de colunas, vale o meio-termo seguro: coluna com
      valor manda, coluna vazia deixa o `extra` passar.
@@ -607,9 +615,14 @@ ERP.util = (function () {
     });
     if (linha.extra && typeof linha.extra === 'object') {
       Object.keys(linha.extra).forEach(function (k) {
-        if (o[k] !== undefined) return;
+        if (linha.extra[k] === null) return;
+        /* Campo COM coluna declarada: a coluna manda, mesmo vazia. */
         if (declarada && declarada(k)) return;
-        if (linha.extra[k] !== null) o[k] = linha.extra[k];
+        /* Campo SEM coluna declarada: o extra manda, SEMPRE — o
+           sistema nunca escreveu aquela coluna. Sem a lista, só o
+           valor não-nulo da coluna segura o extra. */
+        if (!declarada && o[k] !== undefined) return;
+        o[k] = linha.extra[k];
       });
     }
     return o;
