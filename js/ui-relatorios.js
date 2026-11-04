@@ -207,10 +207,15 @@ ERP.relatorios = (function () {
   let compA = U.compDe(U.addMeses(U.mesAtual() + '-01', -1));
   let compB = U.mesAtual();
   let limAlerta = 3;
-  let fatUnidade = '';
+  let fatCliente = '';
 
   function filtrosFaturamento() {
-    const unidades = D.unidades();
+    /* POR CLIENTE, não por unidade. A unidade é texto livre do
+       cadastro e tinha dezessete valores de naturezas diferentes —
+       cidade, sigla de hospital e nome de cliente na mesma lista.
+       Quem abre este relatório quer o faturamento de um cliente. */
+    const clientes = (D.clientes || []).slice()
+      .sort(function (x, y) { return U.porNome(x, y); });
     return '<div class="filtros">' +
       '<div class="f"><label for="fat-modo">Recorte</label><select id="fat-modo">' +
         '<option value="competencia"' + (fatModo === 'competencia' ? ' selected' : '') +
@@ -227,11 +232,12 @@ ERP.relatorios = (function () {
           '<div class="f"><label for="fat-ate">Até</label><input type="date" id="fat-ate" value="' +
             per.ate + '"></div>' +
           '<button class="btn-sm" id="fat-30">Últimos 30 dias</button>') +
-      '<div class="f"><label for="fat-unidade">Unidade</label><select id="fat-unidade">' +
-        '<option value="">todas</option>' +
-        unidades.map(function (un) {
-          return '<option value="' + U.esc(un) + '"' + (fatUnidade === un ? ' selected' : '') +
-            '>' + U.esc(un) + '</option>';
+      '<div class="f"><label for="fat-cliente">Cliente</label><select id="fat-cliente">' +
+        '<option value="">todos</option>' +
+        clientes.map(function (cl) {
+          return '<option value="' + U.esc(cl.id) + '"' + (fatCliente === cl.id ? ' selected' : '') +
+            ' title="' + U.esc(cl.nome || '') + '">' +
+            U.esc(S.nomeCurtoCliente(cl)) + '</option>';
         }).join('') + '</select></div>' +
       '</div>';
   }
@@ -244,7 +250,7 @@ ERP.relatorios = (function () {
     const clica = (id, fn) => { const e = U.el(id); if (e) e.addEventListener('click', fn); };
     liga('fat-modo', function () { fatModo = this.value; render(); });
     liga('fat-comp', function () { fatComp = this.value; render(); });
-    liga('fat-unidade', function () { fatUnidade = this.value; render(); });
+    liga('fat-cliente', function () { fatCliente = this.value; render(); });
     ligaData('fat-de', function () { per.de = this.value; render(); });
     ligaData('fat-ate', function () { per.ate = this.value; render(); });
     clica('fat-mes-ant', function () {
@@ -260,8 +266,8 @@ ERP.relatorios = (function () {
      VAZIA, não com zero — zero somaria no Excel. */
   function exportarFaturamento() {
     const r = fatModo === 'periodo'
-      ? S.relatorioFaturamento({ de: per.de, ate: per.ate, unidade: fatUnidade || undefined })
-      : S.relatorioFaturamento({ competencia: fatComp, unidade: fatUnidade || undefined });
+      ? S.relatorioFaturamento({ de: per.de, ate: per.ate, cliente: fatCliente || undefined })
+      : S.relatorioFaturamento({ competencia: fatComp, cliente: fatCliente || undefined });
     if (ERP.app.erroDoRetorno(r)) return;
     const porComp = r.modo === 'competencia';
     const colunas = [
@@ -305,8 +311,8 @@ ERP.relatorios = (function () {
 
   function faturamentoPorProjeto() {
     const r = fatModo === 'periodo'
-      ? S.relatorioFaturamento({ de: per.de, ate: per.ate, unidade: fatUnidade || undefined })
-      : S.relatorioFaturamento({ competencia: fatComp, unidade: fatUnidade || undefined });
+      ? S.relatorioFaturamento({ de: per.de, ate: per.ate, cliente: fatCliente || undefined })
+      : S.relatorioFaturamento({ competencia: fatComp, cliente: fatCliente || undefined });
     if (r.erro) return '<div class="vazio"><strong>' + U.esc(r.erro) + '</strong></div>';
     if (!r.linhas.length) {
       return '<div class="vazio"><strong>Nenhum projeto nesse recorte.</strong></div>';

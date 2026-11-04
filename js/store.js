@@ -4152,6 +4152,11 @@ ERP.store = (function () {
     const gruposFeitos = {};
     coberturaFaturamento(competencia).forEach(function (l) {
       if (l.situacao !== 'liberado') return;
+      /* CLIENTE QUE SÓ RECEBE FATURA NÃO ENTRA NO RPS. O RPS existe
+         para virar NF-e no portal da prefeitura; para quem não tem
+         NF, o arquivo sairia pedindo a conversão de uma nota que
+         ninguém vai emitir. */
+      if (clienteSoFatura(l.centro)) return;
       if (l.grupo) {
         if (gruposFeitos[l.grupo]) return;
         gruposFeitos[l.grupo] = true;
@@ -4848,6 +4853,13 @@ ERP.store = (function () {
       if (c.tipo !== 'projeto') return false;
       if (f.centro && c.id !== f.centro) return false;
       if (f.unidade && c.unidade !== f.unidade) return false;
+      /* FILTRO POR CLIENTE. O de unidade continua atendido acima
+         para quem chamar, mas a tela passou a filtrar por cliente:
+         `unidade` é texto livre que virou um saco de coisas
+         diferentes (cidade em "Fortaleza", sigla em "SCBM", nome de
+         cliente em "SPDM"), e filtrar por ele respondia uma
+         pergunta que ninguém faz. */
+      if (f.cliente && (D.clienteDoCentro(c.id) || {}).id !== f.cliente) return false;
       /* Inativo entra só se tiver nota no recorte — senão polui a
          lista com projeto que acabou ano passado. */
       if (!c.ativo) {
@@ -15385,6 +15397,18 @@ ERP.store = (function () {
         /* Para a tela marcar a linha quando alguém pede para ver os
            escondidos. */
         inativo: marcaInativo(c, centro),
+        /* DE QUEM É ESTE PROJETO. A esteira mostrava a `unidade` do
+           cadastro embaixo do nome — um campo que virou um saco de
+           coisas diferentes (cidade em "Fortaleza", sigla em
+           "SCBM", nome de cliente em "SPDM"), e por isso lia-se
+           como ruído: embaixo de PRISIONAL aparecia "Fortaleza",
+           quando o cliente é a Polícia Militar do Ceará. */
+        cliente: (D.clienteDoCentro(centro) || {}).id || null,
+        cliente_nome: (D.clienteDoCentro(centro) || {}).nome || '',
+        cliente_curto: nomeCurtoCliente(D.clienteDoCentro(centro)),
+        /* Na linha, e não descoberto pela tela: a linha de grupo não
+           tem `centro`, e a tela cairia no cliente errado. */
+        so_fatura: clienteSoFatura(centro),
         /* Projeto SEM PREVISÃO salva no mês é um estado em si, e o
            mais acionável da tela: é o que alguém precisa lançar. Sem
            distinguir, ele se confundia com quem já tem previsão e
@@ -15491,9 +15515,28 @@ ERP.store = (function () {
         if (!g) return soltas.push(l);
         const k = g + '|' + l.competencia;
         if (!grupos[k]) {
+          /* O RÓTULO DO GRUPO NÃO ACOMPANHA O CLIENTE.
+
+             `grupo_faturamento` é texto livre, digitado uma vez e
+             congelado: ele AGRUPA certo, mas quando os projetos
+             mudam de cliente o nome fica para trás. Foi o que
+             aconteceu com o mutirão — os projetos foram para a
+             Santa Casa Madre Michel e a esteira continuou dizendo
+             "GHC - HGB MUTIRAO". Então o nome que aparece é o do
+             CLIENTE, lido na hora; o rótulo continua existindo como
+             chave de agrupamento e aparece na linha de apoio, que é
+             o que distingue dois grupos do mesmo cliente. */
+          const cliG = D.clienteDoCentro(l.centro) || {};
           grupos[k] = {
             grupo: g, centro: null, competencia: l.competencia,
-            projeto: { curto: g, nome: g + ' (faturamento único)', grupo_faturamento: g },
+            cliente: cliG.id || null, cliente_nome: cliG.nome || '',
+            cliente_curto: nomeCurtoCliente(cliG), so_fatura: !!cliG.so_fatura,
+            /* O NOME CURTO, não a razão social: inteira ("Grupo
+               Hospitalar Conceição — Hospital Federal de
+               Bonsucesso") ela quebrava a linha do grupo em três
+               alturas de texto e empurrava a tabela. */
+            projeto: { curto: nomeCurtoCliente(cliG) || g, nome: cliG.nome || g,
+              rotulo_grupo: g, grupo_faturamento: g },
             especialidades: [], valor: 0, documentos: [], eh_grupo: true,
             /* Quantas especialidades o grupo TEM, não quantas
                apareceram nesta competência: o faturamento é global e
@@ -16877,6 +16920,43 @@ ERP.store = (function () {
   function clienteExigeBoleto(centro) {
     const cli = D.clienteDoCentro(centro);
     return !!(cli && cli.boleto);
+  }
+
+  /* CLIENTE QUE NÃO RECEBE NOTA FISCAL, só fatura.
+
+     Sem isto, a linha liberada oferecia "Emitir à mão" e "Anexar NF"
+     para quem nunca vai ter NF, e o cliente entrava na geração de
+     RPS em lote — gerando RPS de uma nota que não existe. */
+  function clienteSoFatura(centro) {
+    if (!centro) return false;
+    const cli = D.clienteDoCentro(centro);
+    return !!(cli && cli.so_fatura);
+  }
+
+  /* O NOME DO CLIENTE QUE CABE NUMA COLUNA.
+
+     Razão social de cliente vai a 64 caracteres ("Irmandade
+     Beneficente da Santa Casa da Misericórdia de Fortaleza"), e a
+     esteira não rola de lado. Então:
+
+     1. o apelido, quando alguém cadastrou um;
+     2. senão, o lado MAIS CURTO do travessão — que é onde a sigla
+        costuma estar ("Instituto Dr. José Frota — IJF" vira "IJF",
+        "AGIR — Ass. de Gestão..." vira "AGIR");
+     3. senão, a razão social inteira.
+
+     O palpite do travessão acerta a maioria e erra alguns; é por
+     isso que o apelido existe no cadastro, para corrigir sem
+     depender de adivinhação. O nome completo fica no `title`. */
+  function nomeCurtoCliente(cli) {
+    if (!cli) return '';
+    if (cli.apelido) return String(cli.apelido).trim();
+    const nome = String(cli.nome || '').trim();
+    const partes = nome.split(/\s+[—–-]\s+/);
+    if (partes.length === 2 && partes[0] && partes[1]) {
+      return partes[0].length <= partes[1].length ? partes[0] : partes[1];
+    }
+    return nome;
   }
 
   function faltaBoleto(centro, competencia) {
@@ -20397,7 +20477,7 @@ ERP.store = (function () {
     dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente,
     inativarCliente, excluirCliente, clientePreso, salvarArmazem,
     dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente,
-    clienteExigeBoleto, faltaBoleto, competenciaDeslocada, faltaDocumento,
+    clienteExigeBoleto, clienteSoFatura, nomeCurtoCliente, faltaBoleto, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
