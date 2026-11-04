@@ -44,6 +44,27 @@ ERP.rpsBarueri = (function () {
   const vazio = n => ''.padEnd(n, ' ');
   const data8 = d => String(d || '').replace(/\D/g, '').slice(0, 8);
 
+  /* v156: O SEPARADOR DE E-MAIL É "|", NÃO ";".
+
+     O layout permite até 3 e-mails no campo do tomador, separados
+     por barra vertical, o primeiro sendo o principal. O cadastro do
+     cliente costuma vir com ponto e vírgula — que é o que o Outlook
+     e o Excel usam — e o arquivo saía com os dois endereços grudados
+     num campo só: a prefeitura devolveu erro 246, "e-mail do tomador
+     inválido", e a nota inteira não saiu.
+
+     Normaliza aqui, perto de onde o arquivo é montado, pelo mesmo
+     motivo da inscrição: não importa como foi digitado no cadastro,
+     sai no formato que a prefeitura aceita. */
+  function emails(valor) {
+    return String(valor === null || valor === undefined ? '' : valor)
+      .split(/[;,|\s]+/)
+      .map(function (e) { return e.trim(); })
+      .filter(function (e) { return e.indexOf('@') > 0; })
+      .slice(0, 3)
+      .join('|');
+  }
+
   /* A discriminação é impressa num retângulo de 100 colunas por 13
      linhas, com "|" marcando a quebra de linha.
 
@@ -94,11 +115,25 @@ ERP.rpsBarueri = (function () {
         quebrarEm100(semAcento(l).replace(/[ \t]+/g, ' ').trim())
           .forEach(function (p) { linhas.push(p); });
       });
-    /* O retângulo tem 13 linhas. Cortar em silêncio esconde texto
-       que o cliente exigiu na nota, então a última linha avisa. */
+    /* O retângulo tem 13 linhas.
+
+       v156: ANTES DE PERDER TEXTO, PERDER O ESPAÇAMENTO. Discriminação
+       com uma linha em branco entre cada item gasta metade do
+       retângulo com nada — foi o que cortou a nota do SAMU, que
+       listava quatro postos e o total. Tirar as linhas vazias é
+       mecânico e não perde uma palavra; cortar o fim perde. Só
+       quando nem assim couber é que avisa, porque sumir com o texto
+       em silêncio é o que o cliente descobre depois, na nota. */
     if (linhas.length > 13) {
-      linhas.length = 12;
-      linhas.push('(continua - texto maior que as 13 linhas da nota)');
+      const semVazias = linhas.filter(function (l) { return l !== ''; });
+      if (semVazias.length <= 13) {
+        linhas.length = 0;
+        semVazias.forEach(function (l) { linhas.push(l); });
+      } else {
+        linhas.length = 0;
+        semVazias.slice(0, 12).forEach(function (l) { linhas.push(l); });
+        linhas.push('(continua - texto maior que as 13 linhas da nota)');
+      }
     }
     return semAcento(linhas.join('|')).slice(0, 1000).padEnd(1000, ' ');
   }
@@ -181,7 +216,7 @@ ERP.rpsBarueri = (function () {
       txt(item.tomador_cidade, 40) +
       txt(item.tomador_uf, 2) +
       num(item.tomador_cep, 8) +
-      txt(item.tomador_email || '', 152) +
+      txt(emails(item.tomador_email), 152) +
       /* v153: O VALOR DA FATURA É O LÍQUIDO.
 
          Saía o bruto, e só quando havia número de fatura — então na
@@ -250,6 +285,76 @@ ERP.rpsBarueri = (function () {
     return '9' + num(linhas, 7) + val(totalServicos, 15) + val(totalRetencoes, 15);
   }
 
+  /* ── leitura do arquivo de RETORNO ──────────────────────
+     v156: o portal devolve um .TXT posicional com a NF-e que cada
+     RPS virou (layout "ExportaNFe V3.0"). Até aqui o número era
+     DIGITADO de volta, um por um, olhando o arquivo — e junto com o
+     número se perdiam o código de autenticidade, a chave de acesso
+     do Ambiente Nacional e a data real de emissão, que ficava sendo
+     "hoje". Três dados que a prefeitura já tinha mandado.
+
+     Registro tipo 2 (identificação da NF-e):
+       2-5    série da NF-e          51-54    série do RPS
+       6-12   número da NF-e         55-64    número do RPS
+       13-20  data de emissão        67       situação (A ativa / C cancelada)
+       21-26  hora                   94-107   CNPJ/CPF do tomador
+       27-50  código de autenticidade
+       1629-1678  chave de acesso da NFS-e no ADN */
+  function lerRetorno(texto) {
+    const linhas = String(texto || '').split(/\r\n?|\n/).filter(function (l) { return l.length; });
+    if (!linhas.length) return { erro: 'Arquivo vazio.' };
+    const cab = linhas[0];
+    if (cab.charAt(0) !== '1') {
+      return { erro: 'Isto não parece um arquivo de retorno da prefeitura: a primeira linha ' +
+        'deveria começar com 1 (cabeçalho).' };
+    }
+    /* ARQUIVO DE RETORNO OU ARQUIVO ENVIADO? Os dois começam com 1 e
+       os dois têm registro tipo 2 — mas são layouts DIFERENTES, e
+       importar o enviado (ou a crítica .ERR, que é o espelho dele)
+       leria a descrição do serviço como se fosse número de nota e
+       criaria títulos com número inventado.
+
+       O que separa é a posição da versão do layout: no retorno ela
+       fica em 25-30, porque antes dela vêm as duas datas do período
+       de transferência; no enviado, em 9-14. */
+    if (cab.slice(24, 30).indexOf('PMB') !== 0) {
+      return { erro: cab.slice(8, 14).indexOf('PMB') === 0
+        ? 'Este é o arquivo que você ENVIOU (ou a crítica .ERR dele), não o retorno. ' +
+          'No portal, baixe o arquivo de retorno do processamento.'
+        : 'Não reconheci o layout deste arquivo como retorno da prefeitura de Barueri.' };
+    }
+    const notas = [];
+    linhas.forEach(function (l) {
+      if (l.charAt(0) !== '2') return;
+      const pega = (a, b) => l.slice(a - 1, b).trim();
+      const num = (a, b) => pega(a, b).replace(/^0+/, '');
+      notas.push({
+        serie: pega(2, 5),
+        nf: num(6, 12),
+        emissao: pega(13, 20),
+        hora: pega(21, 26),
+        codigo_verificacao: pega(27, 50),
+        serie_rps: pega(51, 54),
+        rps: Number(pega(55, 64)) || 0,
+        situacao: pega(67, 67),
+        tomador_documento: pega(94, 107),
+        tomador_nome: pega(108, 207),
+        nf_chave: pega(1629, 1678)
+      });
+    });
+    if (!notas.length) {
+      return { erro: 'O arquivo não tem nenhuma NF-e (registro tipo 2). ' +
+        'Se ele terminar em .ERR, é o arquivo de CRÍTICA, não o de retorno.' };
+    }
+    return {
+      ok: true,
+      inscricao: pega8(cab, 2, 8),
+      remessa: pega8(cab, 31, 41).replace(/^0+/, ''),
+      notas: notas
+    };
+  }
+  const pega8 = (l, a, b) => l.slice(a - 1, b).trim();
+
   /* ── montagem do lote ───────────────────────────────────*/
   function gerar(itens, empresa, opcoes) {
     opcoes = opcoes || {};
@@ -312,5 +417,8 @@ ERP.rpsBarueri = (function () {
   }
 
   return { gerar: gerar, baixar: baixar, pendencias: pendencias, discriminacao: discriminacao,
+    /* v156: exposta para a prova medir a normalização sem ter de
+       montar o arquivo inteiro e contar posição. */
+    emails: emails, lerRetorno: lerRetorno,
     totalRetencoesFederais: totalRetencoesFederais };
 })();

@@ -408,7 +408,12 @@ ERP.faturamento = (function () {
               '<td class="acoes">' +
                 (l.status !== 'convertido'
                   ? '<button class="btn-sm" data-rps-prot="' + l.id + '">Protocolo</button> ' +
-                    '<button class="btn-sm btn-aprovar" data-rps-ret="' + l.id + '">Informar NF-e</button>' : '') +
+                    /* v156: importar é o caminho preferido — traz o
+                       número, a data real, o código de autenticidade
+                       e a chave do ADN. Digitar continua ali ao lado
+                       para quando o arquivo não estiver à mão. */
+                    '<button class="btn-sm btn-aprovar" data-rps-imp="' + l.id + '">Importar retorno</button> ' +
+                    '<button class="btn-sm" data-rps-ret="' + l.id + '">Informar à mão</button>' : '') +
               '</td></tr>';
           }).join('') + '</tbody></table>'
         : '') +
@@ -491,6 +496,9 @@ ERP.faturamento = (function () {
     U.el('fa-aba-rps').querySelectorAll('[data-rps-ret]').forEach(function (b) {
       b.addEventListener('click', function () { informarNFe(this.dataset.rpsRet); });
     });
+    U.el('fa-aba-rps').querySelectorAll('[data-rps-imp]').forEach(function (b) {
+      b.addEventListener('click', function () { importarRetorno(this.dataset.rpsImp); });
+    });
     U.el('fa-aba-rps').querySelectorAll('[data-rps-prot]').forEach(function (b) {
       b.addEventListener('click', function () {
         const id = this.dataset.rpsProt;
@@ -533,6 +541,129 @@ ERP.faturamento = (function () {
     });
     return maior + 1;
   }
+
+  /* v156: IMPORTAR O RETORNO DO PORTAL.
+
+     O número da NF-e era digitado de volta, um por um, lendo o
+     arquivo que a prefeitura devolve. Junto com o número se perdiam
+     a data real de emissão (a nota ficava com "hoje"), o código de
+     autenticidade e a chave de acesso do Ambiente Nacional — três
+     coisas que o arquivo já traz.
+
+     Confere ANTES de converter, e mostra o que achou: arquivo de
+     outro lote ou de outra empresa cria título com número de nota
+     que não é desse faturamento, e isso não se descobre olhando. */
+  function importarRetorno(loteId) {
+    const lote = S.st.lotesRPS.find(function (l) { return l.id === loteId; });
+    if (!lote) return;
+    const ent = document.createElement('input');
+    ent.type = 'file';
+    ent.accept = '.txt,.TXT,text/plain';
+    ent.addEventListener('change', function () {
+      const arq = ent.files && ent.files[0];
+      if (!arq) return;
+      const leitor = new FileReader();
+      leitor.onload = function () {
+        const r = ERP.rpsBarueri.lerRetorno(String(leitor.result || ''));
+        if (ERP.app.erroDoRetorno(r)) return;
+        conferirRetorno(lote, r, arq.name);
+      };
+      /* O arquivo vem em Latin-1, como o que mandamos: lido como
+         UTF-8, cada acento do nome do tomador vira caractere
+         quebrado. */
+      leitor.readAsText(arq, 'ISO-8859-1');
+    });
+    ent.click();
+  }
+
+  function conferirRetorno(lote, r, nomeArq) {
+    const porRps = {};
+    lote.rps.forEach(function (x) { porRps[String(x.numero)] = x; });
+    const casam = [], sobram = [], jaFeitos = [], canceladas = [];
+    r.notas.forEach(function (n) {
+      const rps = porRps[String(n.rps)];
+      if (!rps) { sobram.push(n); return; }
+      if (n.situacao === 'C') { canceladas.push(n); return; }
+      if (rps.nf) { jaFeitos.push(n); return; }
+      casam.push(n);
+    });
+    const faltam = lote.rps.filter(function (x) {
+      return !x.nf && !casam.some(function (n) { return String(n.rps) === String(x.numero); });
+    });
+    const remessaDiverge = String(r.remessa || '') !== String(lote.remessa || '');
+
+    ERP.app.modal({
+      titulo: 'Retorno do portal · remessa ' + lote.remessa,
+      fecharTxt: 'Fechar',
+      corpo:
+        '<div class="ajuda">Arquivo: <b>' + U.esc(nomeArq) + '</b> · remessa ' +
+          U.esc(r.remessa || '—') + ' · inscrição ' + U.esc(r.inscricao || '—') + '</div>' +
+        (remessaDiverge
+          ? '<div class="aviso" style="margin:8px 0"><b>Este arquivo é de outra remessa</b> ' +
+            '(' + U.esc(r.remessa || '—') + '), e este lote é a ' + U.esc(lote.remessa) + '. ' +
+            'Importar criaria títulos com nota de outro faturamento. Confira no portal qual ' +
+            'arquivo você baixou.</div>'
+          : '') +
+        (sobram.length
+          ? '<div class="ajuda" style="margin-top:6px">' + sobram.length + ' nota(s) do arquivo não ' +
+            'pertencem a este lote e vão ser ignoradas: RPS ' +
+            U.esc(sobram.map(function (n) { return n.rps; }).join(', ')) + '.</div>'
+          : '') +
+        (canceladas.length
+          ? '<div class="ajuda" style="margin-top:6px">' + canceladas.length + ' nota(s) vieram ' +
+            'canceladas no arquivo e não entram.</div>'
+          : '') +
+        (jaFeitos.length
+          ? '<div class="ajuda" style="margin-top:6px">' + jaFeitos.length + ' RPS já tinham ' +
+            'NF-e registrada e não vão ser mexidos.</div>'
+          : '') +
+        '<table class="parcelas" style="margin-top:8px"><thead><tr><th>RPS</th><th>Cobrança</th>' +
+        '<th class="num">Valor</th><th>NF-e</th><th>Emissão</th><th>Código</th></tr></thead><tbody>' +
+        casam.map(function (n) {
+          const rps = porRps[String(n.rps)];
+          return '<tr><td class="mono">' + n.rps + '</td>' +
+            '<td class="desc">' + U.esc(rps.tomador || '') + '</td>' +
+            '<td class="num">' + U.brl(rps.valor) + '</td>' +
+            '<td class="mono"><b>' + U.esc(n.nf) + '</b></td>' +
+            '<td>' + U.esc(U.fData(dataDoArquivo(n.emissao))) + '</td>' +
+            '<td class="mono sub">' + U.esc(n.codigo_verificacao || '—') + '</td></tr>';
+        }).join('') +
+        faltam.map(function (x) {
+          return '<tr style="opacity:.55"><td class="mono">' + x.numero + '</td>' +
+            '<td class="desc">' + U.esc(x.tomador || '') + '</td>' +
+            '<td class="num">' + U.brl(x.valor) + '</td>' +
+            '<td colspan="3" class="sub">não veio neste arquivo</td></tr>';
+        }).join('') +
+        '</tbody></table>' +
+        (casam.length ? '' : '<div class="ajuda" style="margin-top:8px">Nenhuma nota deste arquivo ' +
+          'entra neste lote. Nada vai ser registrado.</div>'),
+      acoes: casam.length && !remessaDiverge
+        ? [{ txt: 'Registrar ' + casam.length + ' NF-e', cls: 'btn-aprovar', fn: function () {
+            const mapa = {};
+            casam.forEach(function (n) {
+              mapa[porRps[String(n.rps)].numero] = {
+                nf: n.nf, serie: n.serie, emissao: dataDoArquivo(n.emissao),
+                codigo_verificacao: n.codigo_verificacao, nf_chave: n.nf_chave
+              };
+            });
+            const res = S.converterLoteRPS(lote.id, mapa);
+            if (ERP.app.erroDoRetorno(res)) return;
+            ERP.app.fecharModal();
+            renderRPS();
+            atualizarAlertaFat();
+            ERP.app.aviso(res.convertidos + ' NF-e registrada(s) a partir do arquivo.' +
+              (res.erros.length ? ' ' + res.erros.length + ' com erro: ' + res.erros[0] : ''),
+              res.erros.length ? 'erro' : 'ok');
+          } }]
+        : []
+    });
+  }
+
+  /* AAAAMMDD do arquivo para o formato de data do sistema. */
+  const dataDoArquivo = d => {
+    const s = String(d || '').replace(/\D/g, '');
+    return s.length === 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : U.hoje();
+  };
 
   function informarNFe(loteId) {
     const lote = S.st.lotesRPS.find(function (l) { return l.id === loteId; });
@@ -1241,7 +1372,11 @@ ERP.faturamento = (function () {
     ['af', 'Autorização de fornecimento (AF)'],
     ['escala', 'Relatório de escala'],
     ['medicao', 'Medição / relatório do órgão'],
-    ['oficio', 'Ofício / e-mail de autorização']
+    ['oficio', 'Ofício / e-mail de autorização'],
+    /* v157: só alguns clientes exigem, mas quando exigem a nota não
+       vale sem ele — por isso é tipo próprio e não "Sem
+       classificação". */
+    ['boleto', 'Boleto']
   ];
 
   function revisarFaturamento(ref) {
@@ -1563,6 +1698,14 @@ ERP.faturamento = (function () {
             return '<option value="' + x[0] + '"' + (x[0] === 'outro' ? ' selected' : '') + '>' +
               U.esc(x[1]) + '</option>';
           }).join('') + '</select>' +
+        /* v157: o cliente que exige boleto é lembrado AQUI, que é
+           onde a nota está sendo anexada — e não depois, quando o
+           financeiro liga perguntando por ele. */
+        (S.faltaBoleto(par[0], par[1])
+          ? '<div class="aviso" style="margin-top:8px"><b>Este cliente exige boleto</b> junto com a ' +
+            'nota, e ainda não há boleto neste faturamento. Anexe-o agora, classificando como ' +
+            '<b>Boleto</b>.</div>'
+          : '') +
         '<div class="ajuda" id="ax-aviso">Os arquivos ficam em pasta privada no servidor: abrem por ' +
           'link temporário, para quem tem o módulo de Faturamento. São eles que vão junto com a nota ' +
           'no envio ao cliente.</div>',
@@ -1912,6 +2055,13 @@ ERP.faturamento = (function () {
               }).join('') + '</ul>'
             : '<div class="ajuda">Nenhum documento anexado — o cliente costuma exigir a AF ou a ' +
               'escala junto da nota. Dá para baixar o pacote em <b>Ver / editar</b>.</div>') +
+          /* v157: o boleto que falta é dito AQUI, antes de marcar
+             como enviada — depois de marcada, ninguém volta. */
+          (S.faltaBoleto(par[0], par[1])
+            ? '<div class="aviso" style="margin-top:8px"><b>Falta o boleto.</b> Este cliente exige ' +
+              'boleto junto com a nota, e ele ainda não foi anexado. Anexe em <b>Ver / editar</b> ' +
+              'antes de enviar.</div>'
+            : '') +
         '</div>' +
         (jaEnviado
           ? '<div class="ajuda" style="margin-top:8px">Marcada como <b>enviada ao cliente</b> em ' +

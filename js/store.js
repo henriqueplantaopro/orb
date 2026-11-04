@@ -4276,7 +4276,15 @@ ERP.store = (function () {
       }
     });
     lote.rps.forEach(function (r) {
-      const nf = mapa[r.numero];
+      /* v156: o valor pode ser só o NÚMERO (digitado à mão, como
+         sempre foi) ou o REGISTRO INTEIRO vindo do arquivo de
+         retorno — com série, data real de emissão, código de
+         autenticidade e chave do Ambiente Nacional. Esses três a
+         prefeitura já mandava e o sistema jogava fora, carimbando a
+         emissão como "hoje". */
+      const dado = mapa[r.numero];
+      const dadoObj = dado && typeof dado === 'object' ? dado : null;
+      const nf = dadoObj ? dadoObj.nf : dado;
       if (nf !== undefined && String(nf).trim() === '') {
         erros.push('RPS ' + r.numero + ': número da NF-e em branco.');
         return;
@@ -4287,16 +4295,30 @@ ERP.store = (function () {
       }
       if (!nf || r.nf) return;
       const ref = String(r.referencia || '');
+      /* A data vem do arquivo quando há arquivo: nota emitida à
+         meia-noite e importada de manhã ficava com a emissão do dia
+         seguinte, e a competência do vencimento saía errada junto. */
+      const emissao = (dadoObj && dadoObj.emissao) || U.hoje();
+      const extra = dadoObj ? {
+        serie: dadoObj.serie || '',
+        codigo_verificacao: dadoObj.codigo_verificacao || null,
+        nf_chave: dadoObj.nf_chave || null
+      } : {};
       const res = ref.indexOf('grupo:') === 0
-        ? faturarGrupo({ grupo: ref.slice(6), competencia: lote.competencia, valor: r.valor,
-            numero: nf, emissao: U.hoje() })
-        : criarReceber({ numero: nf, emissao: U.hoje(), centro: ref.slice(7),
+        ? faturarGrupo(Object.assign({ grupo: ref.slice(6), competencia: lote.competencia,
+            valor: r.valor, numero: nf, emissao: emissao }, extra))
+        : criarReceber(Object.assign({ numero: nf, emissao: emissao, centro: ref.slice(7),
             competencia: lote.competencia, valor_bruto: r.valor,
             cliente_nome: (D.clienteDoCentro(ref.slice(7)) || {}).nome || '',
-            origem: 'nota', discriminacao: 'NF-e convertida do RPS ' + r.numero });
+            origem: 'nota', discriminacao: 'NF-e convertida do RPS ' + r.numero }, extra));
       if (res.erro) { erros.push('RPS ' + r.numero + ': ' + res.erro); return; }
       r.nf = nf;
       r.convertido_em = U.hoje();
+      if (dadoObj) {
+        r.nf_emissao = dadoObj.emissao || null;
+        r.nf_codigo = dadoObj.codigo_verificacao || null;
+        r.nf_chave = dadoObj.nf_chave || null;
+      }
       feitos.push(nf);
     });
     lote.status = lote.rps.every(function (r) { return r.nf; }) ? 'convertido' : 'parcial';
@@ -16388,7 +16410,15 @@ ERP.store = (function () {
      O arquivo mora no balde privado do servidor, como os anexos de
      contrato e o cofre de habilitação — aqui ficam só o nome, o
      caminho e quem anexou. */
-  const TIPOS_ANEXO_FAT = ['af', 'escala', 'medicao', 'oficio', 'nf', 'outro'];
+  /* v157: a lista de tipos válidos SAI dos rótulos, não é uma
+     segunda cópia deles. Eram duas listas que precisavam concordar:
+     ao acrescentar "boleto" só aos rótulos, o anexo era aceito e
+     guardado como "outro" — o tipo sumia em silêncio e a cobrança do
+     boleto nunca se satisfazia. Agora acrescentar um rótulo basta.
+
+     É função, e não constante, porque os rótulos são declarados mais
+     abaixo: lida na carga, daria erro de acesso antes da hora. */
+  const tiposAnexoFat = () => Object.keys(NOMES_ANEXO_FAT);
 
   function anexarAoFaturamento(centro, competencia, anexo) {
     /* A MESMA REGRA QUE GOVERNA O BALDE. O arquivo é aceito pelo
@@ -16409,7 +16439,7 @@ ERP.store = (function () {
     const pv = g.previsao;
     pv.anexos = (pv.anexos || []).concat([{
       id: novoId('ax'),
-      tipo: TIPOS_ANEXO_FAT.indexOf(anexo.tipo) > -1 ? anexo.tipo : 'outro',
+      tipo: tiposAnexoFat().indexOf(anexo.tipo) > -1 ? anexo.tipo : 'outro',
       nome: anexo.nome, path: anexo.path, tamanho: anexo.tamanho || 0,
       em: new Date().toISOString(), por: (usuario() || {}).nome || ''
     }]);
@@ -16752,6 +16782,30 @@ ERP.store = (function () {
     return !(pv && pv.enviado_cliente_em);
   }
 
+  /* v157: O BOLETO DE QUEM EXIGE BOLETO.
+
+     Alguns clientes só pagam com boleto junto da nota; a maioria
+     não. Marcar isso no cadastro do CLIENTE, e não lembrar projeto
+     por projeto, é o que faz a cobrança aparecer sozinha na hora
+     certa — que é quando a nota é anexada, não depois, quando o
+     financeiro liga perguntando.
+
+     Só cobra quando já existe nota: boleto antes da nota não tem o
+     que cobrar, e o aviso viraria ruído na esteira inteira. */
+  function clienteExigeBoleto(centro) {
+    const cli = D.clienteDoCentro(centro);
+    return !!(cli && cli.boleto);
+  }
+
+  function faltaBoleto(centro, competencia) {
+    if (!clienteExigeBoleto(centro)) return false;
+    const d = dossieFaturamento(centro, competencia);
+    if (d.erro) return false;
+    const temNota = (d.documentos || []).length > 0;
+    if (!temNota) return false;
+    return !(d.anexos || []).some(function (a) { return a.tipo === 'boleto'; });
+  }
+
   /* A COMPETÊNCIA DE N MESES ATRÁS. A esteira abre no mês anterior
      (o mês corrente mal começou a faturar) e a contagem de atraso
      olha duas competências para trás. */
@@ -16804,7 +16858,7 @@ ERP.store = (function () {
 
   const NOMES_ANEXO_FAT = { af: 'Autorização de fornecimento (AF)', escala: 'Relatório de escala',
     medicao: 'Medição / relatório do órgão', oficio: 'Ofício / e-mail de autorização',
-    nf: 'Nota fiscal', outro: 'Documento' };
+    nf: 'Nota fiscal', boleto: 'Boleto', outro: 'Documento' };
   const nomeTipoAnexoFat = t => NOMES_ANEXO_FAT[t] || 'Documento';
 
   /* ── importação de NFS-e por XML ────────────────────────
@@ -16984,6 +17038,11 @@ ERP.store = (function () {
       cliente_documento: d.cliente_documento ||
         (D.clienteDoCentro(d.centro) || {}).documento || '',
       nf_chave: d.nf_chave || null, emissao: d.emissao,
+      /* v156: o código de autenticidade vem no arquivo de retorno e
+         tem coluna própria desde sempre — só nunca era preenchido
+         por aqui. É com ele que se confere a nota no site da
+         prefeitura. */
+      codigo_verificacao: d.codigo_verificacao || null,
       cliente_doc: d.cliente_doc, cliente_nome: d.cliente_nome,
       centro: d.centro || null, conta: d.conta || '1.01',
       competencia: d.competencia, competencia_presumida: !!d.competencia_presumida,
@@ -20255,7 +20314,8 @@ ERP.store = (function () {
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
     dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente,
     inativarCliente, excluirCliente, clientePreso, salvarArmazem,
-    dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente, competenciaDeslocada, faltaDocumento,
+    dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente,
+    clienteExigeBoleto, faltaBoleto, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,

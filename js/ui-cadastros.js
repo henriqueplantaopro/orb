@@ -708,6 +708,49 @@ ERP.cadastros = (function () {
     atualiza();
   }
 
+  /* v155: o que a nota deste projeto vai realmente reter, e de onde
+     vem. A ordem é a mesma de `retencoesPrevistas` no store — se um
+     dia ela mudar lá, muda aqui, e é por isso que o texto nomeia a
+     regra em vez de repetir números soltos. */
+  function avisoRetencaoDoCliente(c) {
+    if (!c) return '';
+    const cli = D.clienteDoCentro(c.id) || (c.cliente && D.clientes.find(function (x) {
+      return x.id === c.cliente; })) || null;
+    if (!cli) {
+      return '<div class="ajuda">Este projeto ainda não tem cliente. Enquanto não tiver, a ' +
+        'retenção da nota sai dos impostos abaixo.</div>';
+    }
+    const doCli = (cli.retencoes || []);
+    if (!doCli.length) {
+      return '<div class="ajuda">O cliente <b>' + U.esc(cli.nome) + '</b> não tem retenção ' +
+        'cadastrada, então valem os impostos abaixo.</div>';
+    }
+    const lista = doCli.map(function (r) { return r.tributo + ' ' + U.num(r.aliquota) + '%'; }).join(' · ');
+    /* Divergência: o projeto tem imposto preenchido que o cliente não
+       tem, ou com alíquota diferente. Não é erro — é o cadastro
+       dizendo duas coisas, e quem digita precisa saber qual vale. */
+    const imp = c.impostos || {};
+    const porTributo = {};
+    doCli.forEach(function (r) { porTributo[String(r.tributo).toUpperCase()] = r.aliquota; });
+    const equivale = { irpj: 'IRRF', csll: 'CSLL', iss: 'ISS' };
+    const diverge = [];
+    Object.keys(equivale).forEach(function (k) {
+      const noProjeto = Number(imp[k]) || 0;
+      const noCliente = Number(porTributo[equivale[k]]) || 0;
+      if (noProjeto > 0 && noProjeto !== noCliente) {
+        diverge.push(equivale[k] + ': projeto ' + U.num(noProjeto) + '% / cliente ' +
+          (noCliente ? U.num(noCliente) + '%' : 'não retém'));
+      }
+    });
+    return '<div class="ajuda">A retenção deste projeto vem do <b>cliente ' + U.esc(cli.nome) +
+      '</b>: ' + U.esc(lista) + '. Os impostos abaixo só entram se o cliente ficar sem retenção ' +
+      'cadastrada.' +
+      (diverge.length
+        ? '<div style="margin-top:4px"><b>Os dois cadastros divergem</b> — ' + U.esc(diverge.join('; ')) +
+          '. Vale o do cliente.</div>'
+        : '') + '</div>';
+  }
+
   function editarProjeto(id, aoFechar, rascunho) {
     const c = id ? D.centro(id) : null;
     const imp = (c && c.impostos) || {};
@@ -748,6 +791,19 @@ ERP.cadastros = (function () {
         '<button type="button" class="btn-sm" id="pj-novo-cliente">+ cadastrar cliente</button></div>' +
         '<div class="ajuda">O vínculo é o mesmo dos dois lados: escolher aqui já deixa o projeto marcado no cadastro do cliente.</div>' +
         '<h2 style="font-size:12px;margin:14px 0 6px">Impostos do projeto (%)</h2>' +
+        /* v155: QUAL DOS DOIS CADASTROS VAI VALER, DITO AQUI.
+
+           A retenção tem dois lugares possíveis — o cliente e este
+           bloco — e o cliente ganha sempre que tiver alguma. Os
+           campos abaixo continuavam na tela com números preenchidos
+           que não entram em conta nenhuma, e ninguém tinha como
+           saber disso olhando. Divergência entre os dois ficava
+           invisível: o cadastro mostrava um valor e a nota saía com
+           outro.
+
+           Nada muda no cálculo. O que muda é a tela dizer a
+           precedência em vez de escondê-la. */
+        avisoRetencaoDoCliente(c) +
         '<div class="row3">' + IMP.map(function (i) {
           /* No formulário cabe o nome por extenso: a abreviação existe
              por causa da largura da COLUNA, não do campo. */
@@ -1416,7 +1472,11 @@ ERP.cadastros = (function () {
   function clientes() {
     /* v154: inativo sai da lista, como já acontece em projetos,
        produtos, armazéns e empresas. Mesmo botão, mesmo lugar. */
-    const lista = D.clientes.filter(function (c) { return verInativos || c.ativo !== false; });
+    /* v155: em ordem alfabética, com a mesma comparação usada nos
+       relatórios (pt-BR, ignorando acento e caixa) — senão "Ássis"
+       cairia depois de "Zica" e "instituto" depois de "Zanetti". */
+    const lista = U.emOrdemDeNome(
+      D.clientes.filter(function (c) { return verInativos || c.ativo !== false; }));
     const inativos = D.clientes.filter(function (c) { return c.ativo === false; }).length;
     return '<div class="ap-acoes"><button class="btn-linha" id="cad-novo-cliente">+ Novo cliente</button>' +
       (inativos || verInativos
@@ -1535,6 +1595,14 @@ ERP.cadastros = (function () {
         }).join('') + '</div>' +
         /* v154: inativar e excluir. O aviso diz o que prende o
            cliente ANTES de ele clicar, em vez de recusar depois. */
+        /* v157: quem exige boleto. Fica no CLIENTE porque é decisão
+           dele, não do projeto — e assim a cobrança do boleto
+           aparece sozinha em todos os projetos daquele cliente. */
+        '<label class="hb-marca" style="display:flex;margin-top:14px">' +
+          '<input type="checkbox" id="cl-boleto"' + (c && c.boleto ? ' checked' : '') + '> ' +
+          '<span>Exige boleto junto com a nota</span></label>' +
+        '<div class="ajuda">Marcado, o faturamento deste cliente passa a cobrar o boleto na hora de ' +
+          'anexar a nota, e o envio ao cliente só fica completo com ele.</div>' +
         (c ? '<label class="hb-marca" style="display:flex;margin-top:14px">' +
              '<input type="checkbox" id="cl-ativo"' + (c.ativo !== false ? ' checked' : '') + '> ' +
              '<span>Ativo</span></label>' +
@@ -1566,6 +1634,7 @@ ERP.cadastros = (function () {
           cep: U.val('cl-cep').replace(/\D/g, ''), codigo_ibge: U.val('cl-ibge').replace(/\D/g, ''),
           email: U.val('cl-email'),
           prazo_dias: parseInt(U.val('cl-prazo'), 10) || null, retencoes: retencoes,
+          boleto: !!(U.el('cl-boleto') && U.el('cl-boleto').checked),
           /* Vazio volta a seguir o cadastro do projeto — e precisa
              gravar o vazio, não ignorá-lo, senão desfazer a escolha
              seria impossível. */
