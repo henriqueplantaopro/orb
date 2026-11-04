@@ -12,7 +12,9 @@ ERP.dados = (function () {
   const empresas = [
     { id: 'emp1', apelido: 'HJM Matriz', nome: 'HJM DOM PEDRO GESTAO E SERVICOS EM SAUDE LTDA',
       cnpj: '34.958.609/0001-90', municipio: 'BARUERI', uf: 'SP', codigo_ibge: '3505708',
-      inscricao_municipal: '4BX8963', matriz: true, ativo: true },
+      /* Como a prefeitura mostra na tela: 4.BX896-2. O gerador do RPS
+         tira a pontuação, mas aqui já fica limpo. */
+      inscricao_municipal: '4BX8962', matriz: true, ativo: true },
     { id: 'emp2', apelido: 'HJM Filial CE', nome: 'HJM DOM PEDRO GESTAO E SERVICOS EM SAUDE LTDA',
       cnpj: '34.958.609/0003-51', municipio: 'FORTALEZA', uf: 'CE', codigo_ibge: '2304400',
       inscricao_municipal: '', matriz: false, ativo: true },
@@ -55,7 +57,26 @@ ERP.dados = (function () {
        o validador da prefeitura recusa primeiro. */
     rps: {
       serie: 'RPS', serie_nfe: '', codigo_servicoutm: '',
-      codigo_servico: '040701001',    // serviços médicos (LC 116 item 4.07)
+      /* v152: era '040701001' — item 4.07 da LC 116, que é serviços
+         FARMACÊUTICOS. A prefeitura devolvia erro 216 ("código de
+         atividade não encontrado na base da PMB") em toda remessa.
+
+         O valor certo está na NF 198, emitida pela própria HJM em
+         06/10/2026 para a mesma tomadora: código de serviço
+         040101220, descrição "Medicina.", ISS 2,00%. Os quatro
+         primeiros dígitos (0401) são o item 4.01 da LC 116 —
+         medicina —, que é o que a empresa de fato presta.
+
+         Daqui em diante o lugar disto é Cadastros › Empresas, por
+         empresa: a filial de Fortaleza presta o mesmo serviço sob
+         outro código municipal. Isto aqui é só a herança de quem
+         ainda não preencheu o seu. */
+      codigo_servico: '040101220',    // medicina (LC 116 item 4.01) — conforme NF 198
+      /* Estes três ainda NÃO foram aceitos pela prefeitura: voltaram
+         como 807, 817 e 818, que pedem correspondência com o código
+         de atividade pelos Anexos VII e VIII do portal nacional.
+         Com a atividade corrigida acima eles podem passar; se não
+         passarem, é aqui (ou na tela da empresa) que mudam. */
       nbs: '112031000', ind_operacao: '010101', class_trib: '000001', sit_trib: '000',
       local_prestacao: '1'            // 1 = prestado no município
     }

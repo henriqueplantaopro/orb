@@ -1411,14 +1411,43 @@ ERP.store = (function () {
      emitente.
 
      Agora o cadastro manda no que ele tem (quem é a empresa) e o
-     objeto fixo entra só com o que só ele tem (endereço e
-     parâmetros fiscais do RPS, que ainda não têm tela). Quando
-     ganharem tela, saem daqui também. */
+     objeto fixo entra só com o que só ele tem (o endereço). Os
+     parâmetros fiscais do RPS ganharam tela na v152 e saíram daqui:
+     o objeto fixo só vale como herança para empresa que ainda não
+     preencheu os seus. */
+
+  /* v152: os códigos fiscais do RPS, por empresa.
+
+     Eles são de CADA empresa, não do grupo: a matriz em Barueri e a
+     filial em Fortaleza prestam o mesmo serviço sob códigos
+     municipais diferentes. Enquanto moravam num objeto fixo sem
+     tela, mudar qualquer um deles exigia script no banco — e foi
+     isso que fez a prefeitura devolver 216, 807, 817 e 818 numa
+     noite inteira de tentativas, com o código errado trancado no
+     código-fonte.
+
+     Campo a campo, e não o objeto inteiro de uma vez: empresa que
+     preencheu só a atividade continua herdando o resto, em vez de
+     perder tudo o que não digitou. */
+  const CAMPOS_RPS = ['codigo_servico', 'nbs', 'ind_operacao', 'class_trib', 'sit_trib',
+    'serie', 'serie_nfe', 'local_prestacao'];
+  function rpsDaEmpresa(cad) {
+    const base = (D.empresa && D.empresa.rps) || {};
+    const meu = (cad && cad.rps) || {};
+    const r = Object.assign({}, base);
+    CAMPOS_RPS.forEach(function (k) {
+      const v = meu[k];
+      if (v !== undefined && v !== null && String(v) !== '') r[k] = v;
+    });
+    return r;
+  }
+
   function dadosDaEmpresaParaRps(empresaId) {
     const base = D.empresa || {};
     const cad = D.empresaPor(empresaId || EMPRESA_PADRAO);
     if (!cad) return base;
     return Object.assign({}, base, {
+      rps: rpsDaEmpresa(cad),
       id: cad.id,
       nome: cad.nome || base.nome,
       cnpj: cad.cnpj || base.cnpj,
@@ -16488,6 +16517,72 @@ ERP.store = (function () {
     return { ok: true, cliente: alvo, criado: !atual };
   }
 
+  /* v152: AS RETENÇÕES DO CLIENTE, PELA TELA DO FATURAMENTO.
+
+     A janela "Retenções de <cliente>" da esteira fazia
+     `cli.retencoes = retencoes` — escrevia no objeto vivo e nunca
+     chamava o store. É a chamada ao store que agenda a gravação; sem
+     ela nada é enviado, e o cadastro sumia na primeira atualização
+     da página. O mesmo defeito já tinha sido corrigido em Cadastros
+     › Clientes e sobreviveu aqui, porque a regra morava em dois
+     lugares e só um foi visitado.
+
+     Ela também gravava `centro_padrao` direto. Esse campo é chave
+     estrangeira no banco: valor que não existe em `centros` faz o
+     Postgres recusar a LINHA INTEIRA do cliente, sem mensagem — a
+     tela diria que salvou e o cliente todo ficaria para trás. Aqui
+     ele segue a mesma regra do salvarCliente: vira vínculo no
+     projeto e o campo é zerado.
+
+     Permissão por faturamento OU cadastros: quem trabalha a esteira
+     precisa poder corrigir a retenção da nota que está na mão. */
+  function salvarRetencoesCliente(documento, retencoes, centroPadrao, nomeSeNovo) {
+    if (!podeMover('faturamento') && !podeMover('cadastros')) {
+      return { erro: 'Seu perfil vê o faturamento, mas não altera o cadastro do cliente.' };
+    }
+    const doc = String(documento || '').replace(/\D/g, '');
+    if (doc.length !== 14 && doc.length !== 11) {
+      return { erro: 'CNPJ ou CPF do tomador inválido — não dá para gravar a retenção sem saber de quem é.' };
+    }
+    /* Alíquota é percentual sobre o bruto: acima de 100 é digitação
+       errada (valor em reais no lugar do percentual), e passaria
+       como desconto maior que a nota. */
+    const limpas = (retencoes || [])
+      .map(function (r) {
+        return { tributo: String(r.tributo || '').toUpperCase(), aliquota: Number(r.aliquota) || 0 };
+      })
+      .filter(function (r) { return r.tributo && r.aliquota > 0; });
+    const furada = limpas.find(function (r) { return r.aliquota > 100; });
+    if (furada) {
+      return { erro: 'A alíquota de ' + furada.tributo + ' está em ' + U.num(furada.aliquota) +
+        '% — é percentual sobre o bruto, não valor em reais.' };
+    }
+
+    let cli = D.clientes.find(function (x) {
+      return String(x.documento || '').replace(/\D/g, '') === doc;
+    });
+    const criado = !cli;
+    if (!cli) {
+      cli = { id: novoId('cl'), documento: doc, nome: String(nomeSeNovo || '').trim() || doc,
+        ativo: true, retencoes: [] };
+      D.clientes.push(cli);
+    }
+    cli.retencoes = limpas;
+
+    /* Mesma regra do salvarCliente, não uma cópia dela com variação. */
+    if (centroPadrao) {
+      const pj = D.centro(centroPadrao);
+      if (pj && !pj.cliente) pj.cliente = cli.id;
+    }
+    cli.centro_padrao = null;
+
+    logar('cliente', cli.id, criado ? 'cadastrou cliente pela esteira' : 'alterou retenções do cliente',
+      (cli.nome || doc) + ' · ' +
+      (limpas.length ? limpas.map(function (r) { return r.tributo + ' ' + U.num(r.aliquota) + '%'; }).join(', ')
+                     : 'sem retenção'));
+    return { ok: true, cliente: cli, criado: criado, retencoes: limpas };
+  }
+
   function salvarArmazem(id, dados) {
     if (!podeMover('cadastros') && !podeMover('estoque')) {
       return { erro: 'Seu perfil não altera armazéns.' };
@@ -20097,7 +20192,7 @@ ERP.store = (function () {
     dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
     definirDiscriminacao, centroAncoraDoFaturamento, retencoesPrevistas,
     anexarAoFaturamento, removerAnexoDoFaturamento, pacoteDoFaturamento, nomeTipoAnexoFat,
-    dadosParaEmissaoManual, salvarCliente, salvarArmazem,
+    dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente, salvarArmazem,
     dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,

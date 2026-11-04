@@ -7876,9 +7876,26 @@ function liberarParaFaturar(centro, competencia) {
      "produtos_conta_fkey" apontando para algo que ninguém achava.
 
      Agora a coluna manda e `extra` só preenche o que faltou. A
-     etapa 40 limpa o que já ficou para trás. */
-  verificar('v97 — `extra` só preenche o que a coluna não trouxe',
-    /if \(temColuna\[k\]\) return;/.test(pers), '');
+     etapa 40 limpa o que já ficou para trás.
+
+     v152: campo COM COLUNA DECLARADA é resíduo no extra e continua
+     perdendo para a coluna mesmo quando ela está VAZIA — é este o
+     caso caro de cima, e ele não pode voltar. O que mudou é o
+     campo SEM coluna declarada: esse mora no extra, e coluna vazia
+     de mesmo nome não pode engoli-lo (foi assim que as retenções
+     do cliente sumiam no F5). */
+  const Ut97 = sandbox.window.ERP.util;
+  verificar('v97 — campo COM coluna declarada: o extra nao ressuscita, nem com a coluna vazia',
+    Ut97.doBanco({ id: 'p1', conta: null, extra: { conta: '8.04.99' } },
+      ['id', 'conta']).conta === undefined, '');
+  verificar('v152 — campo SEM coluna declarada: coluna vazia nao engole o que esta no extra',
+    JSON.stringify(Ut97.doBanco({ id: 'c1', retencoes: null,
+      extra: { retencoes: [{ tributo: 'IRRF', aliquota: 1.5 }] } },
+      ['id', 'nome']).retencoes) === '[{"tributo":"IRRF","aliquota":1.5}]', '');
+  verificar('v152 — e as duas leituras usam a MESMA funcao, nao duas copias da regra',
+    /ERP\.util\.doBanco\(linha, colunasDe\(nome\)\)/.test(pers) &&
+    /ERP\.util\.doBanco\(linha, colunasDe\(nome\)\)/
+      .test(fs.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8')), '');
 
   verificar('v97 — e existe a limpeza do que ficou duplicado',
     fs.existsSync(__dirname + '/supabase/40-extra-para-colunas.sql'), '');
@@ -10753,6 +10770,7 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      leitura de funcionários nunca desempacotava o `extra`. */
   const remE = fsE.readFileSync(__dirname + '/js/dados-remoto.js', 'utf8');
   const sqlE = fsE.readFileSync(__dirname + '/supabase/65-ATUALIZAR-v127.sql', 'utf8');
+  const Ut127 = sandbox.window.ERP.util;
   const NOVE = ['credito_trabalhador', 'banco', 'agencia', 'conta_bancaria', 'pix',
     'vt_modo', 'vr_modo', 'vr_desconto_modo', 'vr_desconto_valor'];
   const listaFn = perE.slice(perE.indexOf('const COLUNAS_FUNCIONARIO'),
@@ -10764,11 +10782,15 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     NOVE.every(function (c) {
       return new RegExp('add column if not exists\\s+' + c + '\\b').test(sqlE);
     }), '');
+  /* v152: estas duas conferiam o TEXTO de dados-remoto.js, e foi
+     por isso que não notaram que persistencia.js respondia
+     diferente para a mesma pergunta. Agora medem a REGRA, e medem
+     que as duas leituras usam a mesma. */
   verificar('v127 — a leitura desempacota o extra, resgatando o que ja esta preso la',
-    /if \(k === 'extra'\) return;/.test(remE) &&
-    /linha\.extra && typeof linha\.extra === 'object'/.test(remE), '');
-  verificar('v127 — e a COLUNA manda sobre o extra, nao o contrario',
-    /extra[\s\S]{0,160}if \(o\[k\] !== undefined\) return;/.test(remE), '');
+    Ut127.doBanco({ id: 'x', extra: { pix: 'chave@x' } }).pix === 'chave@x', '');
+  verificar('v127 — e a COLUNA PREENCHIDA manda sobre o extra, nao o contrario',
+    Ut127.doBanco({ id: 'x', banco: '237', extra: { banco: '001' } }, ['id', 'banco'])
+      .banco === '237', '');
   verificar('v127 — o SQL nao sobrescreve coluna ja preenchida',
     /coalesce\(banco,\s*extra->>'banco'\)/.test(sqlE), '');
 

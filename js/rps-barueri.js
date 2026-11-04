@@ -80,9 +80,17 @@ ERP.rpsBarueri = (function () {
   }
 
   /* ── registros ──────────────────────────────────────────*/
+  /* A prefeitura MOSTRA a inscrição pontuada (4.BX896-2) e o campo do
+     cabeçalho tem 7 posições exatas: se a pontuação entrar, ela empurra
+     o dígito final para fora e o portal devolve erro 101 ("inscrição do
+     prestador não encontrada") sem dizer por quê. Então tiramos tudo o
+     que não é letra ou número, não importa como foi digitado no
+     cadastro. Custou três envios recusados pra descobrir. */
+  const inscricao = v => String(v || '').replace(/[^0-9A-Za-z]/g, '');
+
   function cabecalho(empresa, remessa) {
     return '1' +
-      txt(empresa.inscricao_municipal, 7) +
+      txt(inscricao(empresa.inscricao_municipal), 7) +
       txt('PMB004', 6) +
       num(remessa, 11);
   }
