@@ -14303,9 +14303,23 @@ ERP.store = (function () {
             valor: Math.round(Number(p.valor) * 100) / 100 };
         });
     }
-    if (!c.vigencia_ini || !c.vigencia_fim) return [];
+    if (!c.vigencia_ini) return [];
     const mensal = Math.round((c.valor_mensal || 0) * 100) / 100;
     if (!(mensal > 0)) return [];
+    /* ── CONTRATO SEM DATA DE FIM ──────────────────────────
+
+       Exigir `vigencia_fim` devolvia lista VAZIA, e com ela a tela
+       não desenhava botão nenhum: o contrato por prazo
+       indeterminado — que é metade dos contratos de manutenção —
+       simplesmente não tinha como gerar contas a pagar, e a única
+       pista era uma frase cinza dizendo "sem valor mensal ou sem
+       vigência".
+
+       Sem data de fim, projeta DOZE MESES à frente de hoje. É um
+       horizonte, não uma promessa: o contrato continua aberto, e
+       daqui a um ano gera-se de novo. Doze porque é o horizonte que
+       o fluxo de caixa usa. */
+    const limite = c.vigencia_fim || U.addMeses(U.hoje(), 12);
     /* O dia combinado manda; sem ele, o dia em que a vigência
        começou. `addMeses` já cai no último dia do mês quando o dia
        31 não existe em fevereiro. */
@@ -14315,11 +14329,33 @@ ERP.store = (function () {
        mês seguinte, não uma vencida no dia da assinatura. */
     let venc = primeiro < c.vigencia_ini ? U.addMeses(primeiro, 1) : primeiro;
     const linhas = [];
-    while (venc <= c.vigencia_fim && linhas.length < 120) {
-      linhas.push({ num: linhas.length + 1, venc: venc, comp: U.compDe(venc), valor: mensal });
+    while (venc <= limite && linhas.length < 120) {
+      linhas.push({ num: linhas.length + 1, venc: venc, comp: U.compDe(venc), valor: mensal,
+        /* Marca de que esta parcela veio do horizonte, e não de uma
+           vigência escrita no contrato — a tela avisa. */
+        horizonte: !c.vigencia_fim });
       venc = U.addMeses(venc, 1);
     }
     return linhas;
+  }
+
+  /* POR QUE ESTE CONTRATO NÃO GERA NADA, dito com precisão.
+
+     A tela dizia "sem valor mensal ou sem vigência" — um ou-outro
+     que obriga a pessoa a adivinhar qual dos dois é, abrindo o
+     cadastro para conferir os dois campos. */
+  function porQueSemCronograma(c) {
+    if (!c) return 'contrato não encontrado';
+    if (c.pagamentos_variaveis) {
+      return (c.parcelas_previstas || []).length
+        ? 'o cronograma digitado não tem nenhuma parcela com data e valor'
+        : 'o cronograma de parcelas está vazio — edite o contrato e informe as parcelas';
+    }
+    const falta = [];
+    if (!c.vigencia_ini) falta.push('a data de início da vigência');
+    if (!(Math.round((c.valor_mensal || 0) * 100) / 100 > 0)) falta.push('o valor mensal');
+    if (!falta.length) return '';
+    return 'falta ' + falta.join(' e ') + ' no cadastro do contrato';
   }
 
   /* A referência do contrato ganha sufixo a cada refazimento
@@ -15172,16 +15208,64 @@ ERP.store = (function () {
         '). Cancele o documento antes de desfazer a etapa.',
         documentos: jaFaturado.map(function (r) { return r.id; }) };
     }
-    if (etapa === 'liberado') {
+    /* ── DESFAZER VOLTA PARA PREVISTO, DE UMA VEZ ──────────
+
+       Desfazia UMA etapa: de liberado caía em autorizado, de
+       autorizado em confirmado — e de confirmado não voltava, o que
+       deixava o faturamento preso num estado em que o valor já é
+       firme e ninguém consegue mexer. Para corrigir um valor errado
+       não havia caminho nenhum pela tela.
+
+       Agora limpa as três de uma vez e devolve o faturamento a
+       PREVISTO. Nada do que foi incluído se perde: o valor
+       confirmado, o protocolo da autorização, os documentos
+       anexados e a discriminação continuam onde estavam — o que sai
+       são os CARIMBOS das etapas, que é o que trava a edição.
+
+       A permissão é cobrada por etapa desfeita, não uma só para
+       todas: quem não libera não pode desfazer uma liberação só
+       porque o botão agora faz mais coisa de uma vez. */
+    const desfeitas = [];
+    if (pv.liberado_em) {
       if (!pode('liberar_faturamento')) return { erro: 'Seu perfil não desfaz a liberação.' };
-      pv.liberado_em = null; pv.liberado_por = null; pv.liberacao_obs = motivo;
-    } else if (etapa === 'autorizado') {
+      desfeitas.push('liberação');
+    }
+    if (pv.autorizado_em) {
       if (!pode('autorizar_faturamento')) return { erro: 'Seu perfil não desfaz a autorização.' };
-      if (pv.liberado_em) return { erro: 'Desfaça a liberação antes de tirar a autorização.' };
-      pv.autorizado_em = null; pv.autorizado_por = null; pv.autorizacao_obs = motivo;
-    } else return { erro: 'Etapa não pode ser desfeita por aqui.' };
-    logar('previsao', pv.id, 'desfez etapa ' + etapa, (D.centro(centro) || {}).curto + ' · ' + motivo);
-    return { ok: true };
+      desfeitas.push('autorização');
+    }
+    if (pv.status === 'confirmada_prod') {
+      if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
+        return { erro: 'Seu perfil não desfaz a confirmação do valor.' };
+      }
+      desfeitas.push('confirmação do valor');
+    }
+    if (!desfeitas.length) return { erro: 'Este faturamento já está em previsto — não há etapa a desfazer.' };
+
+    pv.liberado_em = null; pv.liberado_por = null; pv.liberacao_obs = motivo;
+    pv.autorizado_em = null; pv.autorizado_por = null; pv.autorizacao_obs = motivo;
+    /* O valor confirmado FICA no registro; o que muda é o status,
+       que é o que diz "este número já é firme". Apagar o valor
+       obrigaria a digitar tudo de novo para corrigir uma vírgula. */
+    if (pv.status === 'confirmada_prod') pv.status = null;
+    pv.desfeito_em = new Date().toISOString();
+    pv.desfeito_por = (usuario() || {}).nome || '';
+    pv.desfeito_motivo = motivo;
+    logar('previsao', pv.id, 'voltou o faturamento para previsto',
+      (D.centro(centro) || {}).curto + ' · desfez: ' + desfeitas.join(', ') + ' · ' + motivo);
+    return { ok: true, desfeitas: desfeitas };
+  }
+
+  /* O que o Desfazer vai tirar, para a tela DIZER antes de o botão
+     ser clicado — e não depois. */
+  function oQueDesfazer(centro, competencia) {
+    const pv = previsaoDe(centro, competencia);
+    if (!pv) return [];
+    const fora = [];
+    if (pv.liberado_em) fora.push('liberação');
+    if (pv.autorizado_em) fora.push('autorização');
+    if (pv.status === 'confirmada_prod') fora.push('confirmação do valor');
+    return fora;
   }
 
   /* A esteira: uma linha por projeto/competência, com o carimbo de cada
@@ -16116,6 +16200,101 @@ ERP.store = (function () {
      A LIBERAÇÃO CONTINUA VALENDO. Anexar não é atalho para pular a
      esteira: se o valor não foi confirmado, autorizado e liberado,
      a nota não entra. O caminho é o mesmo, só o emissor é outro. */
+  /* ── SUBSTITUIR A NOTA DE UM FATURAMENTO JÁ FEITO ──────
+
+     O órgão pede alteração na nota: cancela-se a emitida e emite-se
+     outra. Sem isto, o caminho era cancelar a nota pelo contas a
+     receber e descobrir que o faturamento continuava "faturado" com
+     um documento que não existe mais — ou desfazer a etapa, que o
+     sistema recusa justamente por haver nota emitida.
+
+     O cancelamento REUSA `cancelarReceber`: é ele que desfaz os
+     abatimentos e devolve as previsões que a nota havia
+     substituído. Reescrever esse desmanche aqui daria duas versões
+     da mesma regra, e um dia elas divergiriam.
+
+     Dois caminhos, escolhidos na hora:
+       fora — a nota nova já foi emitida no portal; informa-se
+              número, série, data, valor e o arquivo, e ela nasce
+              ligada a este faturamento;
+       rps  — o faturamento volta para LIBERADO e entra de novo na
+              geração de RPS em lote, como se fosse a primeira vez. */
+  function substituirNotaFaturamento(d) {
+    d = d || {};
+    if (!pode('faturar')) return { erro: 'Seu perfil não lança contas a receber.' };
+    if (!pode('cancelar')) {
+      return { erro: 'Substituir uma nota cancela a anterior, e seu perfil não cancela documento.' };
+    }
+    if (!d.motivo) return { erro: 'Informe o motivo da substituição — ele fica no histórico da nota.' };
+    if (['fora', 'rps'].indexOf(d.modo) < 0) {
+      return { erro: 'Escolha se a nota nova vem de fora ou se o sistema vai gerar um RPS novo.' };
+    }
+    const dossie = dossieFaturamento(d.centro, d.competencia);
+    if (dossie.erro) return dossie;
+    const vivos = (dossie.documentos || []);
+    if (!vivos.length) {
+      return { erro: 'Não há nota emitida neste faturamento para substituir.' };
+    }
+    /* Nota com dinheiro recebido não se substitui às escondidas: o
+       estorno é uma decisão de quem cuida do caixa, não um efeito
+       colateral de corrigir uma nota. */
+    const comRecebimento = vivos.filter(function (doc) {
+      const r = st.receber.find(function (x) { return x.id === doc.id; });
+      return r && ((r.valor_recebido || 0) > 0.004 || r.status === 'recebido');
+    });
+    if (comRecebimento.length) {
+      return { erro: 'A nota ' + comRecebimento.map(function (x) { return x.numero; }).join(', ') +
+        ' já teve recebimento. Estorne o recebimento no contas a receber antes de substituir.' };
+    }
+
+    const canceladas = [];
+    for (let i = 0; i < vivos.length; i++) {
+      const c = cancelarReceber(vivos[i].id, 'Substituição de NF: ' + d.motivo);
+      if (c.erro) return { erro: 'Não consegui cancelar a nota ' + vivos[i].numero + ': ' + c.erro };
+      const r = st.receber.find(function (x) { return x.id === vivos[i].id; });
+      if (r) {
+        r.substituida = true;
+        r.substituicao_motivo = d.motivo;
+        r.substituicao_em = U.hoje();
+      }
+      canceladas.push(vivos[i].numero || vivos[i].id);
+    }
+
+    if (d.modo === 'rps') {
+      /* Volta a ser faturável: a esteira só chama de "faturado"
+         quem tem documento vivo, e a liberação já está carimbada —
+         só precisa continuar carimbada. */
+      const pv = previsaoAncora(d.centro, d.competencia);
+      if (pv && !pv.liberado_em) {
+        pv.liberado_em = U.hoje();
+        pv.liberado_por = (usuario() || {}).nome || '';
+      }
+      logar('previsao', (pv || {}).id || d.centro, 'substituiu a NF (gerar RPS novo)',
+        canceladas.join(', ') + ' · ' + d.motivo);
+      return { ok: true, modo: 'rps', canceladas: canceladas };
+    }
+
+    const nova = anexarNotaEmitida({
+      centro: d.centro, competencia: d.competencia,
+      numero: d.numero, serie: d.serie, emissao: d.emissao, vencimento: d.vencimento,
+      valor: d.valor, chave: d.chave, discriminacao: d.discriminacao, arquivo: d.arquivo,
+      observacao: 'Substitui a NF ' + canceladas.join(', ') + ' — ' + d.motivo
+    });
+    if (nova.erro) {
+      /* A nota antiga já foi cancelada e a nova não entrou: dizer
+         isso é obrigatório, senão o faturamento fica sem documento
+         nenhum e ninguém sabe por quê. */
+      return { erro: 'A nota ' + canceladas.join(', ') + ' FOI CANCELADA, mas a nota nova não entrou: ' +
+        nova.erro + ' Lance a nota nova por "Anexar NF emitida" na linha liberada.' };
+    }
+    const rNova = nova.receber;
+    const antigas = st.receber.filter(function (x) { return canceladas.indexOf(x.numero) > -1; });
+    antigas.forEach(function (x) { x.substituida_por = rNova ? rNova.id : null; });
+    logar('receber', rNova ? rNova.id : '', 'NF emitida em substituição',
+      'substitui ' + canceladas.join(', ') + ' · ' + d.motivo);
+    return { ok: true, modo: 'fora', canceladas: canceladas, receber: rNova, aviso: nova.aviso || '' };
+  }
+
   function anexarNotaEmitida(d) {
     d = d || {};
     if (!pode('faturar')) return { erro: 'Seu perfil não lança contas a receber.' };
@@ -20444,7 +20623,7 @@ ERP.store = (function () {
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
     statusProdutividade, NOME_STATUS_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
-    editarEstimativaEsteira, desfazerEtapaFaturamento, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
+    editarEstimativaEsteira, desfazerEtapaFaturamento, oQueDesfazer, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
     residuoPrevisao, marcarPrevisoes, marcarParcial, salvarPrevisaoDespesa, previsoesDespesa,
     excluirPrevisaoDespesa, replicarSerieDespesa, realizadoDespesa, residuoDespesa,
     parametros, salvarParametros, salvarUsuario, eventos,
@@ -20456,7 +20635,7 @@ ERP.store = (function () {
     chaveContraparte, nomeDaLinha, gruposProdutividade, ignorarLinha, extratos, resumoConciliacao,
     salvarContrato, addAditivo, anexarAoContrato, removerAnexoDoContrato,
     contratos, contrato, contratoDoProjeto, excluirContrato, alertasContrato, pendenciasHome,
-    cronogramaContrato, gerarTitulosContrato, titulosDoContrato, previsoesDoContrato,
+    cronogramaContrato, porQueSemCronograma, gerarTitulosContrato, titulosDoContrato, previsoesDoContrato,
     entrada, saida, baixaMultipla, transferir, estornarMovimento, entradaLote, camadas, custoMedio,
     saldoEstoque, valorEstoque, movimentos, textoDoMovimento, consumoPorPaciente,
     pacientesDoMovimento, pacienteVisivel, vePaciente, posicaoEstoque, posicaoConsolidada, distribuir,
@@ -20477,7 +20656,7 @@ ERP.store = (function () {
     dadosParaEmissaoManual, salvarCliente, salvarRetencoesCliente,
     inativarCliente, excluirCliente, clientePreso, salvarArmazem,
     dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente,
-    clienteExigeBoleto, clienteSoFatura, nomeCurtoCliente, faltaBoleto, competenciaDeslocada, faltaDocumento,
+    clienteExigeBoleto, clienteSoFatura, nomeCurtoCliente, substituirNotaFaturamento, faltaBoleto, competenciaDeslocada, faltaDocumento,
     bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
