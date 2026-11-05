@@ -1313,6 +1313,98 @@ ERP.faturamento = (function () {
     });
   }
 
+  /* ── SUBSTITUIR A NF ───────────────────────────────────
+     O órgão pediu alteração: a nota emitida é cancelada e outra
+     entra no lugar. A janela mostra qual nota sai, e pergunta de
+     onde vem a que entra — do portal (já emitida fora) ou de um RPS
+     novo gerado pelo sistema. */
+  function substituirNF(ref) {
+    const par = String(ref).split('|');
+    const d = S.dossieFaturamento(par[0], par[1]);
+    if (ERP.app.erroDoRetorno(d)) return;
+    const atuais = d.documentos || [];
+    if (!atuais.length) return ERP.app.aviso('Não há nota emitida neste faturamento.', 'erro');
+    const sai = atuais.map(function (x) {
+      return 'NF ' + (x.numero || '—') + (x.serie ? '/' + x.serie : '') +
+        ' · ' + U.fData(x.emissao) + ' · ' + U.brl(x.valor); }).join('<br>');
+    const valorAtual = atuais.reduce(function (a, x) { return a + (x.valor || 0); }, 0);
+    let arquivo = null;
+
+    const corpoFora =
+      '<div class="row3" style="margin-top:8px">' +
+        '<div><label>Número da NF nova *</label><input id="sb-num"></div>' +
+        '<div><label>Série</label><input id="sb-serie"></div>' +
+        '<div><label>Emissão *</label><input type="date" id="sb-emissao" value="' + U.hoje() + '"></div>' +
+      '</div>' +
+      '<div class="row3">' +
+        '<div><label>Valor (R$) *</label><input class="num" id="sb-valor" inputmode="decimal" value="' +
+          U.num(valorAtual) + '"></div>' +
+        '<div><label>Vencimento</label><input type="date" id="sb-venc"></div>' +
+        '<div><label>Chave de acesso</label><input id="sb-chave" placeholder="se houver"></div>' +
+      '</div>' +
+      '<label style="margin-top:8px">Arquivo da nota nova (PDF ou XML) *</label>' +
+      '<input type="file" id="sb-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0">';
+
+    ERP.app.modal({
+      titulo: 'Substituir NF · ' +
+        U.esc((D.centro(par[0]) || {}).curto || (D.centro(par[0]) || {}).nome || '') +
+        ' · ' + U.fComp(par[1]),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="aviso">Sai do faturamento:<br><b>' + sai + '</b></div>' +
+        '<div class="ajuda">A nota que sai é cancelada no contas a receber, com o motivo registrado, ' +
+        'e as previsões que ela havia abatido voltam a valer. Nota que já teve recebimento não pode ' +
+        'ser substituída: estorne antes.</div>' +
+        '<label style="margin-top:10px">Motivo *</label>' +
+        '<input id="sb-motivo" placeholder="ex.: órgão pediu alteração da discriminação">' +
+        '<label style="margin-top:10px">A nota nova vem de onde?</label>' +
+        '<select id="sb-modo">' +
+          '<option value="fora">Já foi emitida fora — vou informar os dados</option>' +
+          '<option value="rps">O sistema gera um RPS novo — volta para liberado</option>' +
+        '</select>' +
+        '<div id="sb-fora">' + corpoFora + '</div>' +
+        '<div id="sb-rps" style="display:none" class="ajuda">O faturamento volta para <b>liberado</b> e ' +
+          'entra de novo na geração de RPS em lote, como se fosse a primeira emissão.</div>' +
+        '<div class="ajuda" id="sb-aviso"></div>',
+      aoAbrir: function () {
+        const modo = U.el('sb-modo');
+        if (!modo) return;
+        modo.addEventListener('change', function () {
+          const fora = this.value === 'fora';
+          U.el('sb-fora').style.display = fora ? '' : 'none';
+          U.el('sb-rps').style.display = fora ? 'none' : '';
+        });
+      },
+      acoes: [{ txt: 'Substituir', cls: 'btn-cancelar', fn: async function () {
+        const modo = U.val('sb-modo');
+        if (modo === 'fora') {
+          const arq = U.el('sb-arq').files && U.el('sb-arq').files[0];
+          if (arq) {
+            const sub = await subirArquivo(arq, par[0] + '-' + par[1], 'sb-aviso');
+            if (sub.erro) return ERP.app.aviso(sub.erro, 'erro');
+            arquivo = sub.anexo;
+          }
+        }
+        const r = S.substituirNotaFaturamento({
+          centro: par[0], competencia: par[1], motivo: U.val('sb-motivo'), modo: modo,
+          numero: U.val('sb-num'), serie: U.val('sb-serie'), emissao: U.val('sb-emissao'),
+          vencimento: U.val('sb-venc'), valor: U.parseValor(U.val('sb-valor')),
+          chave: U.val('sb-chave'), arquivo: arquivo
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        renderEsteira();
+        atualizarAlertaFat();
+        ERP.receber.render();
+        ERP.app.aviso(r.modo === 'rps'
+          ? 'NF ' + r.canceladas.join(', ') + ' cancelada. O faturamento voltou para liberado — ' +
+            'gere o RPS novo na aba RPS em lote.'
+          : 'NF ' + r.canceladas.join(', ') + ' substituída pela NF ' +
+            ((r.receber || {}).numero || '') + '.', 'ok');
+      } }]
+    });
+  }
+
   /* A nota que já foi emitida em outro lugar entra aqui e fecha o
      faturamento. Os dados vêm do documento que a pessoa tem na
      mão; o sistema só confere o que pode conferir. */
@@ -1718,6 +1810,10 @@ ERP.faturamento = (function () {
             if (ERP.app.erroDoRetorno(r)) return;
             ERP.app.fecharModal();
             revisarFaturamento(par.join('|'));
+            /* Removeu o último documento: o alerta tem de ACENDER
+               de novo, pela mesma razão que apaga ao anexar. */
+            renderEsteira();
+            atualizarAlertaFat();
             ERP.app.aviso('Documento removido.', 'ok');
           } }]
         });
@@ -1799,6 +1895,16 @@ ERP.faturamento = (function () {
         }
         ERP.app.fecharModal();
         revisarFaturamento(par.join('|'));
+        /* ANEXOU, O ALERTA TEM DE APAGAR.
+
+           Só o modal de revisão era redesenhado. A esteira atrás
+           dele continuava dizendo "Falta doc." e o contador do topo
+           continuava com o número de antes — e assim o pedido de
+           documento ficava aceso para sempre, inclusive na lista de
+           pendências, depois de o documento estar anexado. Quem
+           olha a tela não tem como saber que já resolveu. */
+        renderEsteira();
+        atualizarAlertaFat();
         ERP.app.aviso(n + ' documento(s) anexado(s)' +
           (falhou.length ? '. NÃO entraram: ' + falhou.join(' · ') : '.'),
           falhou.length ? 'erro' : 'ok');
@@ -1806,9 +1912,22 @@ ERP.faturamento = (function () {
     });
   }
 
-  /* BAIXAR O PACOTE: a nota mais o que vai junto com ela. Um link
-     assinado por peça, abertos em sequência — é o que o navegador
-     permite sem pedir ao servidor que monte um .zip. */
+  /* BAIXAR O PACOTE: a nota mais o que vai junto com ela, num ZIP.
+
+     Era um link assinado por peça, abertos em sequência, com o
+     comentário de que "é o que o navegador permite sem pedir ao
+     servidor que monte um .zip". Não é: o navegador BLOQUEIA
+     downloads automáticos consecutivos da mesma página — o primeiro
+     passa e os outros são descartados em silêncio. Na prática,
+     "Baixar tudo" entregava um arquivo só, e ainda dizia
+     "4 arquivo(s) baixado(s)", porque contava os cliques e não os
+     downloads.
+
+     Agora os arquivos são buscados, juntados num .zip aqui mesmo
+     (o JSZip já está no projeto, é o mesmo que lê os lotes de NF) e
+     entregues como UM download — que é o que o navegador permite de
+     verdade. O que não vier é NOMEADO no aviso, em vez de sumir da
+     contagem. */
   async function baixarPacote(par) {
     const p = S.pacoteDoFaturamento(par[0], par[1]);
     if (ERP.app.erroDoRetorno(p)) return;
@@ -1818,21 +1937,54 @@ ERP.faturamento = (function () {
     }
     const cli = (ERP.auth && ERP.auth.cliente && ERP.auth.cliente()) || null;
     if (!cli) return ERP.app.aviso('Sem conexão com o banco — os arquivos ficam no servidor.', 'erro');
+    if (typeof JSZip === 'undefined') {
+      return ERP.app.aviso('O componente de compactação não carregou — recarregue a página (Ctrl+F5).', 'erro');
+    }
+
+    ERP.app.aviso('Montando o pacote com ' + p.pecas.length + ' arquivo(s)…', 'ok');
+    const zip = new JSZip();
+    const falhou = [];
+    const usados = {};
     let n = 0;
     for (const peca of p.pecas) {
-      const r = await cli.storage.from(BALDE_FAT).createSignedUrl(peca.path, 900);
-      if (r.error || !r.data) continue;
-      const url = r.data.signedUrl +
-        (r.data.signedUrl.indexOf('?') > -1 ? '&' : '?') + 'download=' + encodeURIComponent(peca.nome);
-      const a = document.createElement('a');
-      a.href = url; a.download = peca.nome; a.style.display = 'none';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      n++;
+      try {
+        const r = await cli.storage.from(BALDE_FAT).download(peca.path);
+        if (r.error || !r.data) { falhou.push(peca.nome); continue; }
+        /* Dois anexos com o mesmo nome de arquivo — acontece, e
+           muito, com "documento.pdf" — se sobrescreveriam dentro do
+           zip, e o pacote sairia com menos arquivos do que diz ter,
+           calado. */
+        let nome = peca.nome || 'documento';
+        if (usados[nome]) {
+          const ponto = nome.lastIndexOf('.');
+          const base = ponto > 0 ? nome.slice(0, ponto) : nome;
+          const ext = ponto > 0 ? nome.slice(ponto) : '';
+          nome = base + ' (' + (++usados[peca.nome]) + ')' + ext;
+        } else { usados[peca.nome] = 1; }
+        zip.file(nome, r.data);
+        n++;
+      } catch (e) { falhou.push(peca.nome); }
     }
-    ERP.app.aviso(n + ' arquivo(s) baixado(s)' +
-      (p.nota_sem_arquivo ? ' — a nota emitida pelo sistema não tem PDF anexado.' : '.'), n ? 'ok' : 'erro');
+    if (!n) {
+      return ERP.app.aviso('Nenhum arquivo pôde ser baixado do servidor: ' +
+        falhou.join(' · '), 'erro');
+    }
+
+    const c = D.centro(par[0]) || {};
+    const nomeZip = U.slug((c.curto || c.nome || 'faturamento') + '-' + U.fComp(par[1])) + '.zip';
+    const blob = await zip.generateAsync({ type: 'blob' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = nomeZip; a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(function () { URL.revokeObjectURL(url); }, 20000);
+
+    ERP.app.aviso(nomeZip + ' — ' + n + ' arquivo(s)' +
+      (falhou.length ? '. NÃO entraram: ' + falhou.join(' · ') : '') +
+      (p.nota_sem_arquivo ? '. A nota emitida pelo sistema não tem PDF anexado.' : '.'),
+      falhou.length ? 'erro' : 'ok');
   }
 
   /* ── a folha de emissão manual ───────────────────────────
@@ -2191,6 +2343,11 @@ ERP.faturamento = (function () {
     if (l.etapa === 'confirmado' && S.pode('autorizar_faturamento')) {
       return rever + doc +
         ' <button class="btn-sm" data-est-conf="' + ref + '">Corrigir valor</button>' +
+        /* CONFIRMADO NÃO TINHA VOLTA. Era o estado em que o
+           faturamento ficava preso: o valor já é firme, a edição
+           está travada, e o único Desfazer da tela estava nas
+           etapas de cima. */
+        ' <button class="btn-sm" data-est-des="confirmado|' + ref + '">Desfazer</button>' +
         ' <button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar</button>';
     }
     if (l.etapa === 'autorizado') {
@@ -2249,7 +2406,14 @@ ERP.faturamento = (function () {
           (l.enviado_cliente_por ? ' · por ' + U.esc(String(l.enviado_cliente_por).split(' ')[0]) : '') +
           '">Enviada</button>'
         : ' <button class="btn-sm btn-nf-falta" data-est-env="' + ref + '" ' +
-          'title="nota emitida e ainda não enviada ao cliente">Enviar</button>');
+          'title="nota emitida e ainda não enviada ao cliente">Enviar</button>') +
+        /* O ÓRGÃO PEDE ALTERAÇÃO E A NOTA TEM DE SER REFEITA.
+           Sem este botão, o caminho era cancelar pelo contas a
+           receber — e o faturamento continuava "faturado", preso a
+           um documento que não existe mais. */
+        (S.pode('faturar') && S.pode('cancelar')
+          ? ' <button class="btn-sm" data-est-sub="' + ref + '" ' +
+            'title="cancelar esta NF e emitir outra no lugar">Substituir NF</button>' : '');
     }
     return rever + doc;
   }
@@ -2261,6 +2425,9 @@ ERP.faturamento = (function () {
     });
     box.querySelectorAll('[data-est-nf]').forEach(function (b) {
       b.addEventListener('click', function () { anexarNFEmitida(this.dataset.estNf); });
+    });
+    box.querySelectorAll('[data-est-sub]').forEach(function (b) {
+      b.addEventListener('click', function () { substituirNF(this.dataset.estSub); });
     });
     box.querySelectorAll('[data-est-rev]').forEach(function (b) {
       b.addEventListener('click', function () { revisarFaturamento(this.dataset.estRev); });
@@ -2425,14 +2592,31 @@ ERP.faturamento = (function () {
     box.querySelectorAll('[data-est-des]').forEach(function (b) {
       b.addEventListener('click', function () {
         const par = this.dataset.estDes.split('|');
+        /* O BOTÃO DIZ O QUE VAI TIRAR, ANTES DE SER CLICADO.
+
+           Ele agora volta até previsto de uma vez; uma janela que
+           só pedisse "motivo" esconderia que a autorização e a
+           confirmação do valor saem junto com a liberação. */
+        const fora = S.oQueDesfazer(par[1], par[2]) || [];
         ERP.app.modal({
-          titulo: 'Desfazer ' + (par[0] === 'liberado' ? 'a liberação' : 'a autorização'),
+          titulo: 'Voltar este faturamento para previsto',
           fecharTxt: 'Voltar',
-          corpo: '<label>Motivo *</label><input id="es-motivo" placeholder="ex.: órgão pediu revisão da medição">',
-          acoes: [{ txt: 'Desfazer', cls: 'btn-cancelar', fn: function () {
+          corpo:
+            (fora.length
+              ? '<div class="aviso" style="margin-bottom:10px">Sai: <b>' + U.esc(fora.join(', ')) +
+                '</b>. O faturamento volta para <b>previsto</b> e pode ser editado de novo.</div>'
+              : '<div class="aviso" style="margin-bottom:10px">Este faturamento já está em previsto.</div>') +
+            '<div class="ajuda">Nada do que foi incluído se perde: o valor, o protocolo da autorização, ' +
+            'os documentos anexados e a discriminação continuam gravados. O que sai são os carimbos ' +
+            'das etapas, que são o que impede a edição.</div>' +
+            '<label style="margin-top:10px">Motivo *</label>' +
+            '<input id="es-motivo" placeholder="ex.: órgão pediu revisão da medição">',
+          acoes: [{ txt: 'Voltar para previsto', cls: 'btn-cancelar', fn: function () {
             const r = S.desfazerEtapaFaturamento(par[1], par[2], par[0], U.val('es-motivo'));
             if (ERP.app.erroDoRetorno(r)) return;
-            ERP.app.fecharModal(); renderEsteira(); ERP.app.aviso('Etapa desfeita.', 'ok');
+            ERP.app.fecharModal(); renderEsteira(); atualizarAlertaFat();
+            ERP.app.aviso('Voltou para previsto — desfeito: ' +
+              (r.desfeitas || []).join(', ') + '.', 'ok');
           } }]
         });
       });

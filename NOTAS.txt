@@ -1,41 +1,38 @@
 O QUE MUDOU NESTA VERSAO:
 
-   A IMPORTACAO DE PRODUTIVIDADE LE PELO CABECALHO, NAO POR POSICAO.
-   O leitor contava colunas a partir do "Setor": Duracao em col+4,
-   Valor em col+5. A planilha de NEONATOLOGIA do HMSA tem "Inicio" e
-   "Fim" a mais, e o cabecalho MUDA dentro do proprio arquivo - o
-   primeiro bloco e a coordenacao, sem nenhuma coluna de horario.
-   Agora cada coluna e achada pelo nome, e o mapa e refeito a cada
-   bloco.
+   BAIXAR TUDO BAIXA TUDO, NUM ZIP SO. Eram varios downloads em
+   sequencia, e o navegador BLOQUEIA downloads consecutivos da mesma
+   pagina: o primeiro passava e os outros sumiam calados - a tela
+   ainda dizia "4 arquivo(s) baixado(s)" porque contava os cliques,
+   nao os downloads. Agora monta um zip e entrega um arquivo so.
+   Anexos de mesmo nome ganham (2), (3) em vez de se sobrescrever.
 
-   O PERIODO EM MES POR EXTENSO. So "21/08/2026 - 20/09/2026" era
-   aceito. O arquivo do HMSA escreve "OUTUBRO 2026", e como o
-   periodo era PORTEIRA - nada era lido antes de encontra-lo - o
-   arquivo inteiro passava sem uma linha lida e a tela respondia "0
-   lancamento(s)". Agora aceita mes por extenso e "10/2026"; e se
-   nao reconhecer nenhum formato, RECUSA dizendo o que faltou, em
-   vez de importar nada calado.
+   SUBSTITUIR NF. Quando o orgao pede alteracao, o botao "Substituir
+   NF" aparece na linha ja faturada. A nota atual e cancelada com o
+   motivo registrado, as previsoes que ela abatia voltam a valer, e
+   voce escolhe na hora: informar a nota nova emitida fora (numero,
+   serie, data, valor, arquivo) ou devolver o faturamento para
+   liberado e gerar um RPS novo. Nota que ja teve recebimento e
+   recusada antes de qualquer cancelamento - com duas notas e uma
+   recebida, NENHUMA e cancelada.
 
-   LINHA COM VALOR E SEM HORARIO ENTRA COMO COORDENACAO. Fica
-   sugerida e marcada na previa, com um botao para reclassificar
-   como plantao antes de gerar. Coordenacao nao conta na quantidade
-   de plantoes do medico.
+   O ALERTA DE DOCUMENTO APAGA DEPOIS DE ANEXAR. A tela so redesenhava
+   o modal: a esteira atras dele continuava com "Falta doc." e o
+   contador do topo com o numero velho. Remover o ultimo documento
+   acende o alerta de novo, pela mesma razao.
 
-   A ABA FINANCEIRO PAROU DE PERDER DINHEIRO. Medico que recebe nos
-   dois blocos (plantoes e coordenacao) tinha o valor SOBRESCRITO em
-   vez de somado - R$ 18.000,00 viravam R$ 10.000,00. E a linha
-   "TOTAL DA PRODUTIVIDADE:" era lida como se fosse um medico,
-   trazendo a celula de HORAS como dinheiro: mais R$ 62,08. Era essa
-   a conta dos R$ 247.562,08 no lugar de R$ 265.500,00.
+   DESFAZER VOLTA PARA PREVISTO, DE UMA VEZ. Desfazia uma etapa por
+   vez - de liberado caia em autorizado - e de CONFIRMADO nao voltava:
+   o faturamento ficava preso num estado em que o valor ja e firme e
+   ninguem consegue corrigir. Agora limpa liberacao, autorizacao e
+   confirmacao juntas, e a janela diz o que vai sair antes do clique.
+   Nada do que foi incluido se perde: valor, protocolo, anexos e
+   discriminacao continuam gravados.
 
-   O TOTAL IMPRESSO E ENCONTRADO onde quer que esteja na linha, e
-   tambem quando se chama "Total Geral".
-
-   A COLUNA DO DINHEIRO TEM DOIS NOMES: "Valor" no HMSA e "Total da
-   Producao" no HPM. A do HPM nunca era achada, entao a aba
-   FINANCEIRO dele somava ZERO e a conferencia acusava divergencia
-   em TODO fechamento daquele hospital.
-
-   ARQUIVO RECUSADO LIMPA A TELA. A previa do arquivo ANTERIOR
-   continuava no lugar, com tudo para alguem gerar o fechamento do
-   mes errado.
+   CONTRATO SEM DATA DE FIM passa a gerar contas a pagar - projeta
+   doze meses a frente, e a tela diz que e horizonte, nao vigencia.
+   Era por isso que o contrato por prazo indeterminado nao mostrava
+   a janela de parcelas: sem data de fim o cronograma saia vazio e o
+   botao nem era desenhado. E quando ainda assim nao houver
+   cronograma, a tela diz QUAL campo falta, em vez de "sem valor
+   mensal ou sem vigencia".

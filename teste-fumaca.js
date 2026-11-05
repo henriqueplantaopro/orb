@@ -2293,7 +2293,20 @@ function liberarParaFaturar(centro, competencia) {
   /* A liberação automática da autorização acontece com o valor
      autorizado; mexer no valor depois exige decisão nova, e a trava de
      divergência continua valendo ao liberar de novo. */
+  /* v161: desfazer passou a voltar o faturamento inteiro para
+     PREVISTO, e não mais uma etapa por vez — então o caminho até a
+     divergência é outro: volta tudo, refaz confirmação e
+     autorização, e só então mexe no valor. A regra sob teste é a
+     mesma: liberar com valor diferente do autorizado tem de avisar. */
   S.desfazerEtapaFaturamento('pj38', '2074-03', 'liberado', 'teste de divergência');
+  verificar('desfazer devolve o faturamento a previsto',
+    S.etapaDaPrevisao(S.previsaoDe('pj38', '2074-03')) === 'previsao', '');
+  S.confirmarFaturamentoProdutividade({ centro: 'pj38', competencia: '2074-03', faturamento: 30000, produtividade: 0 });
+  S.autorizarFaturamento('pj38', '2074-03', { protocolo: 'Ofício QA 56' });
+  S.desfazerEtapaFaturamento('pj38', '2074-03', 'liberado', 'para mexer no valor');
+  S.confirmarFaturamentoProdutividade({ centro: 'pj38', competencia: '2074-03', faturamento: 30000, produtividade: 0 });
+  S.autorizarFaturamento('pj38', '2074-03', { protocolo: 'Ofício QA 56' });
+  S.salvarPrevisao({ centro: 'pj38', competencia: '2074-03', faturamento: 45000, produtividade: 0, forcar: true });
   const div = S.liberarFaturamento('pj38', '2074-03', {});
   verificar('valor mudou depois da autorização: liberação avisa', !!div.erro && div.divergencia, '');
   verificar('e libera quando confirmado assim mesmo', S.liberarFaturamento('pj38', '2074-03', { forcar: true }).ok, '');
@@ -2329,7 +2342,26 @@ function liberarParaFaturar(centro, competencia) {
   verificar('assistente não desfaz a liberação',
     !!S.desfazerEtapaFaturamento('pj38', '2074-03', 'liberado', 'teste').erro, '');
   S.setUsuario('u2');
-  verificar('responsável desfaz a liberação', S.desfazerEtapaFaturamento('pj38', '2074-03', 'liberado', 'órgão pediu revisão').ok, '');
+  const desf = S.desfazerEtapaFaturamento('pj38', '2074-03', 'liberado', 'órgão pediu revisão');
+  verificar('responsável desfaz, e o faturamento volta para previsto', desf.ok, '');
+  verificar('v161 — e o valor confirmado NÃO se perde ao desfazer',
+    (S.previsaoDe('pj38', '2074-03') || {}).faturamento === 45000, '');
+  /* AS TRÊS DE UMA VEZ, num estado limpo. Acima o `salvarPrevisao`
+     com `forcar` já havia tirado a confirmação (status volta a
+     `estimada`), então ali só restavam duas etapas a desfazer —
+     medir as três naquele ponto afirmaria o que não existe. */
+  S.salvarPrevisao({ centro: 'pj38', competencia: '2074-07', faturamento: 20000, produtividade: 0 });
+  S.confirmarFaturamentoProdutividade({ centro: 'pj38', competencia: '2074-07', faturamento: 20000, produtividade: 0 });
+  S.autorizarFaturamento('pj38', '2074-07', { protocolo: 'Ofício QA 57' });
+  verificar('v161 — a tela sabe dizer o que vai sair ANTES do clique',
+    S.oQueDesfazer('pj38', '2074-07').length === 3, S.oQueDesfazer('pj38', '2074-07').join(', '));
+  const desf3 = S.desfazerEtapaFaturamento('pj38', '2074-07', 'liberado', 'revisão completa');
+  verificar('v161 — desfazer tira liberação, autorização e confirmação de uma vez',
+    (desf3.desfeitas || []).length === 3, (desf3.desfeitas || []).join(', '));
+  verificar('v161 — e sobra previsto, não uma etapa do meio',
+    S.etapaDaPrevisao(S.previsaoDe('pj38', '2074-07')) === 'previsao', '');
+  verificar('v161 — desfazer de novo recusa, em vez de fingir que fez',
+    !!S.desfazerEtapaFaturamento('pj38', '2074-07', 'liberado', 'de novo').erro, '');
   verificar('sem liberação, faturar volta a ser bloqueado',
     !!S.emitirFatura({ centro: 'pj38', competencia: '2074-03', itens: [{ descricao: 'x', qtd: 1, valor_unit: 100 }] }).erro, '');
   S.setUsuario('u8');

@@ -129,11 +129,18 @@ ERP.contratos = (function () {
     const podeGerar = S.podeMover('contratos') || S.pode('lancar') || S.pode('admin');
     return '<div style="margin-top:10px;padding-top:8px;border-top:1px solid #e6e9ee">' +
       '<b>Contas a pagar</b> · ' +
-      (c.pagamentos_variaveis
-        ? 'cronograma digitado — ' + cron.length + ' parcela(s), ' + U.brl(total)
-        : (cron.length
-            ? 'previsão mensal — ' + cron.length + ' parcela(s) até ' + U.fData(c.vigencia_fim) + ', ' + U.brl(total)
-            : 'sem valor mensal ou sem vigência')) +
+      (cron.length
+        ? (c.pagamentos_variaveis
+            ? 'cronograma digitado — ' + cron.length + ' parcela(s), ' + U.brl(total)
+            : 'previsão mensal — ' + cron.length + ' parcela(s) ' +
+              (c.vigencia_fim
+                ? 'até ' + U.fData(c.vigencia_fim)
+                : '<b>até ' + U.fData(cron[cron.length - 1].venc) + '</b> (contrato sem data de fim: ' +
+                  'projeta doze meses à frente)') + ', ' + U.brl(total))
+        /* DIZ QUAL CAMPO FALTA, em vez de um ou-outro que manda a
+           pessoa abrir o cadastro para descobrir. */
+        : '<span class="erro">não gera contas a pagar: ' +
+          U.esc(S.porQueSemCronograma(c)) + '</span>') +
       (gerados.length
         ? '<div class="sub">Já lançado: ' + gerados.length + ' título(s), ' + previstas + ' ainda como previsão.</div>'
         : '<div class="sub">Ainda não lançado no financeiro.</div>') +
