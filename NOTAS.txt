@@ -1,34 +1,41 @@
 O QUE MUDOU NESTA VERSAO:
 
-   A ESTEIRA DIZ DE QUEM E CADA PROJETO. Coluna nova de Cliente, com
-   o nome curto; o nome completo aparece ao passar o mouse. A coluna
-   de projeto cedeu a largura que sobrava.
+   A IMPORTACAO DE PRODUTIVIDADE LE PELO CABECALHO, NAO POR POSICAO.
+   O leitor contava colunas a partir do "Setor": Duracao em col+4,
+   Valor em col+5. A planilha de NEONATOLOGIA do HMSA tem "Inicio" e
+   "Fim" a mais, e o cabecalho MUDA dentro do proprio arquivo - o
+   primeiro bloco e a coordenacao, sem nenhuma coluna de horario.
+   Agora cada coluna e achada pelo nome, e o mapa e refeito a cada
+   bloco.
 
-   E SAIU A "UNIDADE" DE BAIXO DO NOME. Era ela o texto sem sentido:
-   "Fortaleza" embaixo do PRISIONAL, que e da Policia Militar do
-   Ceara. O campo virou um saco de coisas diferentes ao longo do
-   tempo - cidade, sigla de hospital, nome de cliente - e por isso
-   lia-se como ruido.
+   O PERIODO EM MES POR EXTENSO. So "21/08/2026 - 20/09/2026" era
+   aceito. O arquivo do HMSA escreve "OUTUBRO 2026", e como o
+   periodo era PORTEIRA - nada era lido antes de encontra-lo - o
+   arquivo inteiro passava sem uma linha lida e a tela respondia "0
+   lancamento(s)". Agora aceita mes por extenso e "10/2026"; e se
+   nao reconhecer nenhum formato, RECUSA dizendo o que faltou, em
+   vez de importar nada calado.
 
-   A LINHA DE GRUPO SE CHAMA PELO CLIENTE. "GHC - HGB MUTIRAO" era o
-   rotulo de agrupamento: texto livre, digitado uma vez e congelado.
-   Quando os projetos do mutirao mudaram de cliente, o rotulo ficou
-   para tras - era essa a divergencia. Agora o nome e lido do
-   cliente na hora; o rotulo continua agrupando e aparece na linha
-   de apoio, que e o que distingue dois grupos do mesmo cliente.
+   LINHA COM VALOR E SEM HORARIO ENTRA COMO COORDENACAO. Fica
+   sugerida e marcada na previa, com um botao para reclassificar
+   como plantao antes de gerar. Coordenacao nao conta na quantidade
+   de plantoes do medico.
 
-   APELIDO DO CLIENTE, no cadastro. Vazio, o sistema usa o lado mais
-   curto do travessao - "Instituto Dr. Jose Frota - IJF" vira "IJF".
-   Acerta na maioria e erra em algumas; o campo e como se corrige.
+   A ABA FINANCEIRO PAROU DE PERDER DINHEIRO. Medico que recebe nos
+   dois blocos (plantoes e coordenacao) tinha o valor SOBRESCRITO em
+   vez de somado - R$ 18.000,00 viravam R$ 10.000,00. E a linha
+   "TOTAL DA PRODUTIVIDADE:" era lida como se fosse um medico,
+   trazendo a celula de HORAS como dinheiro: mais R$ 62,08. Era essa
+   a conta dos R$ 247.562,08 no lugar de R$ 265.500,00.
 
-   CLIENTE QUE SO RECEBE FATURA, SEM NOTA FISCAL. Marca no cadastro
-   do cliente. Marcado, a linha liberada oferece "Anexar fatura" no
-   lugar de "Anexar NF", sem a folha de "Emitir a mao", e os
-   projetos dele saem da geracao de RPS em lote - RPS existe para
-   virar NF-e no portal da prefeitura.
+   O TOTAL IMPRESSO E ENCONTRADO onde quer que esteja na linha, e
+   tambem quando se chama "Total Geral".
 
-   SAIU O FILTRO "ESCONDER OS JA FATURADOS" da esteira.
+   A COLUNA DO DINHEIRO TEM DOIS NOMES: "Valor" no HMSA e "Total da
+   Producao" no HPM. A do HPM nunca era achada, entao a aba
+   FINANCEIRO dele somava ZERO e a conferencia acusava divergencia
+   em TODO fechamento daquele hospital.
 
-   O RELATORIO DE FATURAMENTO FILTRA POR CLIENTE, no lugar do filtro
-   de unidade, pelo mesmo motivo do item acima: dezessete valores de
-   naturezas diferentes na mesma lista.
+   ARQUIVO RECUSADO LIMPA A TELA. A previa do arquivo ANTERIOR
+   continuava no lugar, com tudo para alguem gerar o fechamento do
+   mes errado.

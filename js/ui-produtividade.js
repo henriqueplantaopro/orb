@@ -654,6 +654,22 @@ ERP.produtividade = (function () {
         complementar = null;   // arquivo novo: a pergunta do complemento volta a valer
         render();
       } catch (err) {
+        /* ARQUIVO RECUSADO LIMPA A TELA.
+
+           A prévia do arquivo ANTERIOR continuava no lugar: quem
+           subia um arquivo que o leitor recusa via a tabela cheia,
+           com o aviso vermelho sumindo depois de alguns segundos, e
+           tinha tudo para clicar em "gerar" achando que era o
+           arquivo novo — lançando o fechamento do mês errado, do
+           hospital errado. Recusou, a tela fica vazia e diz por quê,
+           que é o estado honesto. */
+        lote = null;
+        complementar = null;
+        const saida = U.el('pr-saida');
+        if (saida) {
+          saida.innerHTML = '<div class="aviso" style="margin:10px 0">' +
+            '<b>Não consegui ler este arquivo.</b><br>' + U.esc(err.message) + '</div>';
+        }
         ERP.app.aviso('Não consegui ler este arquivo: ' + err.message, 'erro');
       }
     };
@@ -777,6 +793,101 @@ ERP.produtividade = (function () {
     };
   }
 
+  /* Acento fora, para comparar cabeçalho e nome de mês sem depender
+     de como foram digitados ("Duração"/"Duracao", "Março"/"Marco"). */
+  const semAcento = v => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+  /* ── O CABEÇALHO MANDA, NÃO A POSIÇÃO ──────────────────
+
+     O leitor contava colunas a partir do "Setor": Duração em
+     col0+4, Valor em col0+5. Funcionava enquanto todo arquivo
+     tivesse o mesmo desenho. A planilha de NEONATOLOGIA do HMSA tem
+     "Início" e "Fim" a mais, e com isso a Duração era lida da
+     coluna "Entrada" e o Valor da coluna "Saída" — todo plantão
+     entraria zerado, com hora errada, sem nada acusar.
+
+     Pior: o cabeçalho muda DENTRO do mesmo arquivo. O primeiro
+     bloco daquela planilha é a coordenação, com "Setor | Tipo |
+     Valor" e nenhuma coluna de horário; os outros médicos têm o
+     cabeçalho completo. Por isso o mapa é refeito a cada cabeçalho
+     encontrado, e não uma vez no começo. */
+  function mapearColunas(cab) {
+    const limpo = v => semAcento(txt(v)).toLowerCase().replace(/\s+/g, ' ').trim();
+    const achar = function () {
+      const alts = Array.prototype.slice.call(arguments);
+      return (cab || []).findIndex(function (v) {
+        const t = limpo(v);
+        return t && alts.some(function (x) { return t === x || t.indexOf(x) === 0; });
+      });
+    };
+    return { setor: achar('setor'), tipo: achar('tipo'), duracao: achar('duracao'),
+      valor: achar('valor'), inicio: achar('inicio'), fim: achar('fim'),
+      entrada: achar('entrada'), saida: achar('saida') };
+  }
+
+  const MESES = { janeiro: 1, fevereiro: 2, marco: 3, abril: 4, maio: 5, junho: 6, julho: 7,
+    agosto: 8, setembro: 9, outubro: 10, novembro: 11, dezembro: 12,
+    jan: 1, fev: 2, mar: 3, abr: 4, mai: 5, jun: 6, jul: 7, ago: 8, set: 9, out: 10, nov: 11, dez: 12 };
+  const doisDig = n => String(n).padStart(2, '0');
+
+  /* A competência sai da data FINAL do período. */
+  function compDeData(d) {
+    const pf = String(d || '').split('/');
+    if (pf.length === 3) {
+      const ano = pf[2].length === 2 ? '20' + pf[2] : pf[2];
+      return ano + '-' + pf[1].padStart(2, '0');
+    }
+    if (pf.length === 2) {
+      /* Período sem ano ("01/07 a 31/07") — assume o ano corrente; se
+         isso jogar a competência pro futuro, é do ano anterior:
+         produtividade é sempre de um período que já aconteceu, nunca
+         de um mês que ainda não chegou. */
+      const anoAtual = U.mesAtual().slice(0, 4);
+      const mes = pf[1].padStart(2, '0');
+      const c = anoAtual + '-' + mes;
+      return c > U.mesAtual() ? (Number(anoAtual) - 1) + '-' + mes : c;
+    }
+    return '';
+  }
+
+  /* ── O PERÍODO, EM QUALQUER DAS FORMAS QUE OS ARQUIVOS USAM ──
+
+     Só o intervalo de datas era aceito ("21/08/2026 - 20/09/2026",
+     como escreve o arquivo da HPM). A planilha do HMSA escreve
+     "OUTUBRO 2026", e como o leitor usava o período como PORTEIRA —
+     nada era lido antes de achá-lo —, o arquivo inteiro passava sem
+     uma linha ser lida e a tela respondia "0 lançamento(s)". Quatro
+     mensagens de erro, uma causa só. */
+  function lerPeriodo(t) {
+    t = txt(t).trim();
+    if (!t) return null;
+    let m = t.match(/^(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*(?:~|-|a|at[eé])\s*(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)$/i);
+    if (m) { const c = compDeData(m[2]); return c ? { texto: t, competencia: c } : null; }
+    m = t.match(/^([A-Za-zÀ-ÿ]{3,12})\s*[\/ ]\s*(?:de\s+)?(\d{4})$/);
+    if (m) {
+      const n = MESES[semAcento(m[1]).toLowerCase()];
+      if (n) return { texto: t, competencia: m[2] + '-' + doisDig(n) };
+    }
+    m = t.match(/^(\d{1,2})\/(\d{4})$/);
+    if (m && +m[1] >= 1 && +m[1] <= 12) return { texto: t, competencia: m[2] + '-' + doisDig(+m[1]) };
+    return null;
+  }
+
+  /* Recalcula a contagem de plantões a partir da classificação de
+     cada grupo. Uma implementação só, usada na leitura e de novo a
+     cada reclassificação na tela — contagem que se soma em dois
+     lugares diverge no primeiro clique. */
+  function aplicarClasse(grupos, medicos) {
+    const lista = Array.isArray(grupos)
+      ? grupos : Object.keys(grupos).map(function (k) { return grupos[k]; });
+    Object.keys(medicos).forEach(function (k) { medicos[k].plantoes = 0; });
+    lista.forEach(function (g) {
+      g.plantoes = g.coordenacao ? 0 : (g.linhas_origem || 0);
+      const md = medicos[chaveNome(g.medico)];
+      if (md) md.plantoes += g.plantoes;
+    });
+  }
+
   function ler(wb, arquivo) {
     const abas = acharAbas(wb);
     const prod = abas.plantoes;
@@ -786,42 +897,74 @@ ERP.produtividade = (function () {
 
     /* A coluna onde tudo começa muda de arquivo para arquivo: em uns o
        Setor está na coluna B, em outros na A. Descobre pelo cabeçalho. */
+    /* A coluna onde o bloco começa: a primeira que traz "Setor". É só
+       o ponto de referência para achar o nome do médico, que vem
+       numa linha sozinha ANTES do cabeçalho do bloco dele. O resto
+       das colunas sai do cabeçalho, não daqui. */
     let col0 = 1;
-    for (let i = 0; i < Math.min(prod.length, 30); i++) {
+    for (let i = 0; i < prod.length; i++) {
       const j = (prod[i] || []).findIndex(function (v) { return txt(v).toLowerCase() === 'setor'; });
       if (j > -1) { col0 = j; break; }
     }
 
-    let projeto = '', unidade = '', periodo = '', totalArquivo = 0;
+    /* ── O PERÍODO, ANTES DE QUALQUER COISA, E EM VARREDURA PRÓPRIA ──
+
+       Ele era porteira: o laço só começava a ler depois de encontrar
+       uma linha no formato de intervalo de datas. Arquivo que
+       escreve o período de outro jeito atravessava inteiro sem uma
+       linha lida, e a tela dizia "0 lançamento(s)" sem dizer por
+       quê. Agora a busca é uma varredura à parte, aceita as formas
+       conhecidas, e NÃO ACHAR É MOTIVO DE RECUSA — não de silêncio. */
+    let projeto = '', unidade = '', periodo = '', competenciaLida = '', totalArquivo = 0;
+    for (let i = 0; i < prod.length && !periodo; i++) {
+      const linha = prod[i] || [];
+      for (let j = 0; j < linha.length; j++) {
+        const achou = lerPeriodo(linha[j]);
+        if (!achou) continue;
+        periodo = achou.texto;
+        competenciaLida = achou.competencia;
+        /* O projeto é a linha de texto logo acima do período. */
+        for (let k = i - 1; k >= 0; k--) {
+          const acima = txt((prod[k] || [])[j]) || txt((prod[k] || [])[col0]);
+          if (acima && acima.toUpperCase().indexOf('PRODUTIVIDADE') === -1) { projeto = acima; break; }
+        }
+        break;
+      }
+    }
+    if (!periodo) {
+      throw new Error('não achei o período do fechamento no arquivo. Procurei por ' +
+        '"21/08/2026 - 20/09/2026", "OUTUBRO 2026" e "10/2026" em todas as células, ' +
+        'e nenhuma delas apareceu. Sem o período eu não sei de que competência é este ' +
+        'fechamento, e importar na competência errada é pior do que não importar.');
+    }
+    // a aba financeira costuma trazer o hospital acima da especialidade
+    if (abas.financeiro) {
+      const topo = abas.financeiro.slice(0, 6)
+        .map(function (r) { return txt(r[0]) || txt(r[1]) || txt(r[2]); })
+        .filter(function (v) { return v && !/^FINANCEIRO$/i.test(v.trim()) && !lerPeriodo(v); });
+      if (topo.length) unidade = topo[0];
+    }
+
     const grupos = {};   // medico|setor|tipo
     const medicos = {};  // nome -> { crm, total }
     let medico = null, crm = '';
+    /* O mapa de colunas do bloco em que estamos. Começa vazio: nada é
+       lido como plantão antes de um cabeçalho dizer onde cada coisa
+       está. */
+    let cols = null;
 
     prod.forEach(function (linha, i) {
-      const b = txt(linha[col0]), c = txt(linha[col0 + 1]);
-      const f = linha[col0 + 4], g = linha[col0 + 5];
-      const temDuracao = txt(f) !== '';
+      /* LINHA DE CABEÇALHO: refaz o mapa e segue. Acontece a cada
+         médico, e nesta planilha o primeiro bloco tem cabeçalho
+         diferente dos outros. */
+      const mapa = mapearColunas(linha);
+      if (mapa.setor > -1 && mapa.valor > -1) { cols = mapa; return; }
 
-      // Até achar o período, o que existe é só o cabeçalho do relatório
-      // (título e projeto) — nada dali é médico nem plantão.
-      if (!periodo) {
-        // "01/07/2026 ~ 31/07/2026" ou "15/07/2026 - 14/08/2026"
-        if (/^\d{2}\/\d{2}\/\d{4}\s*[~\-a]\s*\d{2}\/\d{2}\/\d{4}$/.test(b)) {
-          periodo = b;
-          for (let k = i - 1; k >= 0; k--) {
-            const acima = txt(prod[k][col0]);
-            if (acima && acima.toUpperCase().indexOf('PRODUTIVIDADE') === -1) { projeto = acima; break; }
-          }
-          // a aba financeira costuma trazer o hospital acima da especialidade
-          if (abas.financeiro) {
-            const topo = abas.financeiro.slice(0, 6)
-              .map(function (r) { return txt(r[0]); })
-              .filter(function (v) { return v && !/^FINANCEIRO$/i.test(v) && !/\d{2}\/\d{2}\/\d{4}/.test(v); });
-            if (topo.length) unidade = topo[0];
-          }
-        }
-        return;
-      }
+      const b = txt(linha[col0]), c = cols ? txt(linha[cols.tipo]) : '';
+      const temDuracao = !!(cols && (
+        (cols.duracao > -1 && txt(linha[cols.duracao]) !== '') ||
+        (cols.entrada > -1 && txt(linha[cols.entrada]) !== '') ||
+        (cols.inicio > -1 && txt(linha[cols.inicio]) !== '')));
       /* SOMA os totais, não guarda o último.
 
          Cada aba de especialidade imprime o seu "Total da
@@ -830,11 +973,24 @@ ERP.produtividade = (function () {
          arquivo INTEIRO com o total impresso só da ÚLTIMA aba — e
          acusando divergência em todo fechamento que tem mais de uma
          especialidade, justamente os que estão certos. */
-      if (txt(linha[col0 + 3]).toUpperCase().indexOf('TOTAL DA PRODUTIVIDADE') > -1) {
-        totalArquivo = Math.round((totalArquivo + valorNum(g)) * 100) / 100;
+      /* O TOTAL IMPRESSO, ONDE QUER QUE ELE ESTEJA NA LINHA.
+
+         Era procurado numa coluna fixa e com um texto só ("Total da
+         produtividade"). A planilha do HMSA escreve "Total Geral"
+         noutra coluna, e por isso o total de 265.500 que está lá no
+         rodapé não era visto — a tela dizia "total impresso não vem
+         no arquivo" com ele impresso. Agora procura o texto em
+         qualquer célula da linha e pega o valor pela coluna do
+         cabeçalho. */
+      const ehTotalGeral = linha.some(function (v) {
+        const t = semAcento(txt(v)).toUpperCase();
+        return t.indexOf('TOTAL DA PRODUTIVIDADE') > -1 || t === 'TOTAL GERAL';
+      });
+      if (ehTotalGeral) {
+        const vt = cols && cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
+        totalArquivo = Math.round((totalArquivo + vt) * 100) / 100;
         return;
       }
-      if (b.toLowerCase() === 'setor') return;                          // cabeçalho do bloco
       /* CABEÇALHO DE ABA NÃO É MÉDICO.
 
          Lendo várias abas em sequência, o cabeçalho da segunda e da
@@ -845,8 +1001,7 @@ ERP.produtividade = (function () {
          verdade vem antes da primeira linha de plantão —, mas ficar
          na lista de médicos faz a contagem mentir para quem vier
          ler. */
-      if (/^gerado em\b/i.test(b) || /^PRODUTIVIDADE\b/i.test(b) ||
-          /^\d{2}\/\d{2}\/\d{4}\s*[~\-a]\s*\d{2}\/\d{2}\/\d{4}$/.test(b)) return;
+      if (/^gerado em\b/i.test(b) || /^PRODUTIVIDADE\b/i.test(b) || lerPeriodo(b)) return;
       if (b && !c && !temDuracao && b.indexOf('*para validar') !== 0) { // nome do médico
         /* O CRM PODE TER ESPAÇO DENTRO — e tem.
 
@@ -871,14 +1026,35 @@ ERP.produtividade = (function () {
         medicos[chaveNome(medico)] = medicos[chaveNome(medico)] || { nome: medico, crm: crm, total: 0, plantoes: 0 };
         return;
       }
-      if (!medico || !b || !c) return;                            // linha de total do bloco
-      const min = minutos(f), val = valorNum(g);
+      if (!medico || !b || !c || !cols) return;                   // linha de total do bloco
+      const min = cols.duracao > -1 ? minutos(linha[cols.duracao]) : 0;
+      const val = cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
+      /* ── LINHA COM VALOR E SEM HORÁRIO É COORDENAÇÃO ───────
+
+         Pagamento sem plantão: nem início, nem fim, nem duração, e
+         um valor. É remuneração de coordenação, e contá-la como
+         plantão erra a quantidade de plantões do médico e do
+         fechamento. Fica SUGERIDO, não decidido: a tela mostra a
+         linha marcada e deixa reclassificar antes de gerar. */
+      const semHorario = !temDuracao && min === 0 && val !== 0;
       const k = medico + '||' + b + '||' + c;
-      const gr = grupos[k] = grupos[k] || { medico: medico, crm: crm, setor: b, tipo: c, plantoes: 0, minutos: 0, valor: 0 };
-      gr.plantoes++; gr.minutos += min; gr.valor = Math.round((gr.valor + val) * 100) / 100;
+      const gr = grupos[k] = grupos[k] || { medico: medico, crm: crm, setor: b, tipo: c,
+        linhas_origem: 0, plantoes: 0, minutos: 0, valor: 0,
+        /* `coordenacao` é o que vale agora e muda no clique;
+           `coordenacao_sugerida` é o que o arquivo disse e não muda —
+           é ela que decide se a tela oferece o botão de trocar. */
+        coordenacao: semHorario, coordenacao_sugerida: semHorario };
+      gr.linhas_origem++;
+      gr.minutos += min;
+      gr.valor = Math.round((gr.valor + val) * 100) / 100;
       const md = medicos[chaveNome(medico)];
-      md.plantoes++; md.total = Math.round((md.total + val) * 100) / 100;
+      md.total = Math.round((md.total + val) * 100) / 100;
     });
+
+    /* A contagem de plantões é DERIVADA da classificação, não somada
+       durante a leitura: reclassificar uma linha na tela tem de
+       mudar a contagem sem reler o arquivo. */
+    aplicarClasse(grupos, medicos);
 
     // aba FINANCEIRO: dados de pagamento do credor
     const fin = abas.financeiro || [];
@@ -891,7 +1067,17 @@ ERP.produtividade = (function () {
       const cab = fin[cabFin].map(function (v) { return txt(v).replace(/\s+/g, ' '); });
       const col = function (nome) { return cab.findIndex(function (v) { return v.toLowerCase().indexOf(nome) === 0; }); };
       const iNome = col('profissional'), iRazao = col('razão'), iCrm = col('crm'),
-            iDoc = col('documento'), iTipo = col('tipo'), iVal = col('valor'),
+            iDoc = col('documento'), iTipo = col('tipo'),
+            /* A COLUNA DO DINHEIRO NÃO SE CHAMA IGUAL NOS DOIS ARQUIVOS.
+
+               No HMSA é "Valor"; no HPM é "Total da Produtividade".
+               Procurando só por "valor", a do HPM nunca era achada e
+               a aba FINANCEIRO dele somava ZERO — o que fazia a
+               conferência "soma dos plantões × aba FINANCEIRO"
+               acusar divergência em TODO fechamento daquele
+               hospital. Aviso que aparece sempre é aviso que se
+               aprende a ignorar. */
+            iVal = col('valor') > -1 ? col('valor') : col('total da produtividade'),
             /* A coluna que diz PJ ou SCP. Era a única da aba
                FINANCEIRO que a importação não lia — e é a que decide
                se o pagamento daquele médico precisa de nota. */
@@ -902,7 +1088,39 @@ ERP.produtividade = (function () {
       for (let i = cabFin + 1; i < fin.length; i++) {
         const nome = txt(fin[i][iNome]);
         if (!nome) continue;
+        /* ── O QUE NÃO É MÉDICO NÃO ENTRA COMO MÉDICO ──────────
+
+           A aba tem mais de um bloco (plantões e coordenação), cada
+           um com o SEU cabeçalho e um rodapé de total. Lendo da
+           primeira linha de "Profissional" até o fim, três coisas
+           caíam na lista como se fossem gente: o título do segundo
+           bloco ("COORDENAÇÃO"), o cabeçalho repetido
+           ("Profissional") e a linha "TOTAL DA PRODUTIVIDADE:".
+
+           A última não era só feia. O nome dela cai na coluna
+           Profissional, e na coluna de Valor daquela linha está a
+           célula de HORAS — 62 dias e 1h48, que o Excel entrega
+           como 62,075. O total do arquivo entrou com R$ 62,08 a
+           mais, vindo de uma contagem de horas. */
+        const nomeLimpo = semAcento(nome).toUpperCase().replace(/[^A-Z ]/g, '').trim();
+        if (nomeLimpo.indexOf('TOTAL') === 0 || nomeLimpo === 'PROFISSIONAL' ||
+            nomeLimpo === 'COORDENACAO' || nomeLimpo === 'SUBTOTAL') continue;
         const obsLinha = iObs > -1 ? txt(fin[i][iObs]) : '';
+        const valLinha = iVal > -1 ? valorNum(fin[i][iVal]) : 0;
+        /* ── MESMO MÉDICO EM DOIS BLOCOS SOMA, NÃO SOBRESCREVE ──
+
+           A Carolina recebe nos dois: R$ 18.000,00 de plantões e
+           R$ 10.000,00 de coordenação. Guardando por nome, a
+           segunda linha apagava a primeira e ela entrava com
+           10.000 — R$ 18.000,00 a menos no total do arquivo, sem
+           um aviso. O cadastro (CPF, PIX, regime) continua sendo o
+           da primeira linha; o que soma é o dinheiro. */
+        const ja = pagto[chaveNome(nome)];
+        if (ja) {
+          ja.valor = Math.round((ja.valor + valLinha) * 100) / 100;
+          if (!ja.observacao) ja.observacao = obsLinha;
+          continue;
+        }
         pagto[chaveNome(nome)] = {
           observacao: obsLinha,
           /* O regime sai do texto por uma regra só, que mora no
@@ -915,7 +1133,7 @@ ERP.produtividade = (function () {
           documento: iDoc > -1 ? txt(fin[i][iDoc]) : '',
           tipo_chave: iTipo > -1 ? txt(fin[i][iTipo]) : '',
           pix: iPix > -1 ? txt(fin[i][iPix]) : '',
-          valor: iVal > -1 ? valorNum(fin[i][iVal]) : 0
+          valor: valLinha
         };
       }
     }
@@ -927,28 +1145,10 @@ ERP.produtividade = (function () {
     const soma = Math.round(linhas.reduce(function (s, l) { return s + l.valor; }, 0) * 100) / 100;
     const somaFin = Math.round(Object.keys(pagto).reduce(function (s, k) { return s + pagto[k].valor; }, 0) * 100) / 100;
 
-    // competência = mês da data FINAL do período (aceita ~, hífen ou "a")
-    const partes = periodo.split(/\s+(?:a|~|-)\s+/i);
-    const fim = (partes.length > 1 ? partes[1] : partes[0] || '').trim();
-    const pf = fim.split('/');
-    let competencia;
-    if (pf.length === 3) {
-      const ano = pf[2].length === 2 ? '20' + pf[2] : pf[2];
-      competencia = ano + '-' + pf[1].padStart(2, '0');
-    } else if (pf.length === 2) {
-      /* Período sem ano ("01/07 a 31/07") — assume o ano corrente; se
-         isso jogar a competência pro futuro, é do ano anterior:
-         produtividade é sempre de um período que já aconteceu, nunca
-         de um mês que ainda não chegou. Sem essa conta, caía direto no
-         mês atual do sistema, errado sempre que o fechamento é de mês
-         anterior — o caso mais comum. */
-      const anoAtual = U.mesAtual().slice(0, 4);
-      const mes = pf[1].padStart(2, '0');
-      competencia = anoAtual + '-' + mes;
-      if (competencia > U.mesAtual()) competencia = (Number(anoAtual) - 1) + '-' + mes;
-    } else {
-      competencia = U.mesAtual();
-    }
+    /* A competência já saiu junto com o período, na varredura lá de
+       cima: é uma conta só, feita onde o formato é reconhecido, em
+       vez de duas interpretações do mesmo texto. */
+    const competencia = competenciaLida || U.mesAtual();
 
     return {
       arquivo: arquivo, projeto: projeto, unidade: unidade, periodo: periodo, competencia: competencia,
@@ -967,7 +1167,9 @@ ERP.produtividade = (function () {
       const m = mapa[k] = mapa[k] || {
         medico: l.medico, crm: l.crm, itens: [], plantoes: 0, minutos: 0, valor: 0
       };
-      m.itens.push({ setor: l.setor, tipo: l.tipo, qtd: l.plantoes, minutos: l.minutos, valor: l.valor });
+      m.itens.push({ setor: l.setor, tipo: l.tipo, qtd: l.plantoes, minutos: l.minutos, valor: l.valor,
+        coordenacao: !!l.coordenacao, coordenacao_sugerida: !!l.coordenacao_sugerida,
+        chave: l.medico + '||' + l.setor + '||' + l.tipo });
       m.plantoes += l.plantoes;
       m.minutos += l.minutos;
       m.valor = Math.round((m.valor + l.valor) * 100) / 100;
@@ -988,6 +1190,12 @@ ERP.produtividade = (function () {
 
   function render() {
     const L = lote;
+    /* SEM ARQUIVO LIDO NÃO HÁ O QUE DESENHAR. A limpeza feita quando
+       um arquivo é recusado zera o `lote`; sem esta saída, qualquer
+       caminho que chame `render()` depois disso quebraria — e com
+       ela, o pior que acontece é a tela ficar como está, nunca
+       voltar a mostrar o arquivo anterior. */
+    if (!L) return;
     const medicos = porMedico(L);
     const centro = centroSugerido(L.projeto);
     /* TOTAL NÃO IMPRESSO NÃO É TOTAL ZERO.
@@ -1036,6 +1244,23 @@ ERP.produtividade = (function () {
         ? '<div class="aviso" style="margin:10px 0">Os totais do arquivo não fecham entre si. ' +
           'O sistema vai lançar a soma dos plantões (' + U.brl(L.soma) + '); confira com quem fechou antes de aprovar.</div>'
         : '') +
+      /* O PALPITE FICA À VISTA. Linha sem horário é quase sempre
+         coordenação, mas "quase sempre" não é sempre — e classificar
+         calado troca um erro silencioso por outro. */
+      (function () {
+        const semHora = L.linhas.filter(function (l) { return l.coordenacao_sugerida; });
+        if (!semHora.length) return '';
+        const comoCoord = semHora.filter(function (l) { return l.coordenacao; }).length;
+        return '<div class="ajuda" style="margin:10px 0">' +
+          (semHora.length === 1 ? 'Uma linha veio' : semHora.length + ' linhas vieram') +
+          ' <b>com valor e sem horário</b>. ' +
+          (comoCoord
+            ? 'Classifiquei ' + (semHora.length === 1 ? 'como' : comoCoord + ' como') +
+              ' <b>coordenação</b>, então ' + (comoCoord === 1 ? 'ela não conta' : 'elas não contam') +
+              ' como plantão na quantidade. '
+            : '') +
+          'Se não for isso, o botão na linha do médico troca para plantão.</div>';
+      })() +
 
       '<div class="tabela-rolagem" style="margin:10px -14px 0">' +
       '<table><thead><tr><th>Médico</th><th>CRM</th><th class="num">Plantões</th>' +
@@ -1050,6 +1275,19 @@ ERP.produtividade = (function () {
         return '<tr>' +
           '<td class="desc" style="white-space:normal">' + U.esc(m.medico) +
             '<div class="itens-sub">' + m.itens.map(function (i) {
+              /* LINHA SEM HORÁRIO: a sugestão aparece escrita e com o
+                 botão de desfazer ao lado. Classificar calado seria
+                 trocar um erro silencioso (contar como plantão) por
+                 outro (contar como coordenação sem avisar). */
+              if (i.coordenacao_sugerida) {
+                return (i.coordenacao
+                    ? '<span class="badge b-pendente">coordenação</span> '
+                    : '<span class="badge b-aberto">plantão</span> ') +
+                  U.esc(i.tipo) + ': ' + i.qtd + ' × ' + hhmm(i.minutos) + ' · ' + U.brl(i.valor) +
+                  ' <button class="btn-ghost" data-pr-classe="' + U.esc(i.chave) + '" ' +
+                  'title="esta linha veio sem horário; o sistema sugeriu coordenação">' +
+                  (i.coordenacao ? 'é plantão' : 'é coordenação') + '</button>';
+              }
               return U.esc(i.tipo) + ': ' + i.qtd + ' × ' + hhmm(i.minutos) + ' · ' + U.brl(i.valor);
             }).join(' &nbsp;|&nbsp; ') + '</div></td>' +
           '<td class="mono">' + U.esc(m.crm || pg.crm || '—') + '</td>' +
@@ -1099,6 +1337,20 @@ ERP.produtividade = (function () {
       '</div>';
 
     U.el('pr-gerar').addEventListener('click', gerar);
+    /* RECLASSIFICAR A LINHA SEM HORÁRIO. Troca a classificação,
+       refaz a contagem de plantões pela mesma função que a leitura
+       usou, e redesenha — sem reler o arquivo. */
+    document.querySelectorAll('[data-pr-classe]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const k = this.dataset.prClasse;
+        const g = L.linhas.find(function (x) {
+          return x.medico + '||' + x.setor + '||' + x.tipo === k; });
+        if (!g) return;
+        g.coordenacao = !g.coordenacao;
+        aplicarClasse(L.linhas, L.medicos);
+        render();
+      });
+    });
     document.querySelectorAll('[data-bloq]').forEach(function (cb) {
       cb.addEventListener('change', function () {
         const k = this.dataset.bloq;
