@@ -1,38 +1,46 @@
 O QUE MUDOU NESTA VERSAO:
 
-   BAIXAR TUDO BAIXA TUDO, NUM ZIP SO. Eram varios downloads em
-   sequencia, e o navegador BLOQUEIA downloads consecutivos da mesma
-   pagina: o primeiro passava e os outros sumiam calados - a tela
-   ainda dizia "4 arquivo(s) baixado(s)" porque contava os cliques,
-   nao os downloads. Agora monta um zip e entrega um arquivo so.
-   Anexos de mesmo nome ganham (2), (3) em vez de se sobrescrever.
+   A PLANILHA DO SAMU ENTRA. Tres defeitos somados impediam:
 
-   SUBSTITUIR NF. Quando o orgao pede alteracao, o botao "Substituir
-   NF" aparece na linha ja faturada. A nota atual e cancelada com o
-   motivo registrado, as previsoes que ela abatia voltam a valer, e
-   voce escolhe na hora: informar a nota nova emitida fora (numero,
-   serie, data, valor, arquivo) ou devolver o faturamento para
-   liberado e gerar um RPS novo. Nota que ja teve recebimento e
-   recusada antes de qualquer cancelamento - com duas notas e uma
-   recebida, NENHUMA e cancelada.
+   1. "OUTUBRO DE 2026" nao era reconhecido. Faltava uma letra no
+      codigo (a marca que ignora maiuscula), entao "outubro de 2026"
+      em minusculas funcionava e "OUTUBRO DE 2026" nao.
 
-   O ALERTA DE DOCUMENTO APAGA DEPOIS DE ANEXAR. A tela so redesenhava
-   o modal: a esteira atras dele continuava com "Falta doc." e o
-   contador do topo com o numero velho. Remover o ultimo documento
-   acende o alerta de novo, pela mesma razao.
+   2. A aba COORDENACAO era descartada inteira. O sistema so
+      reconhecia como aba de lancamento a que tivesse coluna de
+      Entrada ou Saida - e coordenacao nao tem horario. Sumiam os
+      R$ 2.000,00 do coordenador, sem aviso.
 
-   DESFAZER VOLTA PARA PREVISTO, DE UMA VEZ. Desfazia uma etapa por
-   vez - de liberado caia em autorizado - e de CONFIRMADO nao voltava:
-   o faturamento ficava preso num estado em que o valor ja e firme e
-   ninguem consegue corrigir. Agora limpa liberacao, autorizacao e
-   confirmacao juntas, e a janela diz o que vai sair antes do clique.
-   Nada do que foi incluido se perde: valor, protocolo, anexos e
-   discriminacao continuam gravados.
+   3. CADA ABA COMECA NUMA COLUNA DIFERENTE. O leitor usava um
+      indice de coluna so, achado na primeira aba, para o arquivo
+      inteiro. Com varias abas isso nao funciona: na planilha do
+      SAMU a REGULACAO comeca na coluna B e a COORDENACAO na A. A
+      aba de coordenacao era lida uma coluna a esquerda - o titulo
+      "COORDENACAO SAMU" entrava como se fosse um medico, e o
+      coordenador de verdade nao entrava. Agora nada e lido por
+      posicao fixa: as colunas saem do cabecalho de cada bloco, e a
+      linha do nome do medico e reconhecida pela forma dela.
 
-   CONTRATO SEM DATA DE FIM passa a gerar contas a pagar - projeta
-   doze meses a frente, e a tela diz que e horizonte, nao vigencia.
-   Era por isso que o contrato por prazo indeterminado nao mostrava
-   a janela de parcelas: sem data de fim o cronograma saia vazio e o
-   botao nem era desenhado. E quando ainda assim nao houver
-   cronograma, a tela diz QUAL campo falta, em vez de "sem valor
-   mensal ou sem vigencia".
+   A ABA FINANCEIRO TEM MAIS DE UM CABECALHO, e o segundo esta uma
+   coluna a direita do primeiro. Lendo um so, o bloco de baixo era
+   lido pelas colunas do de cima e o coordenador sumia da
+   conferencia. O mapa e refeito a cada cabecalho, como ja era nas
+   abas de plantao. O total do arquivo tambem passou a vir dali.
+
+   COMPETENCIA ESCOLHIDA A MAO. A v160 RECUSAVA o arquivo cuja data
+   nao reconhecia. Resolveu o silencio e criou um beco. Agora o
+   arquivo e lido inteiro, a competencia fica vazia e marcada em
+   vermelho, e o que fica bloqueado e GERAR - ate alguem escolher.
+
+   QUEM FECHA A PRODUTIVIDADE CONSEGUE FECHAR. A mensagem "Seu
+   perfil nao lanca contas a pagar" travava a gerencia de
+   produtividade em todo fechamento. A mensagem estava certa sobre
+   o perfil e errada sobre a acao: fechar produtividade nao e
+   lancar titulo avulso. Titulo avulso continua recusado para esse
+   perfil; o fechamento passa.
+
+   COORDENACAO E PLANTAO EM DOIS TITULOS. A v160 classificava, mas
+   pagava junto. Agora o medico que tem os dois recebe dois titulos
+   - a Carolina, no arquivo do HMSA, sai com R$ 18.000,00 de
+   plantoes e R$ 10.000,00 de coordenacao - e da para pagar um sem
+   o outro.

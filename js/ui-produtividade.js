@@ -719,7 +719,20 @@ ERP.produtividade = (function () {
       }).join(' ');
       if (!financeiro && /profissional/.test(cabecalhos) &&
           /(chave pix|documento)/.test(cabecalhos)) { financeiro = l; return; }
-      if (/setor/.test(cabecalhos) && /(entrada|sa[íi]da)/.test(cabecalhos)) {
+      /* ── ABA SEM COLUNA DE HORÁRIO TAMBÉM É ABA DE PLANTÕES ──
+
+         Exigir "entrada" ou "saída" descartava a aba COORDENAÇÃO
+         inteira: ela tem só "Setor | Tipo | Valor", porque
+         coordenação não tem plantão. A planilha do SAMU traz
+         REGULAÇÃO, USA 02, USA 04 e COORDENAÇÃO — as três primeiras
+         entravam e a quarta sumia sem um aviso, levando junto os
+         R$ 2.000,00 do coordenador.
+
+         O que define uma aba de lançamento é ter SETOR e VALOR; as
+         colunas de horário são o que distingue plantão de
+         coordenação, e isso quem resolve é o leitor, linha a
+         linha. */
+      if (/setor/.test(cabecalhos) && /valor/.test(cabecalhos)) {
         plantoes.push.apply(plantoes, l);
         nomesPlantoes.push(n);
       }
@@ -863,7 +876,12 @@ ERP.produtividade = (function () {
     if (!t) return null;
     let m = t.match(/^(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)\s*(?:~|-|a|at[eé])\s*(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)$/i);
     if (m) { const c = compDeData(m[2]); return c ? { texto: t, competencia: c } : null; }
-    m = t.match(/^([A-Za-zÀ-ÿ]{3,12})\s*[\/ ]\s*(?:de\s+)?(\d{4})$/);
+    /* A flag `i` faltava, e com ela o "DE" MAIÚSCULO não casava:
+       "OUTUBRO DE 2026" — que é como o arquivo do SAMU escreve —
+       passava direto, e o sistema dizia que não achou competência
+       nenhuma. "outubro de 2026" em minúsculas funcionava, o que
+       torna o defeito ainda mais difícil de acreditar. */
+    m = t.match(/^([A-Za-zÀ-ÿ]{3,12})\s*(?:[\/ ]\s*)?(?:de\s+)?(\d{4})$/i);
     if (m) {
       const n = MESES[semAcento(m[1]).toLowerCase()];
       if (n) return { texto: t, competencia: m[2] + '-' + doisDig(n) };
@@ -897,15 +915,39 @@ ERP.produtividade = (function () {
 
     /* A coluna onde tudo começa muda de arquivo para arquivo: em uns o
        Setor está na coluna B, em outros na A. Descobre pelo cabeçalho. */
-    /* A coluna onde o bloco começa: a primeira que traz "Setor". É só
-       o ponto de referência para achar o nome do médico, que vem
-       numa linha sozinha ANTES do cabeçalho do bloco dele. O resto
-       das colunas sai do cabeçalho, não daqui. */
-    let col0 = 1;
-    for (let i = 0; i < prod.length; i++) {
-      const j = (prod[i] || []).findIndex(function (v) { return txt(v).toLowerCase() === 'setor'; });
-      if (j > -1) { col0 = j; break; }
-    }
+    /* ── NÃO EXISTE "A COLUNA" QUANDO SÃO VÁRIAS ABAS ──────
+
+       Havia um `col0` só, achado na primeira linha com "Setor" e
+       usado no arquivo inteiro. Funciona com uma aba; com várias,
+       não: cada aba pode começar numa coluna diferente, e começa.
+       Na planilha do SAMU, o leitor entrega REGULAÇÃO a partir da
+       coluna B (que vira o índice 0) e COORDENAÇÃO a partir da
+       coluna A. Com um índice só, a aba de coordenação era lida uma
+       coluna à esquerda: o título "COORDENAÇÃO SAMU" entrava como
+       se fosse um médico, e o David — o coordenador de verdade,
+       R$ 2.000,00 — não entrava de jeito nenhum.
+
+       Então nada mais é lido por índice fixo. As colunas de
+       lançamento saem do cabeçalho do bloco, e a linha do nome do
+       médico é reconhecida pela FORMA dela: uma célula só, seguida
+       de uma linha com duas ou mais. */
+    const cheiasDe = function (linha) {
+      const c = [];
+      (linha || []).forEach(function (v, j) { if (txt(v) !== '') c.push(j); });
+      return c;
+    };
+    /* A próxima linha com conteúdo tem duas ou mais células? É isso
+       que separa o NOME DO MÉDICO (seguido do cabeçalho do bloco ou
+       direto dos lançamentos) do TÍTULO DA ABA, que é seguido de
+       outro título sozinho. */
+    const abreBloco = function (i) {
+      for (let k = i + 1; k < prod.length && k <= i + 6; k++) {
+        const c = cheiasDe(prod[k]);
+        if (!c.length) continue;
+        return c.length >= 2;
+      }
+      return false;
+    };
 
     /* ── O PERÍODO, ANTES DE QUALQUER COISA, E EM VARREDURA PRÓPRIA ──
 
@@ -931,12 +973,19 @@ ERP.produtividade = (function () {
         break;
       }
     }
-    if (!periodo) {
-      throw new Error('não achei o período do fechamento no arquivo. Procurei por ' +
-        '"21/08/2026 - 20/09/2026", "OUTUBRO 2026" e "10/2026" em todas as células, ' +
-        'e nenhuma delas apareceu. Sem o período eu não sei de que competência é este ' +
-        'fechamento, e importar na competência errada é pior do que não importar.');
-    }
+    /* ── NÃO ACHAR O PERÍODO NÃO É MOTIVO DE RECUSA ────────
+
+       A v160 passou a RECUSAR o arquivo sem período, para não
+       importar calado na competência errada. Resolveu o silêncio e
+       criou um beco: planilha cujo cabeçalho escreve a data de um
+       jeito que o sistema não conhece não entra de jeito nenhum, e
+       quem está fechando o mês fica sem saída.
+
+       O meio-termo é deixar a pessoa dizer. O arquivo é lido
+       inteiro, a competência fica VAZIA e marcada, e a tela pede
+       que ela seja escolhida antes de gerar qualquer coisa. Nem
+       adivinhação, nem porta fechada. */
+    const periodoAusente = !periodo;
     // a aba financeira costuma trazer o hospital acima da especialidade
     if (abas.financeiro) {
       const topo = abas.financeiro.slice(0, 6)
@@ -960,7 +1009,18 @@ ERP.produtividade = (function () {
       const mapa = mapearColunas(linha);
       if (mapa.setor > -1 && mapa.valor > -1) { cols = mapa; return; }
 
-      const b = txt(linha[col0]), c = cols ? txt(linha[cols.tipo]) : '';
+      const cheias = cheiasDe(linha);
+      if (!cheias.length) return;
+      /* O SETOR sai do cabeçalho do bloco — MENOS quando a linha tem
+         uma célula só. Aí a célula preenchida é a que importa, seja
+         qual for a coluna: é a linha do nome do médico, e ela vem
+         ANTES do cabeçalho do bloco dele, então o `cols` que vale
+         naquele instante ainda é o do bloco anterior — de outra
+         aba, que pode começar noutra coluna. Foi assim que o nome
+         do coordenador saiu vazio. */
+      const iSetor = cheias.length === 1 ? cheias[0]
+        : (cols && cols.setor > -1 ? cols.setor : cheias[0]);
+      const b = txt(linha[iSetor]), c = cols && cols.tipo > -1 ? txt(linha[cols.tipo]) : '';
       const temDuracao = !!(cols && (
         (cols.duracao > -1 && txt(linha[cols.duracao]) !== '') ||
         (cols.entrada > -1 && txt(linha[cols.entrada]) !== '') ||
@@ -1002,7 +1062,11 @@ ERP.produtividade = (function () {
          na lista de médicos faz a contagem mentir para quem vier
          ler. */
       if (/^gerado em\b/i.test(b) || /^PRODUTIVIDADE\b/i.test(b) || lerPeriodo(b)) return;
-      if (b && !c && !temDuracao && b.indexOf('*para validar') !== 0) { // nome do médico
+      /* NOME DO MÉDICO: uma célula só, e logo abaixo uma linha com
+         duas ou mais. O título da aba ("COORDENAÇÃO SAMU") também
+         vem sozinho, mas é seguido de outro título sozinho — e era
+         por isso que ele entrava na lista de médicos. */
+      if (cheias.length === 1 && abreBloco(i) && b.indexOf('*para validar') !== 0) {
         /* O CRM PODE TER ESPAÇO DENTRO — e tem.
 
            "Edson de Jesus Rocha  -  29213 /CE" é como o arquivo de
@@ -1063,30 +1127,75 @@ ERP.produtividade = (function () {
     fin.forEach(function (l, i) {
       if (cabFin < 0 && l.some(function (v) { return txt(v) === 'Profissional'; })) cabFin = i;
     });
-    if (cabFin >= 0) {
-      const cab = fin[cabFin].map(function (v) { return txt(v).replace(/\s+/g, ' '); });
-      const col = function (nome) { return cab.findIndex(function (v) { return v.toLowerCase().indexOf(nome) === 0; }); };
-      const iNome = col('profissional'), iRazao = col('razão'), iCrm = col('crm'),
-            iDoc = col('documento'), iTipo = col('tipo'),
-            /* A COLUNA DO DINHEIRO NÃO SE CHAMA IGUAL NOS DOIS ARQUIVOS.
+    /* ── O CABEÇALHO SE REPETE, E DESLOCADO ────────────────
 
-               No HMSA é "Valor"; no HPM é "Total da Produtividade".
-               Procurando só por "valor", a do HPM nunca era achada e
-               a aba FINANCEIRO dele somava ZERO — o que fazia a
-               conferência "soma dos plantões × aba FINANCEIRO"
-               acusar divergência em TODO fechamento daquele
-               hospital. Aviso que aparece sempre é aviso que se
-               aprende a ignorar. */
-            iVal = col('valor') > -1 ? col('valor') : col('total da produtividade'),
-            /* A coluna que diz PJ ou SCP. Era a única da aba
-               FINANCEIRO que a importação não lia — e é a que decide
-               se o pagamento daquele médico precisa de nota. */
-            iObs = col('observa'),
-            // "Chave Pix" tem "pix" no meio, não no início — col() exige início,
-            // então essa coluna precisa de busca por conteúdo, não por prefixo.
-            iPix = cab.findIndex(function (v) { return v.toLowerCase().indexOf('pix') > -1; });
+       A aba FINANCEIRO tem mais de um bloco, e cada um traz o seu
+       cabeçalho. No arquivo do SAMU o segundo — o da coordenação —
+       está UMA COLUNA À DIREITA do primeiro: "Profissional" na C em
+       vez da B, "Valor" na L em vez da K.
+
+       Lendo o cabeçalho uma vez só, o bloco de baixo era lido pelas
+       colunas do de cima: o nome do coordenador caía numa célula
+       vazia, a linha era descartada por não ter nome, e os
+       R$ 2.000,00 dele sumiam da conferência — que então acusava
+       divergência contra o total impresso no próprio arquivo, que
+       estava certo.
+
+       Então o mapa é refeito a cada cabeçalho, como já é nas abas
+       de plantão. É a mesma regra, pelo mesmo motivo. */
+    const mapaFin = function (linha) {
+      const cab = (linha || []).map(function (v) { return txt(v).replace(/\s+/g, ' '); });
+      const col = function (nome) { return cab.findIndex(function (v) { return v.toLowerCase().indexOf(nome) === 0; }); };
+      return {
+        nome: col('profissional'), razao: col('razão'), crm: col('crm'),
+        doc: col('documento'), tipo: col('tipo'),
+        val: col('valor') > -1 ? col('valor') : col('total da produtividade'),
+        obs: col('observa'),
+        pix: cab.findIndex(function (v) { return v.toLowerCase().indexOf('pix') > -1; })
+      };
+    };
+    const ehCabFin = function (linha) {
+      return (linha || []).some(function (v) { return txt(v) === 'Profissional'; });
+    };
+    /* Fora do `if`: o total é usado lá embaixo, depois do bloco. */
+    let totalFinanceiro = 0;
+    if (cabFin >= 0) {
+      let m = mapaFin(fin[cabFin]);
       for (let i = cabFin + 1; i < fin.length; i++) {
-        const nome = txt(fin[i][iNome]);
+        /* Outro cabeçalho: refaz o mapa e segue. */
+        if (ehCabFin(fin[i])) { m = mapaFin(fin[i]); continue; }
+        /* ── O TOTAL DO ARQUIVO MORA AQUI ──────────────────
+
+           Ele era somado só dos rodapés das abas de plantão. Na
+           planilha do SAMU a aba de coordenação fecha com um total
+           SEM rótulo, então aquele bloco ficava de fora e a
+           conferência comparava 301.200 contra 299.200 — acusando
+           divergência num arquivo que fecha certo.
+
+           A aba FINANCEIRO traz o total geral do fechamento, com
+           rótulo. Quando ele existe, é ele que vale: é o número que
+           quem fechou a planilha conferiu. */
+        if (fin[i].some(function (v) {
+              return semAcento(txt(v)).toUpperCase().indexOf('TOTAL DA PRODUTIVIDADE') > -1; })) {
+          /* O ÚLTIMO NÚMERO DA LINHA, não a coluna do cabeçalho.
+
+             No HMSA a linha do total põe o número uma coluna à
+             direita de "Valor", e na coluna do cabeçalho está a
+             CONTAGEM DE HORAS — 62 dias e 1h48, que o Excel entrega
+             como 62,075. Lendo pela coluna, o "total do arquivo"
+             virava R$ 62,08: dinheiro vindo de uma contagem de
+             horas, exatamente o defeito que a v160 corrigiu noutro
+             ponto. O último número da linha acerta nos dois
+             arquivos. */
+          let tg = 0;
+          for (let k = fin[i].length - 1; k >= 0; k--) {
+            const n = valorNum(fin[i][k]);
+            if (n > 0) { tg = n; break; }
+          }
+          if (tg > 0) totalFinanceiro = tg;
+          continue;
+        }
+        const nome = txt(fin[i][m.nome]);
         if (!nome) continue;
         /* ── O QUE NÃO É MÉDICO NÃO ENTRA COMO MÉDICO ──────────
 
@@ -1105,8 +1214,8 @@ ERP.produtividade = (function () {
         const nomeLimpo = semAcento(nome).toUpperCase().replace(/[^A-Z ]/g, '').trim();
         if (nomeLimpo.indexOf('TOTAL') === 0 || nomeLimpo === 'PROFISSIONAL' ||
             nomeLimpo === 'COORDENACAO' || nomeLimpo === 'SUBTOTAL') continue;
-        const obsLinha = iObs > -1 ? txt(fin[i][iObs]) : '';
-        const valLinha = iVal > -1 ? valorNum(fin[i][iVal]) : 0;
+        const obsLinha = m.obs > -1 ? txt(fin[i][m.obs]) : '';
+        const valLinha = m.val > -1 ? valorNum(fin[i][m.val]) : 0;
         /* ── MESMO MÉDICO EM DOIS BLOCOS SOMA, NÃO SOBRESCREVE ──
 
            A Carolina recebe nos dois: R$ 18.000,00 de plantões e
@@ -1128,11 +1237,13 @@ ERP.produtividade = (function () {
              é PJ, senão um dia a lista ordena por um critério e o
              contas a pagar cobra por outro. */
           regime: S.regimeDeTexto(obsLinha),
-          razao_social: iRazao > -1 ? txt(fin[i][iRazao]) : '',
-          crm: iCrm > -1 ? txt(fin[i][iCrm]) : '',
-          documento: iDoc > -1 ? txt(fin[i][iDoc]) : '',
-          tipo_chave: iTipo > -1 ? txt(fin[i][iTipo]) : '',
-          pix: iPix > -1 ? txt(fin[i][iPix]) : '',
+          /* Tudo pelo mapa do BLOCO, não pelo do primeiro cabeçalho:
+             o bloco da coordenação está deslocado uma coluna. */
+          razao_social: m.razao > -1 ? txt(fin[i][m.razao]) : '',
+          crm: m.crm > -1 ? txt(fin[i][m.crm]) : '',
+          documento: m.doc > -1 ? txt(fin[i][m.doc]) : '',
+          tipo_chave: m.tipo > -1 ? txt(fin[i][m.tipo]) : '',
+          pix: m.pix > -1 ? txt(fin[i][m.pix]) : '',
           valor: valLinha
         };
       }
@@ -1148,11 +1259,21 @@ ERP.produtividade = (function () {
     /* A competência já saiu junto com o período, na varredura lá de
        cima: é uma conta só, feita onde o formato é reconhecido, em
        vez de duas interpretações do mesmo texto. */
-    const competencia = competenciaLida || U.mesAtual();
+    /* Sem período no arquivo a competência nasce VAZIA, para a
+       gestora escolher — e não com o mês corrente, que seria um
+       palpite com cara de certeza. */
+    const competencia = competenciaLida || '';
+    /* O total impresso na aba FINANCEIRO manda sobre a soma dos
+       rodapés das abas de plantão, pelo motivo acima. */
+    if (totalFinanceiro > 0) totalArquivo = totalFinanceiro;
 
     return {
       arquivo: arquivo, projeto: projeto, unidade: unidade, periodo: periodo, competencia: competencia,
       linhas: linhas, medicos: medicos, pagto: pagto,
+      /* Quais abas entraram — a tela mostra, e sem isso uma aba
+         inteira some do fechamento sem ninguém notar. */
+      abasPlantoes: abas.abasPlantoes || [],
+      periodo_ausente: periodoAusente,
       soma: soma, somaFin: somaFin, totalArquivo: totalArquivo
     };
   }
@@ -1160,12 +1281,26 @@ ERP.produtividade = (function () {
   /* Um pagamento por médico (é um PIX por médico), com a composição
      por setor e tipo pendurada como itens — o gestor abre o lançamento
      e vê de onde saiu cada real. */
+  /* ── UM TÍTULO PARA PLANTÃO, OUTRO PARA COORDENAÇÃO ────
+
+     A v160 passou a CLASSIFICAR a linha sem horário como
+     coordenação, mas o pagamento continuava saindo num título só:
+     os R$ 2.000,00 da coordenação do David entravam somados aos
+     plantões dele, e não havia como pagar um sem o outro. É
+     justamente o que a empresa precisa fazer — às vezes paga só a
+     coordenação, às vezes só os plantões.
+
+     Então a chave do agrupamento passa a ser MÉDICO + CLASSE. Quem
+     só tem plantão continua com um título, como sempre; quem tem os
+     dois passa a ter dois, cada um com a sua composição e o seu
+     valor. */
   function porMedico(L) {
     const mapa = {};
     L.linhas.forEach(function (l) {
-      const k = chaveNome(l.medico);
+      const classe = l.coordenacao ? 'coordenacao' : 'plantao';
+      const k = chaveNome(l.medico) + '||' + classe;
       const m = mapa[k] = mapa[k] || {
-        medico: l.medico, crm: l.crm, itens: [], plantoes: 0, minutos: 0, valor: 0
+        medico: l.medico, crm: l.crm, classe: classe, itens: [], plantoes: 0, minutos: 0, valor: 0
       };
       m.itens.push({ setor: l.setor, tipo: l.tipo, qtd: l.plantoes, minutos: l.minutos, valor: l.valor,
         coordenacao: !!l.coordenacao, coordenacao_sugerida: !!l.coordenacao_sugerida,
@@ -1175,7 +1310,13 @@ ERP.produtividade = (function () {
       m.valor = Math.round((m.valor + l.valor) * 100) / 100;
     });
     return Object.keys(mapa).map(function (k) { return mapa[k]; })
-      .sort(function (a, b) { return a.medico.localeCompare(b.medico); });
+      .sort(function (a, b) {
+        /* O mesmo médico sai junto, plantão primeiro — ler a lista
+           com as duas linhas lado a lado é o que deixa claro que
+           são dois pagamentos e não uma duplicidade. */
+        const n = a.medico.localeCompare(b.medico);
+        return n !== 0 ? n : (a.classe === 'coordenacao' ? 1 : -1);
+      });
   }
 
   /* ── prévia ─────────────────────────────────────────────*/
@@ -1221,7 +1362,9 @@ ERP.produtividade = (function () {
               U.esc(c.codigo + ' · ' + c.nome) + '</option>';
           }).join('') + '</select></div>' +
         '<div><label>Período</label><input value="' + U.esc(L.periodo) + '" disabled></div>' +
-        '<div><label for="pr-comp">Competência</label><input type="month" id="pr-comp" value="' + L.competencia + '"></div>' +
+        '<div><label for="pr-comp">Competência' + (L.periodo_ausente ? ' *' : '') +
+          '</label><input type="month" id="pr-comp" value="' + L.competencia + '"' +
+          (L.periodo_ausente ? ' class="erro"' : '') + '></div>' +
         '<div><label for="pr-venc">Vencimento do repasse</label>' +
           '<input type="date" id="pr-venc" value="' + venctoSugerido(L.competencia, centro) + '">' +
           '<div class="ajuda" id="pr-venc-nota">' + textoVencto(centro) + '</div></div>' +
@@ -1240,6 +1383,12 @@ ERP.produtividade = (function () {
           (temTotalImpresso ? U.brl(L.totalArquivo) : '<span class="sub">não vem no arquivo</span>') + '</b></span>' +
         '<span>' + medicos.length + ' lançamento(s) · ' + L.linhas.length + ' linha(s) de setor/tipo</span>' +
       '</div>' +
+      (L.periodo_ausente
+        ? '<div class="aviso" style="margin:10px 0"><b>Não reconheci a competência no arquivo.</b> ' +
+          'Procurei por "21/08/2026 - 20/09/2026", "OUTUBRO DE 2026" e "10/2026" em todas as ' +
+          'células e não achei nenhuma. Li o resto normalmente — <b>escolha a competência acima</b> ' +
+          'antes de gerar o financeiro.</div>'
+        : '') +
       (divergeArquivo || divergeFin
         ? '<div class="aviso" style="margin:10px 0">Os totais do arquivo não fecham entre si. ' +
           'O sistema vai lançar a soma dos plantões (' + U.brl(L.soma) + '); confira com quem fechou antes de aprovar.</div>'
@@ -1486,6 +1635,23 @@ ERP.produtividade = (function () {
 
   function gerar() {
     const L = lote;
+    /* ── QUEM FECHA A PRODUTIVIDADE PODE GERAR O FECHAMENTO ──
+
+       A funcionária que lança a produtividade esbarrava em "Seu
+       perfil não lança contas a pagar" e não conseguia fechar mês
+       nenhum. A mensagem está certa sobre o perfil e errada sobre a
+       ação: fechar a produtividade não é lançar um título avulso no
+       contas a pagar — é registrar o repasse que ela acabou de
+       conferir, e o pagamento ainda depende da liberação dela e do
+       financeiro depois.
+
+       O sistema já tem a válvula para isso (`_interno`, usada pelo
+       comprador, que gera previsão sem ter `lancar`). O que faltava
+       era usá-la aqui, conferindo ANTES a permissão que de fato
+       corresponde: fechar a produtividade. */
+    if (!S.podeMover('produtividade') && !S.pode('lancar')) {
+      return ERP.app.aviso('Seu perfil não fecha a produtividade do mês.', 'erro');
+    }
     const jaLancados = porMedico(L).filter(function (m) {
       return S.refJaUsada([refPadrao(L), m.medico].join('|'));
     });
@@ -1530,6 +1696,15 @@ ERP.produtividade = (function () {
     }
     const centro = U.val('pr-centro');
     if (!centro) { ERP.app.aviso('Escolha o centro de custo do projeto.', 'erro'); return; }
+    /* A COMPETÊNCIA É OBRIGATÓRIA NA HORA DE GERAR, não na de ler.
+       Sem este corte, o arquivo cuja data o sistema não reconheceu
+       geraria o fechamento com competência vazia — e títulos sem
+       competência não aparecem em relatório nenhum. */
+    if (!U.val('pr-comp')) {
+      ERP.app.aviso('Escolha a competência deste fechamento antes de gerar.', 'erro');
+      const campo = U.el('pr-comp'); if (campo) campo.focus();
+      return;
+    }
     const comp = U.val('pr-comp'), venc = U.val('pr-venc'),
           conta = U.val('pr-conta'), doc = U.val('pr-doc');
 
@@ -1547,7 +1722,11 @@ ERP.produtividade = (function () {
          sufixo quando já existe lançamento vivo daquele médico naquela
          competência — antes o sistema descartava com "já existia" e o
          médico ficava sem receber a diferença. */
-      const refBase = [refPadrao(L), m.medico].join('|');
+      /* A CLASSE ENTRA NA CHAVE. Sem ela, o segundo título do mesmo
+         médico (a coordenação) seria visto como repetição do
+         primeiro e descartado com "já existia" — o coordenador
+         receberia os plantões e perderia a coordenação, calado. */
+      const refBase = [refPadrao(L), m.medico, m.classe].join('|');
       const ref = (S.refJaUsada(refBase) && complementar)
         ? refBase + '|c' + S.proximoComplemento(refBase) : refBase;
       /* O REGIME VEM DO CADASTRO, que `garantirCredor` acabou de
@@ -1557,8 +1736,13 @@ ERP.produtividade = (function () {
       const regime = S.regimeDoCredor(credor);
       const exigeNota = S.regimeExigeNota(regime);
       const r = S.criarTitulo({
-        descricao: 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
-                   (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
+        /* A permissão conferida foi a de fechar produtividade, logo
+           acima — não a de lançar título avulso. */
+        _interno: true,
+        descricao: m.classe === 'coordenacao'
+          ? 'Coordenação médica ' + U.fComp(comp)
+          : 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
+            (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
         /* O CAMPO DE NF NASCE VAZIO, inclusive para o PJ.
 
            Antes ia aqui o número do FECHAMENTO ("FECH-HPM-2026-09"),
