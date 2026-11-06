@@ -100,11 +100,66 @@ Duas colunas também voltaram: `procedimentos.imposto_pct` e
 das visões — ninguém as alcançava. Era esquecimento, não decisão.
 Entraram nas visões sob a mesma regra do `$`.
 
+## Exclusão (corrigido na v163)
+
+Esta seção dizia, até a v163: *"nenhuma tabela tem política de
+`delete`, de propósito: o sistema cancela e estorna, nunca apaga."*
+Era verdade quando foi escrito e deixou de ser quando o sistema
+ganhou telas que apagam mesmo — contrato, cliente, regra de
+conciliação, previsão, e a troca do saldo informado do dia. O pedido
+dessas telas caía no vazio, e o registro voltava na recarga.
+
+**Delete recusado pela RLS não devolve erro.** A política de
+exclusão não barra o pedido: ela faz a linha não existir para ele, e
+apagar nada é sucesso — "DELETE 0", 204, `error: null`. É o único
+verbo com esse comportamento; insert e update recusados gritam. Por
+isso a falta ficou anos invisível, e por isso o cliente passou a
+conferir o número de linhas em vez de supor (`apagarNoBanco`, em
+`persistencia.js`).
+
+Hoje: cinco tabelas com política de exclusão, no mesmo nível que a
+tela já exige — `contratos` e `clientes` (ação `admin`),
+`regras_conciliacao` (financeiro M), `previsoes` (faturamento M ou
+financeiro M) e `parcelas`. O resto do banco continua sem exclusão
+para ninguém. `saldos_informados` quase entrou na lista: a troca do
+saldo do dia removia o registro anterior. Na v163 ela passou a
+atualizar no lugar, e a tabela ficou de fora — exclusão que não
+precisa existir é a melhor de todas.
+
+Todas as cinco exigem também o `V` do módulo, e isso sustenta a
+conferência do cliente: quando o delete volta vazio, ele LÊ a linha
+para separar recusa de "outro já apagou". Quem pudesse apagar sem
+poder ler veria "já não estava lá" onde houve recusa, e o silêncio
+voltaria por outra porta.
+
+`parcelas` é a única com CONDIÇÃO na política, e é exceção
+consciente à regra de que a RLS não aplica regra de negócio:
+`pagamentos.parcela_id` tem `on delete cascade`, o cascade roda como
+dono e NÃO passa pela RLS de `pagamentos`. Política larga ali daria,
+a quem abrisse o console, o poder de apagar pagamento — que nenhuma
+política deste banco concede. Medido: com a política larga, apagar
+uma parcela paga levou o pagamento junto.
+
+`folhas` e `funcionarios` têm política `for all`, e ALL inclui
+DELETE. Ganharam trava RESTRITIVA (`using (false)`) na v163: a
+permissiva continua valendo para ler e escrever, e a restritiva, que
+se soma por E, proíbe o delete. Ninguém decidiu dar exclusão de
+folha a quem tem Pessoal; era o `all` sendo largo.
+
+Uma verificação em `teste-fumaca.js` confronta, nas duas direções,
+os caminhos de exclusão do código com as políticas do SQL: tela que
+apaga sem política reprova, e política sem tela que apague também.
+
 ## O que ainda merece um segundo par de olhos
 
 - As duas visões rodam como donas. O filtro de linha está escrito
   dentro de cada uma; se alguém editá-las depois e esquecer o
   `where`, elas abrem para todo mundo. É o ponto mais frágil do
   conjunto.
-- Nenhuma tabela tem política de `delete`, de propósito: o sistema
-  cancela e estorna, nunca apaga.
+- A matriz aceita `M` sem `V` em qualquer módulo (só o de
+  Administração exige os dois, para ninguém se trancar para fora).
+  Movimentar sem ver não serve de nada — a tela do módulo nem abre —,
+  então a combinação é inútil mas possível, e é dela que nascem
+  surpresas. As políticas de exclusão já se protegem exigindo o `V`;
+  vale decidir, com quem usa o sistema, se a tela de acessos deve
+  simplesmente marcar o `V` junto quando alguém marca o `M`.

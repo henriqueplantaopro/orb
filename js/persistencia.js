@@ -215,8 +215,18 @@ ERP.persistencia = (function () {
     if (!c) return { erro: 'Sem conexão com o banco.' };
     /* A matriz primeiro: ela aponta para o perfil. */
     await c.from('matriz_acesso').delete().eq('perfil', id);
-    const { error } = await c.from('perfis').delete().eq('id', id);
-    return error ? { erro: error.message } : { ok: true };
+    /* `.select('id')` pelo mesmo motivo de `apagarNoBanco`: delete
+       recusado pela política volta SEM erro e com zero linhas.
+       `perfis` tem política `for all`, então aqui a recusa só
+       acontece por falta do nível em Administração — e dizer "perfil
+       excluído" nesse caso faria o perfil reaparecer na recarga. */
+    const { data, error } = await c.from('perfis').delete().eq('id', id).select('id');
+    if (error) return { erro: error.message };
+    if (!data || !data.length) {
+      return { erro: 'o banco não excluiu o perfil e não devolveu erro — em geral é falta ' +
+        'de nível de alteração em Administração. O perfil continua no banco.' };
+    }
+    return { ok: true };
   }
 
   /* O saldo de estoque não é uma lista com id: é um objeto indexado
@@ -728,6 +738,99 @@ ERP.persistencia = (function () {
     return linha;
   }
 
+  /* ── A EXCLUSÃO É O ÚNICO PEDIDO QUE O BANCO RECUSA CALADO ──
+     e era isso, e só isso, que fazia o registro excluído voltar
+     depois do F5 — em todos os módulos, desde sempre.
+
+     Insert e update recusados voltam COM ERRO: a política responde
+     "new row violates row-level security policy", a faixa vermelha
+     acende, a pessoa sabe. O delete não funciona assim. A política
+     de exclusão não barra o pedido: ela faz a linha NÃO EXISTIR
+     para aquele pedido. E apagar nada é sucesso — o Postgres
+     devolve "DELETE 0", o PostgREST devolve 204, e `error` vem
+     nulo. O sistema tirava a linha da tela, mandava o delete,
+     recebia silêncio, dava o sumiço por gravado e limpava a sombra.
+     O banco nunca soube de nada.
+
+     A falta estava no 02-rls.sql: o laço cria select, insert e
+     update para cada tabela e NENHUMA política de delete — está
+     escrito lá que é de propósito ("o sistema cancela e estorna,
+     nunca apaga"). Depois disso o sistema ganhou telas que apagam
+     mesmo: contrato, cliente, regra de conciliação, previsão. As
+     quatro mandavam o pedido para o vazio.
+
+     Medido num Postgres 16 com a RLS deste sistema, com TODOS os
+     níveis e TODAS as ações concedidos:
+
+       delete from contratos where id = 'ct1';   ->  DELETE 0
+       select count(*) from contratos ...        ->  1
+
+     Nenhum erro em nenhum momento. Com a política de exclusão
+     criada, o mesmo comando devolve DELETE 1.
+
+     A correção tem duas pontas, e as duas são necessárias:
+
+       · o banco ganha a política (SQL 77), para a exclusão
+         acontecer;
+       · o sistema passa a CONFERIR, para nunca mais haver uma
+         exclusão que falha em silêncio — nem nesta tabela, nem na
+         tela de exclusão que alguém escrever no ano que vem.
+
+     `.select('id')` faz o delete voltar com o que apagou. Três
+     respostas se separam:
+
+       · voltou a linha → apagou. Segue.
+       · não voltou nada, e a linha também não está mais lá → outra
+         pessoa já apagou. Não é falha.
+       · não voltou nada e a linha ESTÁ lá → recusa silenciosa.
+         Falha, e o registro VOLTA PARA A TELA.
+
+     Devolver à tela é o ponto, não um detalhe de conforto. A
+     alternativa é faixa vermelha sobre uma tela que continua
+     mostrando o contrato como excluído: pedir para a pessoa
+     acreditar no aviso contra o que ela está vendo. O registro
+     volta da sombra, que é a cópia do que o banco tem — e, voltando
+     para o estado, ele para de contar como diferença, o que também
+     encerra o laço de retentativa. */
+  let devolvidosNoCiclo = [];
+
+  function devolverAoEstado(nome, textoGuardado) {
+    if (!textoGuardado) return false;
+    let it;
+    try { it = JSON.parse(textoGuardado); } catch (e) { return false; }
+    const lista = ERP.store.st[nome];
+    if (!Array.isArray(lista) || !it || !it.id) return false;
+    if (!lista.some(function (x) { return x && x.id === it.id; })) lista.push(it);
+    devolvidosNoCiclo.push(nome + ' ' + it.id);
+    return true;
+  }
+
+  async function apagarNoBanco(c, m, id) {
+    /* O texto guardado tem de ser lido ANTES do delete: é a sombra
+       que ainda tem o registro, e é dela que ele volta. */
+    const guardado = (sombra[m.nome] || {})[id];
+    const r = await c.from(m.def.tabela).delete().eq('id', id).select('id');
+    if (r.error) return m.def.tabela + ' (remover ' + id + '): ' + r.error.message;
+    if (r.data && r.data.length) return null;
+
+    /* Zero linhas: ou já não estava lá, ou o banco recusou calado.
+       São coisas diferentes e só uma leitura separa as duas. */
+    const conf = await c.from(fonteDeLeitura(m.nome, m.def.tabela))
+      .select('id').eq('id', id);
+    if (conf.error) {
+      return m.def.tabela + ' (remover ' + id + '): o banco não disse se apagou, e não deu ' +
+        'para conferir — ' + conf.error.message;
+    }
+    if (!conf.data || !conf.data.length) return null;
+
+    const voltou = devolverAoEstado(m.nome, guardado);
+    return m.def.tabela + ' (remover ' + id + '): o banco NÃO apagou e não devolveu erro. ' +
+      'Falta a política de exclusão nesta tabela, ou seu perfil não tem o nível que ela exige — ' +
+      'quem cuida do sistema precisa rodar a atualização do banco. ' +
+      (voltou ? 'O registro voltou para a tela, que é onde ele está de verdade.'
+              : 'Atualize a página: o registro continua no banco.');
+  }
+
   /* QUAL LINHA DERRUBOU O LOTE.
 
      O Postgres recusa o lote inteiro e nomeia a restrição, nunca a
@@ -1196,6 +1299,7 @@ ERP.persistencia = (function () {
     const c = cliente();
     if (!c) return;
     refsDescartadas = [];
+    devolvidosNoCiclo = [];
     const mudou = diferencas();
     /* ESTA LINHA DESCARTAVA EDIÇÃO DE FUNCIONÁRIO EM SILÊNCIO.
        `diferencas()` só percorre o MAPA, e funcionários e trilha
@@ -1297,10 +1401,25 @@ ERP.persistencia = (function () {
            O que NÃO vai sem o módulo de Cadastros é a ALTERAÇÃO do
            cadastro alheio: aí sim o lote inteiro seria recusado
            por causa de uma diferença que ninguém pediu. */
+        /* A EXCLUSÃO NÃO ENTRA NESSA RESTRIÇÃO, e entrava.
+
+           `m.sumiram = []` jogava fora o pedido de exclusão sem
+           dizer nada a ninguém: a linha saía da tela, o banco nunca
+           era avisado, e a sombra ficava com ela dentro — de modo
+           que a cada ciclo o mesmo pedido era descartado de novo,
+           calado, até alguém atualizar a página e ver o registro
+           voltar. É o mesmo sintoma da falta de política de
+           exclusão (ver `apagarNoBanco`), por outra causa; estavam
+           os dois no caminho do mesmo clique.
+
+           O motivo da restrição era não mandar a ALTERAÇÃO do
+           cadastro alheio num lote que a política recusaria,
+           derrubando o lançamento junto. O delete não corre esse
+           risco: vai um pedido por id, separado, e agora é
+           conferido. Se a política recusar, a recusa aparece. */
         if (!administra) {
-          if (!m.criados || !m.criados.length) continue;
-          m.novos = m.criados;
-          m.sumiram = [];
+          m.novos = (m.criados && m.criados.length) ? m.criados : [];
+          if (!m.novos.length && !m.sumiram.length) continue;
         }
       }
       if (estoqueFalhou && DEPENDE_DO_ESTOQUE.indexOf(m.nome) >= 0) {
@@ -1373,10 +1492,11 @@ ERP.persistencia = (function () {
       }
       /* Registro que saiu do estado. O sistema cancela e estorna em
          vez de apagar, então isto quase nunca dispara — mas, quando
-         dispara, o banco tem de acompanhar. */
+         dispara, o banco tem de acompanhar. Ver `apagarNoBanco`:
+         aqui o sucesso é CONFERIDO, não suposto. */
       for (const id of m.sumiram) {
-        const { error } = await c.from(m.def.tabela).delete().eq('id', id);
-        if (error) falhas.push(m.def.tabela + ' (remover ' + id + '): ' + error.message);
+        const falhou = await apagarNoBanco(c, m, id);
+        if (falhou) falhas.push(falhou);
       }
       /* Esta coleção foi: guarda o estado dela. O que falhou em
          outra coleção não faz esta ser reenviada. */
@@ -1409,6 +1529,11 @@ ERP.persistencia = (function () {
          tela, e quem voltou do café não viu nada. A faixa fica até
          a gravação funcionar. */
       marcarPendencia(falhas);
+      /* Registro que o banco não apagou volta a aparecer AGORA, não
+         no F5. A tela tem de mostrar o que o banco tem. */
+      if (devolvidosNoCiclo.length && ERP.app && ERP.app.redesenharModulo) {
+        ERP.app.redesenharModulo();
+      }
       if (ERP.app && ERP.app.aviso) {
         /* Quando parte grava e parte não, o aviso no singular faz
            parecer que nada foi. */

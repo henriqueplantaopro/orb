@@ -7784,8 +7784,13 @@ function liberarParaFaturar(centro, competencia) {
   verificar('v96 — e avisa o que foi gravado sem a referência',
     /refsDescartadas/.test(pers) &&
     /ficaram em branco porque/.test(pers), '');
-  verificar('v96 — a lista é zerada a cada gravação',
-    /refsDescartadas = \[\];\n    const mudou = diferencas\(\);/.test(pers), '');
+  /* A exigência é a ORDEM: zerar antes de calcular as diferenças
+     do ciclo. Era escrita como duas linhas coladas, e a v163
+     colocou o outro zeramento do ciclo (`devolvidosNoCiclo`) no
+     meio — a verificação quebrou sem nada ter piorado. Agora ela
+     cobra o que importa e deixa o ciclo ganhar vizinhos. */
+  verificar('v96 — a lista é zerada no começo da gravação, antes das diferenças',
+    /refsDescartadas = \[\];[\s\S]{0,200}?const mudou = diferencas\(\);/.test(pers), '');
 })();
 
 // ── ERP teste2 v97: a lista de chaves estrangeiras é a do banco ──
@@ -12037,6 +12042,179 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v151 — e a tela diz que o faturamento nao fica parado por causa dele',
     /não fica parado /.test(fatK), '');
   S.setUsuario('u8');
+})();
+
+/* ── v163: a exclusão que o banco recusava calado ────────────────
+
+   Três coisas podiam dar errado aqui, e as três já deram:
+
+     1. uma tela nova que apaga, numa tabela sem política de
+        exclusão no banco — o pedido vira silêncio e o registro
+        volta no F5. Foi o que aconteceu com contrato, cliente,
+        regra e previsão, e foi invisível porque o delete recusado
+        pela RLS NÃO devolve erro: devolve zero linha e 204.
+     2. política de exclusão concedida onde o sistema não apaga —
+        poder a mais, por engano, num banco que o navegador alcança.
+     3. o sistema voltar a confiar no silêncio: sem ler o número de
+        linhas, qualquer recusa futura é muda de novo.
+
+   Esta bateria não confere o banco (ela não fala com ele): confere
+   que o CÓDIGO e o SQL contam a mesma história. Quem escrever a
+   próxima tela de exclusão vai ver aqui o que falta fazer. */
+(function () {
+  const fsZ = require('fs');
+  const srcStore = fsZ.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const srcPers = fsZ.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+
+  /* Onde o store tira linha de uma coleção. `splice` com contagem
+     zero seria INSERÇÃO, não remoção — fica de fora. */
+  const apagam = {};
+  (srcStore.match(/\b(?:st|D)\.(\w+)\.splice\([^\n]*/g) || []).forEach(function (t) {
+    if (/\.splice\([^,)]*,\s*0\s*[,)]/.test(t)) return;
+    apagam[t.replace(/^\w+\./, '').replace(/\.splice\(.*/, '')] = true;
+  });
+  /* O OUTRO JEITO DE REMOVER, que esta verificação não via na
+     primeira versão: trocar a lista por uma lista filtrada. É assim
+     que o vale desfaz a baixa (`st.vales_baixados = st.vales_baixados
+     .filter(...)`) — e, por não estar aqui, a verificação dizia que
+     `vales_baixados` tinha política de exclusão sem precisar. Dizia
+     o contrário do certo: a coleção precisa, e tem. */
+  (srcStore.match(/\b(?:st|D)\.(\w+)\s*=\s*(?:st|D)\.\1\.filter\(/g) || []).forEach(function (t) {
+    apagam[t.match(/\.(\w+)\s*=/)[1]] = true;
+  });
+
+  /* Coleção → tabela, lido do MAPA da persistência. */
+  const tabelaDe = {};
+  (srcPers.match(/^ {4}(\w+): \{ tabela: '([\w]+)'/gm) || []).forEach(function (t) {
+    const m = t.match(/^ {4}(\w+): \{ tabela: '([\w]+)'/);
+    tabelaDe[m[1]] = m[2];
+  });
+  verificar('v163 — o MAPA da persistencia foi lido para conferir a exclusao',
+    Object.keys(tabelaDe).length > 25, Object.keys(tabelaDe).length + ' colecoes');
+
+  /* Quais tabelas o SQL deixa apagar. `for all` também deixa. */
+  const sql = fsZ.readdirSync(__dirname + '/supabase')
+    .filter(function (f) { return /\.sql$/.test(f); })
+    .map(function (f) { return fsZ.readFileSync(__dirname + '/supabase/' + f, 'utf8'); })
+    .join('\n').replace(/\s+/g, ' ');
+  const apagaveis = {};
+  (sql.match(/create policy [\w"]+ on ([\w.]+) for (delete|all)/gi) || []).forEach(function (t) {
+    const m = t.match(/on ([\w.]+) for/i);
+    if (m && m[1].indexOf('.') < 0) apagaveis[m[1]] = true;
+  });
+  /* Política RESTRITIVA se soma por E, não por OU: ela proíbe o
+     delete mesmo com a permissiva `for all` de pé. É assim que a
+     folha e a ficha do funcionário ficaram travadas sem mexer na
+     leitura nem na escrita delas. */
+  (sql.match(/create policy [\w"]+ on ([\w.]+) as restrictive for delete using \(false\)/gi) || [])
+    .forEach(function (t) { delete apagaveis[t.match(/on ([\w.]+) as/i)[1]]; });
+
+  /* 1. Tela que apaga precisa de política. */
+  const semPolitica = Object.keys(apagam).filter(function (col) {
+    return tabelaDe[col] && !apagaveis[tabelaDe[col]];
+  });
+  verificar('v163 — toda colecao que o sistema apaga tem politica de exclusao no banco',
+    semPolitica.length === 0,
+    semPolitica.map(function (c) { return c + ' (' + tabelaDe[c] + ')'; }).join(', '));
+
+  /* 2. E política só onde o sistema apaga. */
+  const demais = Object.keys(tabelaDe).filter(function (col) {
+    return apagaveis[tabelaDe[col]] && !apagam[col];
+  });
+  verificar('v163 — e nenhuma tabela do MAPA ganhou exclusao sem o sistema precisar',
+    demais.length === 0, demais.join(', '));
+
+  /* 3. A parcela é a única com condição na política, por causa do
+     cascade em pagamentos: cascade roda como dono e passa por fora
+     da RLS de pagamentos. Política larga ali = apagar pagamento
+     pelo console. */
+  verificar('v163 — a politica de parcelas protege o pagamento do cascade',
+    /create policy apagar_parcelas on parcelas for delete using \([^;]*not exists \(select 1 from pagamentos/i.test(sql),
+    '');
+
+  /* 3b. Toda política de exclusão exige também o V do módulo — e
+     não é zelo: a conferência do cliente LÊ a linha para separar
+     recusa de "outro já apagou". Quem pudesse apagar sem poder ler
+     veria "já não estava lá" onde houve recusa, e o silêncio
+     voltaria por outra porta. */
+  const semVer = (sql.match(/create policy apagar_\w+ on \w+ for delete using \(([^;]*)\);/gi) || [])
+    .filter(function (t) { return t.indexOf("'V'") < 0; });
+  verificar('v163 — toda politica de exclusao exige o V, para a conferencia poder ler',
+    semVer.length === 0, semVer.join(' / ').slice(0, 160));
+
+  /* 4. O cliente lê o número de linhas, em vez de supor. */
+  verificar('v163 — o delete volta com o que apagou, para o numero ser lido',
+    /\.delete\(\)\.eq\('id', id\)\.select\('id'\)/.test(srcPers), '');
+  verificar('v163 — zero linha nao e sucesso: confere se o registro continua no banco',
+    /if \(r\.data && r\.data\.length\) return null;/.test(srcPers) &&
+    /const conf = await c\.from\(fonteDeLeitura\(m\.nome, m\.def\.tabela\)\)\s*\n\s*\.select\('id'\)\.eq\('id', id\);/.test(srcPers),
+    '');
+  verificar('v163 — e na recusa calada o registro VOLTA para a tela',
+    /const voltou = devolverAoEstado\(m\.nome, guardado\);/.test(srcPers) &&
+    /devolvidosNoCiclo\.length && ERP\.app && ERP\.app\.redesenharModulo/.test(srcPers), '');
+  verificar('v163 — a sincronizacao passa pela conferencia, nao pelo delete cru',
+    /const falhou = await apagarNoBanco\(c, m, id\);/.test(srcPers) &&
+    !/for \(const id of m\.sumiram\) \{\s*\n\s*const \{ error \} = await c\.from/.test(srcPers), '');
+
+  /* 5. O outro sumiço silencioso do mesmo clique: o perfil sem
+     Cadastros tinha a exclusão descartada em memória, antes de
+     chegar ao banco. */
+  verificar('v163 — perfil sem Cadastros ja nao tem a exclusao descartada em silencio',
+    !/m\.sumiram = \[\];/.test(srcPers) &&
+    /if \(!m\.novos\.length && !m\.sumiram\.length\) continue;/.test(srcPers), '');
+
+  /* 6. O perfil de acesso tem caminho próprio de exclusão, e caiu
+     na mesma armadilha: `delete` sem erro não quer dizer apagado. */
+  verificar('v163 — a exclusao de perfil de acesso tambem confere',
+    /from\('perfis'\)\.delete\(\)\.eq\('id', id\)\.select\('id'\)/.test(srcPers), '');
+
+  /* 7. O SALDO INFORMADO, que esta própria verificação encontrou.
+
+     Ao ganhar o segundo jeito de remover (trocar a lista por uma
+     filtrada), ela acusou `saldos_informados` sem política — e a
+     investigação achou coisa pior: o registro nascia sem `id`, e
+     item sem id a gravação nem olha. O saldo digitado nunca ia ao
+     banco, e o anterior era "apagado" sem ser. A prova real
+     comparava contra um número velho. */
+  const Sv = sandbox.window.ERP.store;
+  Sv.setUsuario('u5');
+  const antesSl = Sv.st.saldosInformados.length;
+  const r1 = Sv.informarSaldoBancario('b1', { valor: 1000, data: '2026-07-10' });
+  const r2 = Sv.informarSaldoBancario('b1', { valor: 2000, data: '2026-07-10' });
+  const meus = Sv.st.saldosInformados.filter(function (x) {
+    return x.banco === 'b1' && x.data === '2026-07-10';
+  });
+  verificar('v163 — o saldo informado nasce COM id (sem id a gravacao ignora)',
+    !!(r1.ok && r2.ok) && meus.length === 1 && !!meus[0].id,
+    (r1.erro || '') + (r2.erro || ''));
+  verificar('v163 — informar de novo no mesmo dia ATUALIZA, nao remove e recria',
+    meus.length === 1 && meus[0].valor === 2000 &&
+    Sv.st.saldosInformados.length === antesSl + 1, '');
+  verificar('v163 — e a divergencia contra o sistema fica gravada no registro',
+    meus[0].divergencia !== undefined && meus[0].divergencia === r2.diferenca, '');
+  verificar('v163 — o store nao troca mais a lista de saldos por uma filtrada',
+    !/st\.saldosInformados = st\.saldosInformados\.filter/.test(srcStore), '');
+  Sv.setUsuario('u8');
+
+  /* 8. A pergunta de permissão que respondia false para qualquer
+     perfil criado na tela. `pode('produtividade')` não existe: o
+     nome é de MÓDULO, e `pode()` procura em ação. */
+  const srcFat = fsZ.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  verificar('v163 — alterar o valor da medicao pergunta pelo NIVEL do modulo',
+    /S\.pode\('faturar'\) \|\| S\.pode\('lancar'\) \|\| S\.podeMover\('produtividade'\)/.test(srcFat) &&
+    !/S\.pode\('produtividade'\)/.test(srcFat), '');
+
+  /* 9. A varredura de acessos tinha três telas declaradas DUAS
+     vezes no mesmo objeto — e em JavaScript a segunda apaga a
+     primeira. Ela reprovava cruzamentos que estavam declarados nela
+     mesma, e varredura que acusa sozinha é varredura ignorada. */
+  const srcVar = fsZ.readFileSync(__dirname + '/varredura-acessos.js', 'utf8');
+  const bloco = srcVar.slice(srcVar.indexOf('const permitido = {'),
+    srcVar.indexOf('const aRever'));
+  const chaves = (bloco.match(/^ {2}'[\w.-]+\.js':/gm) || []);
+  const repetidas = chaves.filter(function (k, i) { return chaves.indexOf(k) !== i; });
+  verificar('v163 — nenhuma tela declarada duas vezes na varredura de acessos',
+    repetidas.length === 0, repetidas.join(', '));
 })();
 
 concluir();

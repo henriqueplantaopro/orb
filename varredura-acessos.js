@@ -76,22 +76,29 @@ const permitido = {
     faturar: 'Locação de ativo gera receita: quem fatura precisa poder abrir a tela de locação mesmo sem movimentar o inventário.',
     lancar: 'Fechar uma OS lança o custo dela no contas a pagar — é trabalho de quem lança, não de quem mexe no inventário.'
   },
+  /* CHAVE REPETIDA NÃO SE SOMA: SUBSTITUI.
+
+     Este objeto tinha 'ui-faturamento.js', 'ui-estoque.js' e
+     'ui-compras.js' declarados DUAS VEZES cada um, em pontos
+     diferentes da lista. Em JavaScript a segunda declaração apaga a
+     primeira — então os motivos escritos aqui em cima deixavam de
+     existir, e a varredura reprovava cruzamentos que estavam
+     declarados logo abaixo. Era a varredura acusando a si mesma, e
+     é o começo de uma varredura que se aprende a ignorar.
+
+     Agora cada tela aparece UMA vez, com todos os motivos dela
+     juntos. */
   'ui-faturamento.js': {
     lancar: 'O faturamento gera título a receber; quem lança precisa alcançar essa ponte.',
-    ver_custo: 'O resultado por cliente compara receita com custo — sem o custo, a tela mostra metade da conta.'
+    ver_custo: 'O resultado por cliente compara receita com custo — sem o custo, a tela mostra metade da conta.',
+    pagar: 'A baixa do recebimento encosta no caixa.',
+    produtividade: 'Alterar o VALOR da medição na esteira é responsabilidade de quem responde pela produtividade — é medição, não texto de nota. A tela aceita faturamento, financeiro ou produtividade.'
   },
   'ui-procedimentos.js': {
     estoque: 'O procedimento consome material do estoque: dar baixa é operação de estoque, feita de dentro desta tela.',
     faturar: 'O procedimento vira item de faturamento.'
   },
-  'ui-compras.js': {
-    estoque: 'O recebimento da compra entra no estoque — é a mesma operação, vista de outro lado.'
-  },
-  'ui-estoque.js': {
-    comprar: 'A requisição de estoque vira pedido de compra.'
-  },
   'ui-contas.js': { faturar: 'Conciliação entre pagar e receber.' },
-  'ui-receber.js': { lancar: 'Recebimento e lançamento compartilham a baixa.' },
   'ui-conciliacao.js': { lancar: 'A conciliação baixa títulos lançados.' },
   'ui-aprovacoes.js': {
     comprar: 'A fila de aprovação mistura pagamento e compra, por desenho.',
@@ -106,6 +113,10 @@ const permitido = {
     estoque: 'O recebimento da compra entra no estoque — é a mesma operação, vista de outro lado.',
     cadastros: 'Cadastrar fornecedor e material sem sair da tela de compras.'
   },
+  'ui-receber.js': {
+    lancar: 'Recebimento e lançamento compartilham a baixa.',
+    faturar: 'Receber e faturar são as duas pontas da mesma nota.'
+  },
   'ui-contratos.js': {
     lancar: 'Gerar as parcelas do contrato é lançar no contas a pagar; a tela pede o módulo Contratos PRIMEIRO e aceita quem lança como alternativa.',
     cadastros: 'Cadastrar o fornecedor do contrato sem sair da tela.'
@@ -113,14 +124,8 @@ const permitido = {
   'ui-dp.js': {
     aprovar: 'Aprovar o pagamento da folha é alçada do financeiro, e separá-la do DP é a segregação que se quer.'
   },
-  'ui-faturamento.js': {
-    pagar: 'A baixa do recebimento encosta no caixa.'
-  },
   'ui-produtividade.js': {
     lancar: 'A tela pede o módulo Produtividade PRIMEIRO e aceita quem lança como alternativa.'
-  },
-  'ui-receber.js': {
-    faturar: 'Receber e faturar são as duas pontas da mesma nota.'
   }
 };
 

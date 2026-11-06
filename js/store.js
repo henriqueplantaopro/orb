@@ -17970,17 +17970,45 @@ ERP.store = (function () {
     if (d.valor === null || d.valor === undefined || isNaN(d.valor)) {
       return { erro: 'Informe o saldo que aparece no banco.' };
     }
-    const reg = {
-      banco: bancoId, valor: Math.round(d.valor * 100) / 100,
-      data: d.data || U.hoje(), observacao: d.observacao || '',
-      por: usuario().nome, em: new Date()
-    };
-    st.saldosInformados = st.saldosInformados.filter(function (x) {
-      return !(x.banco === bancoId && x.data === reg.data);
-    });
-    st.saldosInformados.push(reg);
-    const calc = saldoDoSistema(bancoId, reg.data);
-    const dif = Math.round((reg.valor - calc) * 100) / 100;
+    /* O SALDO INFORMADO NÃO ERA GRAVADO. NUNCA.
+
+       Duas faltas no mesmo punhado de linhas, e nenhuma das duas
+       dava erro:
+
+       · o registro nascia SEM `id`, e a gravação ignora item sem id
+         (`diferencas()` começa com `if (!it || !it.id) return`).
+         Então o saldo digitado nunca chegava ao banco;
+       · informar o saldo de novo no mesmo dia TROCAVA a lista por
+         uma lista filtrada. O registro que veio do banco (esse tem
+         id) saía do estado, e o sistema pedia a exclusão dele — que
+         a RLS recusava em silêncio, por falta de política.
+
+       Somadas: o valor novo não subia, o antigo era "apagado" sem
+       ser apagado, e o F5 trazia o antigo de volta. A prova real
+       (saldo do banco contra o saldo do sistema) comparava contra
+       um número velho.
+
+       Agora o registro do mesmo banco e mesma data é ATUALIZADO no
+       lugar, mantendo o id que ele já tem. Sem remoção não há
+       exclusão a pedir, e a gravação vê alteração de linha, que é o
+       que de fato aconteceu. */
+    const data = d.data || U.hoje();
+    const calc = saldoDoSistema(bancoId, data);
+    const valor = Math.round(d.valor * 100) / 100;
+    const dif = Math.round((valor - calc) * 100) / 100;
+    const reg = st.saldosInformados.find(function (x) {
+      return x.banco === bancoId && x.data === data;
+    }) || (function () {
+      const novo = { id: novoId('sl'), banco: bancoId, data: data };
+      st.saldosInformados.push(novo);
+      return novo;
+    })();
+    reg.valor = valor;
+    reg.divergencia = dif;
+    reg.observacao = d.observacao || '';
+    reg.usuario_id = (usuario() || {}).id || '';
+    reg.por = usuario().nome;
+    reg.em = new Date();
     logar('extrato', bancoId, 'informou saldo bancário',
       U.brl(reg.valor) + ' em ' + U.fData(reg.data) +
       (Math.abs(dif) > 0.004 ? ' · diferença de ' + U.brl(dif) + ' contra o sistema' : ' · confere'));

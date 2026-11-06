@@ -1546,8 +1546,18 @@ ERP.faturamento = (function () {
     const edita = d.pode_editar;
     /* Quem altera o VALOR tem guarda própria (é medição, não texto):
        a mesma do store, para a tela não oferecer o que ele recusa. */
+    /* `pode('produtividade')` NÃO EXISTE COMO AÇÃO.
+       `pode()` procura o nome na matriz e, não achando, na lista de
+       ações do perfil — e 'produtividade' não está em nenhuma das
+       duas listas oficiais: é MÓDULO, não ação. Funcionava por
+       acidente, porque dois perfis de origem têm a palavra na lista
+       de ações deles; para qualquer perfil criado na tela de
+       Administração a resposta era `false`, sem jeito de conceder.
+       Pergunta certa é pelo NÍVEL do módulo, que a matriz concede e
+       revoga — e para quem já podia nada muda: todos os perfis que
+       tinham a ação têm M em Produtividade. */
     const editaSetor = !!d.grupo && !d.travado_por_nota &&
-      (S.pode('faturar') || S.pode('lancar') || S.pode('produtividade'));
+      (S.pode('faturar') || S.pode('lancar') || S.podeMover('produtividade'));
     const naoEdita = !edita
       ? (d.travado_por_nota
           ? 'A nota já foi emitida: o que está escrito aqui é o que foi para o documento. ' +
