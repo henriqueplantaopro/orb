@@ -9283,12 +9283,29 @@ ERP.store = (function () {
     };
   }
 
+  /* ── QUEM CORRIGE UM FECHAMENTO DE PRODUTIVIDADE ─────────
+     "Quem lança produtividade substitui o próprio fechamento
+     enquanto ninguém recebeu." A regra estava escrita assim no
+     comentário e ERRADA no código: a trava perguntava `lancar` —
+     que é MOVIMENTAR O FINANCEIRO — e `cancelar`. A diretoria de
+     produtividade movimenta Produtividade e não tem nenhuma das
+     duas: lançava o fechamento e não conseguia corrigi-lo. Foi o
+     que a travou ao reimportar os quatro fechamentos de outubro.
+
+     Uma regra só, usada pela substituição E pelo cancelamento que
+     ela faz por dentro — eram duas travas escritas separadamente,
+     e consertar uma deixaria a outra recusando no meio do caminho.
+     Pagamento feito continua fora: ali a substituição exige o
+     administrador, e isso não passa por aqui. */
+  const podeCorrigirProdutividade = () =>
+    podeMover('produtividade') || pode('lancar') || pode('cancelar');
+
   function substituirFechamento(centro, competencia, motivo, forcar) {
     /* Quem lança produtividade substitui o próprio fechamento enquanto
        ninguém recebeu — é correção de lançamento, não cancelamento de
        pagamento. Com pagamento feito, a coisa muda de natureza e cai na
        regra do cancelamento (diretoria, sócio ou admin). */
-    if (!pode('lancar') && !pode('cancelar')) {
+    if (!podeCorrigirProdutividade()) {
       return { erro: 'Seu perfil não lança nem cancela produtividade.' };
     }
     if (!motivo) return { erro: 'Informe o motivo da substituição.' };
@@ -9443,7 +9460,7 @@ ERP.store = (function () {
   function cancelarLoteProdutividade(loteId, motivo, forcar, opcoes) {
     /* Substituição de fechamento sem nenhum pagamento é rotina de quem
        lança; cancelamento avulso continua sendo de quem pode cancelar. */
-    const porSubstituicao = (opcoes || {}).por_substituicao && pode('lancar');
+    const porSubstituicao = (opcoes || {}).por_substituicao && podeCorrigirProdutividade();
     /* Quando o cancelamento vem de uma SUBSTITUIÇÃO, as parcelas são
        canceladas como parte da operação, não por decisão de quem
        clicou: sem o `_interno`, cada `cancelar` voltava a exigir

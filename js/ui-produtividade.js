@@ -424,16 +424,33 @@ ERP.produtividade = (function () {
        dela —, e quem abriu depois viu uma lista vazia sem uma
        palavra de explicação. */
     if (!parcelas.length) {
+      /* QUEM DECIDE ENTRE AS DUAS CAUSAS É O SISTEMA, NÃO ELE.
+         A versão anterior listava as duas e deixava a escolha para
+         quem estava lendo — e as duas pedem providências opostas.
+         Mas o cliente SABE qual é: se este perfil vê o módulo
+         Financeiro, ele veria os títulos caso existissem; então
+         não existem. Mostrar as duas hipóteses quando uma delas é
+         verificável aqui é empurrar o diagnóstico para o usuário. */
+      const veFin = S.veModulo('financeiro');
       return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
         '<div class="aviso" style="border-left-color:var(--red)">' +
         '<b>Este lançamento aponta para ' + ids.length + ' título(s), e nenhum deles está aqui.</b> ' +
-        'Ou o repasse não chegou ao banco na hora de lançar — e nesse caso a faixa vermelha de ' +
-        '"não salvo" apareceu para quem lançou —, ou chegou e o seu perfil não vê o módulo ' +
-        'Financeiro, onde os títulos moram.' +
-        '<div class="sub" style="margin-top:6px">O valor do cabeçalho (' + U.brl(l.valor) + ' · ' +
-        l.medicos + ' médico(s)) é o que foi lançado. Se os títulos não estiverem no banco, ' +
-        'o jeito é cancelar este lançamento e importar o arquivo de novo depois de acertar a ' +
-        'permissão em Administração › Perfis.</div></div></td></tr>';
+        (veFin
+          ? 'Seu perfil vê o módulo Financeiro, onde os títulos moram — então não é falta de ' +
+            'acesso seu: os títulos não chegaram ao banco quando este fechamento foi importado.' +
+            '<div class="sub" style="margin-top:6px">O valor do cabeçalho (' + U.brl(l.valor) +
+            ' · ' + l.medicos + ' médico(s)) é o que foi lançado. Para recuperar: <b>importe o ' +
+            'mesmo arquivo de novo</b> neste projeto e competência — o sistema vai oferecer ' +
+            '<b>Substituir o fechamento anterior</b>, que cancela este cabeçalho vazio e lança ' +
+            'os médicos. Não cancele antes de importar: sem o arquivo em mãos, cancelar apaga ' +
+            'o único registro que sobrou.</div>'
+          : 'Seu perfil <b>não vê</b> o módulo Financeiro, onde os títulos moram — pode ser só ' +
+            'isso, e não falta de lançamento.' +
+            '<div class="sub" style="margin-top:6px">Antes de refazer qualquer coisa, peça a ' +
+            'alguém que vê o Financeiro para abrir este mesmo detalhe. Se para essa pessoa os ' +
+            'médicos aparecerem, o lançamento está certo e o que falta é acesso, em ' +
+            'Administração › Perfis.</div>') +
+        '</div></td></tr>';
     }
     return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
       '<table style="margin:0"><thead><tr><th>Médico</th>' +
@@ -2167,6 +2184,23 @@ ERP.produtividade = (function () {
       (novos || atualizados ? '. ' : '') +
       'Os lançamentos estão em Financeiro › Contas a pagar.', 'ok');
     if (divergencias.length) avisarDivergencias();
+
+    /* ── A RESPOSTA VALE PARA UMA GERAÇÃO, NÃO PARA A TELA ────
+
+       "Substituir", "complemento" ou "pular repetidos" é uma decisão
+       sobre ESTE fechamento. Ela só era esquecida quando um arquivo
+       novo era lido — e o navegador não avisa nada quando a pessoa
+       escolhe de novo o MESMO arquivo. Resultado medido: a diretora
+       substituía um fechamento e, na importação seguinte, o sistema
+       não perguntava nada, aplicava "pular repetidos" calado e dizia
+       "0 lançamento(s) gerado(s), 36 já existiam e foram ignorados".
+
+       Consumida a resposta, ela é esquecida; e o campo do arquivo é
+       limpo, para que escolher o mesmo arquivo de novo seja lido de
+       novo e a pergunta volte. */
+    complementar = null;
+    const campoArq = U.el('pr-arquivo');
+    if (campoArq) campoArq.value = '';
   }
 
   /* O repasse sairia na chave antiga sem ninguém saber. */

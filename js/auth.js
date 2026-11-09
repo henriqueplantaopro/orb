@@ -20,17 +20,31 @@ ERP.auth = (function () {
   function conectar() {
     if (cliente || !configurado()) return cliente;
     cliente = window.supabase.createClient(ERP.config.url, ERP.config.anon, {
-      auth: { persistSession: true, autoRefreshToken: true },
-      /* `Prefer: return=minimal` no CLIENTE, não na chamada.
-         A opcao `returning` dentro de upsert() foi removida no
-         supabase-js v2 e e ignorada em silencio — o POST continuava
-         mandando `return=representation`, o Postgres fazia
-         RETURNING *, e o * inclui a coluna `paciente`, revogada: 403.
+      auth: { persistSession: true, autoRefreshToken: true }
+      /* SEM `Prefer` GLOBAL. Havia aqui `Prefer: return=minimal`, com
+         a promessa de que um `.select('<colunas>')` na chamada
+         "sobrescreve isto". NÃO sobrescreve — e a promessa nunca foi
+         medida. A biblioteca ACRESCENTA o pedido ao cabeçalho global:
 
-         No cliente o cabecalho vale para toda escrita. Quando
-         alguma chamada precisar do retorno, ela pede com um
-         `.select('<colunas>')` explicito, que sobrescreve isto. */
-      global: { headers: { Prefer: 'return=minimal' } }
+           Prefer: return=minimal, resolution=merge-duplicates,
+                   return=representation
+
+         e o servidor obedece ao "não devolva nada". Medido em
+         supabase-js 2.45 e 2.119, PostgREST 12, 13 e 14: o banco
+         GRAVA e a resposta volta vazia. A conferência de gravação
+         (`conferirEscrita`, v164) lia "vazio" como recusa e acusava
+         falha em TODA gravação de TODO usuário — "o banco NÃO gravou
+         e não devolveu erro" sobre títulos que estavam no banco. O
+         ciclo seguinte reenviava tudo, e depois de algumas voltas o
+         sistema desistia da tabela: dali em diante bloquear e
+         liberar médico ficavam só na tela.
+
+         E o motivo do cabeçalho deixou de existir: sem ele, gravação
+         sem `.select()` não pede retorno nenhum (o padrão do v2), e
+         nada toca a coluna `paciente`, revogada. Medido também:
+         procedimento grava com paciente, e `update().select('id')`
+         devolve só o id. Quem precisa do retorno pede a coluna; quem
+         não pede, não recebe. */
     });
     return cliente;
   }

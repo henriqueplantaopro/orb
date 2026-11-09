@@ -1,50 +1,50 @@
-/* Liga+º+úo com o banco.
+/* Liga+¦+·o com o banco.
 
-   A chave `anon` +® p+¦blica por natureza: ela identifica o projeto,
-   n+úo a pessoa. Quem decide o que cada um l+¬ +® a matriz de acesso
-   dentro do Postgres ÔÇö por isso ela pode viver aqui, no c+¦digo que
+   A chave `anon` +« p+ªblica por natureza: ela identifica o projeto,
+   n+·o a pessoa. Quem decide o que cada um l+¼ +« a matriz de acesso
+   dentro do Postgres ÈÃ÷ por isso ela pode viver aqui, no c+ªdigo que
    vai para o navegador.
 
    A outra chave do painel, a `service_role`, NUNCA entra aqui nem
-   em lugar nenhum do reposit+¦rio: ela ignora toda a seguran+ºa.
+   em lugar nenhum do reposit+ªrio: ela ignora toda a seguran+¦a.
 
    Deixando `url` em branco, o sistema roda no modo local de sempre,
-   com o seletor de usu+írio e sem guardar nada. +ë assim que a
+   com o seletor de usu+Ýrio e sem guardar nada. +Ù assim que a
    bateria de testes continua rodando. */
 window.ERP = window.ERP || {};
 ERP.config = {
-  /* Endere+ºo da fun+º+úo que cria acesso. O painel do Supabase +ás
-     vezes publica com um nome autom+ítico (`dynamic-responder` e
-     parecidos) e mostra o nome escolhido s+¦ como r+¦tulo ÔÇö o ERP
-     chama pelo endere+ºo, ent+úo +® este valor que precisa bater com
+  /* Endere+¦o da fun+¦+·o que cria acesso. O painel do Supabase +ßs
+     vezes publica com um nome autom+Ýtico (`dynamic-responder` e
+     parecidos) e mostra o nome escolhido s+ª como r+ªtulo ÈÃ÷ o ERP
+     chama pelo endere+¦o, ent+·o +« este valor que precisa bater com
      o que aparece na coluna URL, depois de `/functions/v1/`. */
-  /* O painel do Supabase publicou a fun+º+úo com o nome autom+ítico
-     `dynamic-responder` e mostra "criar-login" s+¦ como r+¦tulo ÔÇö o
-     sistema chama pelo ENDERE+çO. Este valor precisa bater com o
+  /* O painel do Supabase publicou a fun+¦+·o com o nome autom+Ýtico
+     `dynamic-responder` e mostra "criar-login" s+ª como r+ªtulo ÈÃ÷ o
+     sistema chama pelo ENDERE+þO. Este valor precisa bater com o
      trecho depois de /functions/v1/ na coluna URL do painel.
 
-     ATEN+ç+âO ao atualizar o sistema: este arquivo vem no pacote e
+     ATEN+þ+ÔO ao atualizar o sistema: este arquivo vem no pacote e
      sobrescreve o local. Se o acesso parar de ser criado depois de
-     uma atualiza+º+úo, +® esta linha que voltou ao padr+úo. */
+     uma atualiza+¦+·o, +« esta linha que voltou ao padr+·o. */
   funcaoCriarLogin: 'quick-service',
 
-  /* AMBIENTE. 'producao' +® o normal; 'teste' pinta o topo de
-     laranja e p+Áe um selo no t+¡tulo da aba.
+  /* AMBIENTE. 'producao' +« o normal; 'teste' pinta o topo de
+     laranja e p+-e um selo no t+ítulo da aba.
 
-     A cor existe para uma coisa s+¦: impedir que algu+®m lance no
-     lugar errado. Dois sistemas id+¬nticos em abas vizinhas +®
-     pedido de confus+úo ÔÇö e no financeiro a confus+úo s+¦ aparece no
-     fechamento, quando j+í virou retrabalho de dias.
+     A cor existe para uma coisa s+ª: impedir que algu+«m lance no
+     lugar errado. Dois sistemas id+¼nticos em abas vizinhas +«
+     pedido de confus+·o ÈÃ÷ e no financeiro a confus+·o s+ª aparece no
+     fechamento, quando j+Ý virou retrabalho de dias.
 
-     O ambiente de teste tem BANCO PR+ôPRIO: a `url` acima aponta
-     para outro projeto. Mesmo c+¦digo, dados separados. */
+     O ambiente de teste tem BANCO PR+¶PRIO: a `url` acima aponta
+     para outro projeto. Mesmo c+ªdigo, dados separados. */
   ambiente: 'teste',
 
-  /* A vers+úo publicada vive em js/versao.js, carregado logo depois
+  /* A vers+·o publicada vive em js/versao.js, carregado logo depois
      deste arquivo. Ela saiu daqui porque mudava a cada entrega
      enquanto as chaves abaixo mudam por ramo: juntas, as duas
      coisas faziam este arquivo conflitar no git em toda
-     publica+º+úo. */
+     publica+¦+·o. */
 
   url: 'https://kwaxtnooxupqlqxcjevs.supabase.co',
   anon: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imt3YXh0bm9veHVwcWxxeGNqZXZzIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTEyODg2OTUsImV4cCI6MjEwNjg2NDY5NX0.jlOUnxoSfctwNtzTwKWsrwHtgQciwVIMNVqTdfSJNvA'
