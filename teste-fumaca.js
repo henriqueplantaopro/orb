@@ -12217,4 +12217,186 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     repetidas.length === 0, repetidas.join(', '));
 })();
 
+/* ── v164: o que o banco recusa, e o que a tela esconde ──────────
+
+   A rodada toda nasceu de uma pergunta: "por que o PIX do
+   coordenador não foi reconhecido?". A resposta não estava no
+   leitor da planilha — estava em três silêncios somados, e as
+   verificações abaixo existem para que nenhum deles volte. */
+(function () {
+  const fsZ = require('fs');
+  const srcPers = fsZ.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  const srcStore = fsZ.readFileSync(__dirname + '/js/store.js', 'utf8');
+  const srcFat = fsZ.readFileSync(__dirname + '/js/ui-faturamento.js', 'utf8');
+  const srcProd = fsZ.readFileSync(__dirname + '/js/ui-produtividade.js', 'utf8');
+  const rls = fsZ.readFileSync(__dirname + '/supabase/02-rls.sql', 'utf8');
+
+  /* 1. A ALTERAÇÃO RECUSADA ERA MUDA, como o delete era antes da
+     v163. `returning: 'minimal'` é pedir ao banco para não dizer o
+     que gravou — com ele, update recusado pela RLS passa por
+     gravado. */
+  /* Sem código morto nem comentário: só as CHAMADAS. Contar
+     `returning: 'minimal'` no arquivo todo acusava os dois usos que
+     ficam de propósito (ver o comentário de `conferirEscrita`). */
+  const chamadas = srcPers.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '');
+  verificar('v164 — a gravação em lote volta com os ids, em vez de pedir silêncio',
+    /\.upsert\(linhas, \{ onConflict: 'id' \}\)\.select\('id'\)/.test(chamadas) &&
+    (chamadas.match(/returning: 'minimal'/g) || []).length === 2, '');
+  verificar('v164 — a ficha do funcionário (e a conta bancária dela) também é conferida',
+    /from\('funcionarios'\)\s*\n?\s*\.upsert\(linhas, \{ onConflict: 'id' \}\)\.select\('id'\)/.test(chamadas) &&
+    /exige o módulo '/.test(chamadas), '');
+  verificar('v164 — e as duas alterações linha a linha também conferem',
+    (srcPers.match(/\.update\(linha\)\.eq\('id', it\.id\)\.select\('id'\)/g) || []).length === 2, '');
+  verificar('v164 — id que não volta vira falha, com o módulo que falta no texto',
+    /async function conferirEscrita/.test(srcPers) &&
+    /o banco NÃO gravou e não devolveu erro/.test(srcPers) &&
+    /NOME_DO_MODULO\[mod\]/.test(srcPers), '');
+  verificar('v164 — e separa "recusou" de "este perfil não lê esta tabela"',
+    /const cego = !!r\.error \|\| !r\.data \|\| !r\.data\.length;/.test(srcPers), '');
+
+  /* 2. O MAPA DE MÓDULOS VIVE EM DOIS LUGARES — no SQL, que decide,
+     e no cliente, que só explica. Dois lugares com a mesma verdade
+     se sustentam enquanto alguém confere que continuam iguais. */
+  const doSql = (function () {
+    const m = rls.match(/mapa jsonb := '([\s\S]*?)'::jsonb;/);
+    if (!m) return null;
+    try { return JSON.parse(m[1].replace(/--[^\n]*/g, '')); } catch (e) { return null; }
+  })();
+  const doCliente = (function () {
+    const i = srcPers.indexOf('const MODULO_DA_TABELA');
+    const ini = srcPers.indexOf('const mapa = {', i);
+    const fim = srcPers.indexOf('\n    };', ini);
+    if (i < 0 || ini < 0 || fim < 0) return null;
+    const corpo = srcPers.slice(ini + 'const mapa = {'.length, fim);
+    const fora = {};
+    corpo.replace(/(\w+):\s*\[([^\]]*)\]/g, function (_, mod, lista) {
+      fora[mod] = lista.split(',').map(function (t) { return t.trim().replace(/^'|'$/g, ''); })
+        .filter(Boolean);
+      return '';
+    });
+    return fora;
+  })();
+  verificar('v164 — os dois mapas de módulo foram lidos',
+    !!doSql && !!doCliente && Object.keys(doSql).length > 8 && Object.keys(doCliente).length > 8,
+    (doSql ? Object.keys(doSql).length : 'sql?') + ' / ' + (doCliente ? Object.keys(doCliente).length : 'js?'));
+  if (doSql && doCliente) {
+    const achatar = function (o) {
+      const p = [];
+      Object.keys(o).sort().forEach(function (mod) {
+        o[mod].slice().sort().forEach(function (t) { p.push(mod + ':' + t); });
+      });
+      return p;
+    };
+    const a = achatar(doSql), b = achatar(doCliente);
+    const soNoSql = a.filter(function (x) { return b.indexOf(x) < 0; });
+    const soNoJs = b.filter(function (x) { return a.indexOf(x) < 0; });
+    verificar('v164 — o espelho do mapa de módulos bate com o do 02-rls.sql',
+      soNoSql.length === 0 && soNoJs.length === 0,
+      'só no SQL: ' + soNoSql.join(', ') + ' | só no JS: ' + soNoJs.join(', '));
+  }
+
+  /* 3. A POLÍTICA QUE DEIXA A PRODUTIVIDADE GRAVAR O QUE LANÇA —
+     estreita pela origem E pelo tipo. Só pela origem, ela conseguia
+     gravar conta a pagar de qualquer natureza com disfarce. */
+  const sql72 = fsZ.readFileSync(__dirname + '/supabase/72-ATUALIZAR-v164.sql', 'utf8')
+    .replace(/\s+/g, ' ');
+  [['titulos', 'produtividade'], ['parcelas', 'produtividade'], ['credores', 'produtividade'],
+   ['titulos', 'dp'], ['parcelas', 'dp'], ['credores', 'dp']].forEach(function (par) {
+    verificar('v164 — ' + par[1] + ' pode criar ' + par[0],
+      new RegExp('create policy criar_' + par[0] + '_' + par[1] + ' on ' + par[0] +
+        " for insert with check \\(tem_nivel\\('" + par[1] + "', 'M'\\)").test(sql72), '');
+  });
+  verificar('v164 — o título de produtividade é limitado pela origem E pelo tipo',
+    /criar_titulos_produtividade[^;]*origem = 'produtividade' and tipo_titulo = 'medicao'/.test(sql72), '');
+  verificar('v164 — e o credor, pelo tipo (médico para produtividade, funcionário para o DP)',
+    /criar_credores_produtividade[^;]*tipo = 'medico'/.test(sql72) &&
+    /criar_credores_dp[^;]*tipo = 'funcionario'/.test(sql72), '');
+  verificar('v164 — a produtividade passa a VER o que lançou (sem isso não confere nem libera)',
+    /ver_titulos_produtividade on titulos for select using \(tem_nivel\('produtividade', 'V'\)/.test(sql72) &&
+    /ver_parcelas_produtividade on parcelas for select/.test(sql72), '');
+  verificar('v164 — a conta bancária do favorecido ganhou coluna',
+    /alter table credores add column if not exists conta_bancaria text;/.test(sql72) &&
+    /'banco', 'agencia', 'conta_bancaria', 'dados_aprovados'/.test(srcPers), '');
+
+  /* 4. `pode('produtividade')` NUNCA EXISTIU como ação: a v163
+     corrigiu as telas e deixou o store, que é quem recusa a
+     gravação. Meia correção mostra o botão e nega o clique. */
+  const storeSemComentario = srcStore.replace(/\/\*[\s\S]*?\*\//g, '');
+  verificar('v164 — o store já não pergunta por uma ação que não existe',
+    (storeSemComentario.match(/pode\('produtividade'\)/g) || []).length === 0,
+    (storeSemComentario.match(/pode\('produtividade'\)/g) || []).join(' '));
+  verificar('v164 — bloquear e liberar pagamento perguntam pelo nível do módulo',
+    /function bloquearPagamentoMedico[\s\S]{0,120}podeMover\('produtividade'\)/.test(srcStore) &&
+    /function liberarPagamentoMedico[\s\S]{0,120}podeMover\('produtividade'\)/.test(srcStore), '');
+
+  /* 5. A TELA DE PRODUTIVIDADE */
+  verificar('v164 — a coluna do credor conta cadastro, arquivo e o que foi digitado',
+    /function faltaParaPagar\(cad, pg, digitado\)/.test(srcProd) &&
+    /faltaParaPagar\(cad, pg, bancariosPre\[chaveNome\(m\.medico\)\]\)/.test(srcProd), '');
+  verificar('v164 — e existe o botão vermelho para incluir dados bancários',
+    /btn-cancelar" data-pr-banco=/.test(srcProd) && /data-lp-banco=/.test(srcProd), '');
+  verificar('v164 — um formulário só, com PIX e com banco/agência/conta',
+    /function formularioBancario/.test(srcProd) &&
+    /id="db-banco"/.test(srcProd) && /id="db-ag"/.test(srcProd) && /id="db-conta"/.test(srcProd) &&
+    /id="db-chave"/.test(srcProd), '');
+  verificar('v164 — e a validação é a do store, não uma segunda ideia da tela',
+    /S\.validarDadosBancarios\(dados\)/.test(srcProd) &&
+    /S\.informarDadosBancarios\(/.test(srcProd), '');
+  verificar('v164 — bloquear passa a existir no detalhe do lançamento, não só na importação',
+    /data-lp-bloquear=/.test(srcProd) && /bloquearPagamentoMedico\(loteId/.test(srcProd), '');
+  verificar('v164 — e liberar redesenha a lista de lançamentos, não a prévia que não está na tela',
+    /ERP\.app\.aviso\('Pagamento de ' \+ nome \+ ' liberado\.', 'ok'\);\s*\n[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*\n\s*renderLotes\(\);/.test(srcProd), '');
+  verificar('v164 — detalhe vazio diz por que está vazio',
+    /aponta para ' \+ ids\.length \+ ' título\(s\), e nenhum deles está aqui/.test(srcProd), '');
+  verificar('v164 — a conferência de "já lançado" usa a mesma chave que é gravada',
+    /refJaUsada\(\[refPadrao\(L\), m\.medico, m\.classe\]\.join\('\|'\)\)/.test(srcProd), '');
+
+  /* 6. A ESTEIRA: "sem faturamento" é situação, não omissão. */
+  verificar('v164 — a previsão encerrada tem etapa própria na esteira',
+    /if \(pv\.status === 'encerrada'\) return 'sem_faturamento';/.test(srcStore), '');
+  verificar('v164 — e a etapa fica no FIM da ordem, para não arrastar o grupo',
+    /const ETAPAS = \['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado', 'sem_faturamento'\]/.test(srcStore), '');
+  verificar('v164 — o botão "Não tem faturamento" está na esteira',
+    /data-est-semfat=/.test(srcFat) && /data-est-voltafat=/.test(srcFat), '');
+  verificar('v164 — e os dois lugares que marcam usam o MESMO formulário, com motivo',
+    /function marcarSemFaturamento\(centros, comp, nome, depois\)/.test(srcFat) &&
+    (srcFat.match(/marcarSemFaturamento\(/g) || []).length === 3, '');
+  verificar('v164 — os rótulos deixaram de dizer o contrário do que são',
+    /sem_faturamento: \{ t: 'nada lançado ainda'/.test(srcFat) &&
+    /encerrado: \{ t: 'sem faturamento neste mês'/.test(srcFat), '');
+
+  /* 7. E o comportamento, medido no store. */
+  const Sv = sandbox.window.ERP.store, Dv = sandbox.window.ERP.dados;
+  Sv.setUsuario('u5');
+  verificar('v164 — PIX sem chave é recusado',
+    !!Sv.validarDadosBancarios({ forma_pagamento: 'pix', pix: '' }).erro, '');
+  verificar('v164 — transferência sem os três campos é recusada, dizendo quais faltam',
+    /agência, conta/.test(Sv.validarDadosBancarios({ forma_pagamento: 'ted', banco: '341' }).erro || ''), '');
+  verificar('v164 — e sem escolher a forma também',
+    !!Sv.validarDadosBancarios({ pix: '123' }).erro, '');
+  const crT = { id: 'crTESTE164', nome: 'Médico de Teste', tipo: 'medico', ativo: true,
+    documento: '111.222.333-96', conta_padrao: '3.01' };
+  Dv.credores.push(crT);
+  const rb = Sv.informarDadosBancarios('crTESTE164',
+    { forma_pagamento: 'ted', banco: '341', agencia: '1234', conta_bancaria: '56789-0' });
+  verificar('v164 — banco, agência e conta gravam no cadastro do médico',
+    !!rb.ok && crT.banco === '341' && crT.agencia === '1234' &&
+    crT.conta_bancaria === '56789-0' && crT.forma_pagamento === 'ted', JSON.stringify(rb));
+  const rp = Sv.informarDadosBancarios('crTESTE164',
+    { forma_pagamento: 'pix', pix: '111.222.333-96', tipo_chave: 'CPF' });
+  verificar('v164 — trocar para PIX limpa o par bancário antigo, para não pagar na conta velha',
+    !!rp.ok && crT.pix === '111.222.333-96' && !crT.banco && !crT.agencia && !crT.conta_bancaria, '');
+  verificar('v164 — a troca fica na trilha com o valor anterior',
+    Sv.eventos().some(function (e) {
+      return /informou dados bancários a mão/.test(e.acao || '') &&
+        /341/.test(e.detalhe || ''); }), '');
+  const crF = { id: 'crFORN164', nome: 'Fornecedor de Teste', tipo: 'fornecedor', ativo: true };
+  Dv.credores.push(crF);
+  verificar('v164 — e não serve para mexer em fornecedor',
+    !!Sv.informarDadosBancarios('crFORN164', { forma_pagamento: 'pix', pix: 'x@y.z' }).erro, '');
+  Dv.credores.splice(Dv.credores.indexOf(crT), 1);
+  Dv.credores.splice(Dv.credores.indexOf(crF), 1);
+  Sv.setUsuario('u8');
+})();
+
 concluir();

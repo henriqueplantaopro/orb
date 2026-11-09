@@ -716,11 +716,22 @@ ERP.faturamento = (function () {
      com 2, é setembro para trás. */
   const COMPETENCIAS_DE_ATRASO = 2;
   const ETAPAS_NOME = { previsao: 'Previsão', confirmado: 'Valor confirmado',
-    autorizado: 'Autorizado pelo órgão', liberado: 'Liberado p/ faturar', faturado: 'Faturado' };
+    autorizado: 'Autorizado pelo órgão', liberado: 'Liberado p/ faturar', faturado: 'Faturado',
+    sem_faturamento: 'Sem faturamento neste mês — decidido, não esquecido' };
   /* Versão curta para o cabeçalho da esteira, que tem oito colunas e
      precisa caber na tela sem rolagem lateral. */
   const ETAPAS_CURTO = { previsao: 'Previsto', confirmado: 'Confirm.',
-    autorizado: 'Autoriz.', liberado: 'Liberado', faturado: 'Faturado' };
+    autorizado: 'Autoriz.', liberado: 'Liberado', faturado: 'Faturado',
+    sem_faturamento: 'Sem fat.' };
+  /* A PROGRESSÃO e o FILTRO são listas diferentes.
+
+     `ORDEM_ETAPAS` é o caminho que o faturamento percorre, e é dele
+     que saem as colunas de valor e as bolinhas de etapa cumprida.
+     "Sem faturamento" não é um degrau desse caminho — é sair dele —,
+     então entra só na barra de filtros, no fim, depois do separador.
+     Posta na progressão, ela viraria uma coluna de valor a mais numa
+     tabela que já ocupa a largura da tela, e uma bolinha que nunca
+     acende. */
   const ORDEM_ETAPAS = ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado'];
 
   function renderEsteira() {
@@ -752,7 +763,7 @@ ERP.faturamento = (function () {
           : S.esteiraFaturamento({ competencia: fEst.competencia,
               incluir_inativos: incl, sem_documento: fEst.sem_doc }));
     const conta = {};
-    ORDEM_ETAPAS.forEach(function (e) {
+    ORDEM_ETAPAS.concat(['sem_faturamento']).forEach(function (e) {
       conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
     });
     const lista = fEst.etapa
@@ -812,6 +823,9 @@ ERP.faturamento = (function () {
             ETAPAS_CURTO[e] + '<b' + (conta[e] && e !== 'faturado' ? ' class="erro"' : '') + '>' +
             conta[e] + '</b></button>';
         }).join('') +
+        '<button class="chip' + (fEst.etapa === 'sem_faturamento' ? ' sel' : '') +
+          '" data-es-etapa="sem_faturamento" title="' + ETAPAS_NOME.sem_faturamento + '">' +
+          ETAPAS_CURTO.sem_faturamento + '<b>' + (conta.sem_faturamento || 0) + '</b></button>' +
         '<span class="es-sep"></span>' +
         /* AS DUAS PENDÊNCIAS QUE ELA PEDIU. Atravessam o filtro de
            competência de propósito: são justamente o que escapa de
@@ -2320,6 +2334,53 @@ ERP.faturamento = (function () {
     });
   }
 
+  /* ── UM CAMINHO SÓ PARA "NÃO TEM FATURAMENTO" ───────────
+
+     A decisão pode ser tomada em dois lugares — na esteira, onde o
+     trabalho acontece, e na aba Cobertura, onde se vê o mês inteiro.
+     O formulário é o mesmo, e tem de ser: o da Cobertura não pedia
+     motivo, e marca sem motivo é o que, meses depois, não se
+     distingue de esquecimento. Dois formulários viram duas regras
+     no primeiro mês em que alguém mexer num deles. */
+  function marcarSemFaturamento(centros, comp, nome, depois) {
+    ERP.app.modal({
+      titulo: 'Sem faturamento · ' + nome + ' · ' + U.fComp(comp),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="ajuda">Esta competência sai da esteira como <b>sem faturamento</b>: ' +
+        'deixa de aparecer como pendência e de contar no alerta do mês. O projeto continua ' +
+        'ativo e volta a faturar na competência seguinte.' +
+        (centros.length > 1
+          ? ' <b>São ' + centros.length + ' especialidades deste grupo</b>, porque a nota do ' +
+            'grupo é uma só.' : '') + '</div>' +
+        '<label for="sf-motivo">Por que não tem faturamento?</label>' +
+        '<input id="sf-motivo" placeholder="ex.: mutirão não realizado, órgão não autorizou o mês">' +
+        '<div class="ajuda">Previsto que já virou título a receber é cancelado junto.</div>' +
+        '<div id="sf-erro"></div>',
+      acoes: [{ txt: 'Marcar sem faturamento', cls: 'btn-cancelar', fn: function () {
+        const motivo = U.val('sf-motivo').trim();
+        const erro = U.el('sf-erro');
+        if (!motivo) {
+          if (erro) erro.innerHTML = '<div class="login-erro">Informe o motivo. ' +
+            'Sem ele, daqui a três meses isto é indistinguível de esquecimento.</div>';
+          return;
+        }
+        const falhas = [];
+        centros.forEach(function (cc) {
+          const r = S.marcarPrevisoes(comp, 'encerrada', cc, motivo);
+          if (r && r.erro) falhas.push(r.erro);
+        });
+        if (falhas.length) {
+          if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(falhas[0]) + '</div>';
+          return;
+        }
+        ERP.app.fecharModal();
+        if (depois) depois();
+        ERP.app.aviso(nome + ' · ' + U.fComp(comp) + ': marcado como sem faturamento.', 'ok');
+      } }]
+    });
+  }
+
   function acoesEsteira(l) {
     const ref = l.centro + '|' + l.competencia;
     /* VER E EDITAR O QUE FOI LANÇADO, em toda linha e em toda etapa.
@@ -2346,9 +2407,36 @@ ERP.faturamento = (function () {
               : ''));
     /* Quem cuida de produtividade e faturamento digita o valor e
        autoriza no mesmo gesto — e a liberação vai junto. */
+    /* ── NÃO TEM FATURAMENTO NESTE MÊS ─────────────────────
+
+       Projeto cujo faturamento não é certo todo mês — mutirão que
+       não houve, plantão que o órgão não autorizou, contrato entre
+       renovações — ficava na esteira como "Previsto" até o fim dos
+       tempos, cobrando providência de quem olhasse e inflando a
+       lista de atrasados. A decisão existia no sistema, escondida
+       na aba Cobertura; aqui, onde o trabalho acontece, não havia
+       como dizê-la.
+
+       Só nas etapas em que ainda não há nota: a partir de
+       "autorizado" existe faturamento, e dizer que não tem seria
+       apagar o que já andou. */
+    const semFat = ' <button class="btn-sm" data-est-semfat="' + ref + '" ' +
+      'title="este projeto não fatura nesta competência — sai da lista de pendências">' +
+      'Não tem faturamento</button>';
+    if (l.etapa === 'sem_faturamento') {
+      return rever +
+        ' <span class="badge b-cancelado" title="' +
+          U.esc(l.sem_faturamento_motivo || 'sem motivo registrado') + '">sem faturamento</span>' +
+        (l.sem_faturamento_motivo
+          ? ' <span class="ajuda">' + U.esc(l.sem_faturamento_motivo) + '</span>' : '') +
+        (S.pode('faturar') || S.pode('autorizar_faturamento')
+          ? ' <button class="btn-sm btn-aprovar" data-est-voltafat="' + ref + '">Voltar a faturar</button>'
+          : '');
+    }
     if (l.etapa === 'previsao' && S.pode('autorizar_faturamento')) {
       return rever + doc +
-        ' <button class="btn-sm btn-aprovar" data-est-conf="' + ref + '">Confirmar valor e autorizar</button>';
+        ' <button class="btn-sm btn-aprovar" data-est-conf="' + ref + '">Confirmar valor e autorizar</button>' +
+        semFat;
     }
     if (l.etapa === 'confirmado' && S.pode('autorizar_faturamento')) {
       return rever + doc +
@@ -2358,7 +2446,8 @@ ERP.faturamento = (function () {
            está travada, e o único Desfazer da tela estava nas
            etapas de cima. */
         ' <button class="btn-sm" data-est-des="confirmado|' + ref + '">Desfazer</button>' +
-        ' <button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar</button>';
+        ' <button class="btn-sm btn-aprovar" data-est-aut="' + ref + '">Autorizar</button>' +
+        semFat;
     }
     if (l.etapa === 'autorizado') {
       return rever + doc +
@@ -2402,7 +2491,8 @@ ERP.faturamento = (function () {
     }
     if (l.etapa === 'previsao') {
       return rever + doc + ' <span class="badge b-aberto" title="o fechamento da produtividade ainda não veio">' +
-        'aguarda produtividade</span>';
+        'aguarda produtividade</span>' +
+        (S.pode('faturar') ? semFat : '');
     }
     /* FATURADO AINDA NÃO É ENVIADO. A nota sai do sistema e vai ao
        cliente por e-mail, portal ou protocolo, junto da AF e da
@@ -2599,6 +2689,34 @@ ERP.faturamento = (function () {
       });
     });
 
+    /* NÃO TEM FATURAMENTO: pede o motivo e marca a competência.
+       O motivo não é burocracia — é o que, três meses depois,
+       distingue "foi decidido" de "ninguém fez". */
+    box.querySelectorAll('[data-est-semfat]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const par = this.dataset.estSemfat.split('|');
+        const l = S.esteiraFaturamento({ competencia: par[1] })
+          .find(function (x) { return (x.centro === par[0]) || (x.eh_grupo && x.centro === par[0]); });
+        /* Grupo de nota única: a decisão vale para as especialidades
+           todas, senão a nota do grupo continuaria sendo cobrada. */
+        const centros = (l && l.eh_grupo && l.especialidades)
+          ? l.especialidades.map(function (e) { return e.centro; })
+          : [par[0]];
+        marcarSemFaturamento(centros, par[1],
+          l ? (l.projeto.curto || l.projeto.nome) : par[0], function () {
+            renderEsteira(); atualizarAlertaFat(); ERP.app.atualizarContadores();
+          });
+      });
+    });
+    box.querySelectorAll('[data-est-voltafat]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const par = this.dataset.estVoltafat.split('|');
+        const r = S.marcarPrevisoes(par[1], 'estimada', par[0]);
+        if (ERP.app.erroDoRetorno(r)) return;
+        renderEsteira(); atualizarAlertaFat(); ERP.app.atualizarContadores();
+        ERP.app.aviso('Competência reaberta: o projeto volta a faturar.', 'ok');
+      });
+    });
     box.querySelectorAll('[data-est-des]').forEach(function (b) {
       b.addEventListener('click', function () {
         const par = this.dataset.estDes.split('|');
@@ -2881,8 +2999,17 @@ ERP.faturamento = (function () {
       aguardando_nf: { t: 'aguardando autorização do órgão', c: 'sit-parcial' },
       aguardando_liberacao: { t: 'autorizado — aguardando liberação', c: 'sit-parcial' },
       liberado: { t: 'liberado para emissão de NF', c: 'sit-parcial' },
-      sem_faturamento: { t: 'sem faturamento', c: 'sit-lancado' },
-      encerrado: { t: 'encerrado sem faturar', c: 'sit-cancelado' },
+      /* OS DOIS ROTULOS ESTAVAM TROCADOS DE SENTIDO.
+
+         `sem_faturamento`, aqui, é o caso em que NADA foi lançado
+         ainda — a competência está em branco. E `encerrado` é a
+         decisão explícita de que aquele mês não tem faturamento. A
+         tela chamava o primeiro de "sem faturamento" e o segundo de
+         "encerrado sem faturar": quem lia entendia o contrário, e a
+         providência de cada um é oposta (um é trabalho a fazer, o
+         outro é assunto resolvido). */
+      sem_faturamento: { t: 'nada lançado ainda', c: 'sit-lancado' },
+      encerrado: { t: 'sem faturamento neste mês', c: 'sit-cancelado' },
       /* Projeto de um grupo sem produtividade no mês não deve nota: a
          especialidade simplesmente não teve plantão. Cobrar NF dele era
          pedir documento que o hospital não emite. */
@@ -2951,8 +3078,8 @@ ERP.faturamento = (function () {
              nenhuma: a nota do grupo resolve, e não há o que encerrar. */
           '<td class="acoes">' + (['faturado', 'sem_base_no_grupo', 'faturado_no_grupo'].indexOf(x.situacao) > -1 ? ''
             : x.encerrado
-              ? '<button class="btn-sm" data-reabrir="' + x.centro + '">Reabrir mês</button>'
-              : '<button class="btn-sm" data-encerrar="' + x.centro + '">Não fatura neste mês</button>') + '</td></tr>';
+              ? '<button class="btn-sm" data-reabrir="' + x.centro + '">Voltar a faturar</button>'
+              : '<button class="btn-sm" data-encerrar="' + x.centro + '">Não tem faturamento</button>') + '</td></tr>';
       }).join('') + '</tbody></table></div>' +
       /* Grupos de faturamento (uma nota para vários projetos) ganham um
          resumo próprio: é por ele que o gestor decide emitir a nota. */
@@ -2985,10 +3112,11 @@ ERP.faturamento = (function () {
     U.el('fa-cov-comp').addEventListener('change', function () { covComp = this.value; renderCobertura(); });
     box.querySelectorAll('[data-encerrar]').forEach(function (b) {
       b.addEventListener('click', function () {
-        const r = S.marcarPrevisoes(covComp, 'encerrada', this.dataset.encerrar);
-        if (ERP.app.erroDoRetorno(r)) return;
-        renderCobertura(); atualizarAlertaFat(); ERP.app.atualizarContadores();
-        ERP.app.aviso('Projeto marcado como "não fatura em ' + U.fComp(covComp) + '".', 'ok');
+        const cc = this.dataset.encerrar;
+        const c = ERP.dados.centro(cc) || {};
+        marcarSemFaturamento([cc], covComp, c.curto || c.nome || cc, function () {
+          renderCobertura(); atualizarAlertaFat(); ERP.app.atualizarContadores();
+        });
       });
     });
     box.querySelectorAll('[data-reabrir]').forEach(function (b) {
