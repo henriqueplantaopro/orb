@@ -125,7 +125,8 @@ const permitido = {
     aprovar: 'Aprovar o pagamento da folha é alçada do financeiro, e separá-la do DP é a segregação que se quer.'
   },
   'ui-produtividade.js': {
-    lancar: 'A tela pede o módulo Produtividade PRIMEIRO e aceita quem lança como alternativa.'
+    lancar: 'A tela pede o módulo Produtividade PRIMEIRO e aceita quem lança como alternativa.',
+    financeiro: 'Não esconde botão de ninguém: o recado do detalhe vazio pergunta se quem olha VÊ o Financeiro (onde os títulos moram) para dizer qual das duas causas vale — títulos que não chegaram ao banco, ou só falta de acesso. Sem a pergunta, o recado listava as duas e deixava o diagnóstico para quem lê.'
   }
 };
 
