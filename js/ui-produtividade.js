@@ -405,11 +405,40 @@ ERP.produtividade = (function () {
      projeto e competência já estão na linha do lote, e o setor abre no
      detalhe do médico (botão "Plantões"). */
   function detalheLote(l) {
-    const parcelas = S.todasParcelas().filter(function (p) { return l.titulo_ids.indexOf(p.titulo_id) > -1; });
+    const ids = Array.isArray(l.titulo_ids) ? l.titulo_ids : [];
+    const parcelas = S.todasParcelas().filter(function (p) { return ids.indexOf(p.titulo_id) > -1; });
+    /* ── DETALHE VAZIO TEM DE DIZER POR QUE ─────────────────
+
+       O lançamento guarda a lista dos títulos que ele gerou. Quando
+       nenhum deles aparece aqui, a tela mostrava uma tabela vazia —
+       e "vazio" pode ser duas coisas muito diferentes: o repasse não
+       chegou ao banco, ou chegou e este perfil não o vê. As duas
+       pedem providências opostas, e nenhuma delas é olhar mais
+       forte para a tabela.
+
+       Foi o que aconteceu com os quatro fechamentos de outubro: a
+       gerência de produtividade não tinha permissão de gravar
+       `titulos` nem `parcelas` (são do módulo Financeiro), então o
+       cabeçalho do lote foi para o banco e os médicos não. Quem
+       lançou continuava vendo tudo — estava na memória do navegador
+       dela —, e quem abriu depois viu uma lista vazia sem uma
+       palavra de explicação. */
+    if (!parcelas.length) {
+      return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
+        '<div class="aviso" style="border-left-color:var(--red)">' +
+        '<b>Este lançamento aponta para ' + ids.length + ' título(s), e nenhum deles está aqui.</b> ' +
+        'Ou o repasse não chegou ao banco na hora de lançar — e nesse caso a faixa vermelha de ' +
+        '"não salvo" apareceu para quem lançou —, ou chegou e o seu perfil não vê o módulo ' +
+        'Financeiro, onde os títulos moram.' +
+        '<div class="sub" style="margin-top:6px">O valor do cabeçalho (' + U.brl(l.valor) + ' · ' +
+        l.medicos + ' médico(s)) é o que foi lançado. Se os títulos não estiverem no banco, ' +
+        'o jeito é cancelar este lançamento e importar o arquivo de novo depois de acertar a ' +
+        'permissão em Administração › Perfis.</div></div></td></tr>';
+    }
     return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
       '<table style="margin:0"><thead><tr><th>Médico</th>' +
       '<th class="num">Plantões</th><th class="num">Horas</th><th class="num">Valor</th>' +
-      '<th class="num">Pago</th><th>Situação</th><th></th></tr></thead><tbody>' +
+      '<th class="num">Pago</th><th>Situação</th><th>Como recebe</th><th></th></tr></thead><tbody>' +
       parcelas.map(function (p) {
         const itens = p.itens || [];
         const qtd = itens.reduce(function (s, i) { return s + (i.qtd || 0); }, 0);
@@ -423,14 +452,46 @@ ERP.produtividade = (function () {
           '<td class="num">' + (pago > 0.004 ? U.brl(pago) : '—') + '</td>' +
           '<td><span class="badge ' + s.cls + '">' + s.txt + '</span>' +
             (s.motivo ? '<div class="sub">' + U.esc(s.motivo) + '</div>' : '') + '</td>' +
+          /* ── COMO RECEBE, AQUI ─────────────────────────────────
+             O impedimento de pagamento era descoberto duas telas
+             depois, no contas a pagar, por quem não tem o arquivo
+             do fechamento na mão para resolver. Quem confere o
+             fechamento é quem sabe o PIX do médico. */
+          (function () {
+            const cr = D.credor(p.credor) || {};
+            const imp = S.impedimentos(p) || [];
+            const bancario = imp.filter(function (e) {
+              return /chave PIX|forma de pagamento|banco, agência/.test(e); });
+            const pod = S.podeMover('produtividade') || S.pode('lancar');
+            if (!bancario.length) {
+              return '<td class="desc"><div class="sub">' +
+                (cr.forma_pagamento === 'ted'
+                  ? 'banco ' + U.esc(cr.banco || '') + ' ag. ' + U.esc(cr.agencia || '')
+                  : cr.pix
+                    ? U.esc(cr.pix) + ' · ' + U.esc(NOME_TIPO_PIX[cr.tipo_chave] || cr.tipo_chave || 'tipo?')
+                    : '—') + '</div>' +
+                (pod ? '<button class="btn-ghost" data-lp-banco="' + p.id + '">trocar</button>' : '') +
+                '</td>';
+            }
+            return '<td class="desc"><span class="badge b-cancelado">sem como pagar</span>' +
+              '<div class="sub">' + U.esc(bancario.join('; ')) + '</div>' +
+              (pod ? '<button class="btn-sm btn-cancelar" data-lp-banco="' + p.id + '">' +
+                'Incluir dados bancários</button>' : '') + '</td>';
+          })() +
           '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">Plantões</button>' +
-            /* DESBLOQUEAR AQUI. Quem confere o fechamento é quem
-               descobre que o bloqueio já não se aplica — mandar
-               procurar a tela onde o bloqueio foi posto significa,
-               na prática, o médico esperando mais um dia. */
-            (s.bloqueio && S.podeMover('produtividade')
-              ? ' <button class="btn-sm btn-aprovar" data-lp-liberar="' + p.id + '" ' +
-                'data-lote="' + l.id + '">Liberar</button>'
+            /* BLOQUEAR E DESBLOQUEAR AQUI, os dois.
+               Só o "Liberar" existia, e só aparecia em quem já
+               estava bloqueado — então bloquear por falta de
+               contrato só era possível no instante da importação, e
+               quem descobre o contrato pendente descobre depois. */
+            (S.podeMover('produtividade') || S.pode('lancar')
+              ? (s.bloqueio
+                  ? ' <button class="btn-sm btn-aprovar" data-lp-liberar="' + p.id + '" ' +
+                    'data-lote="' + l.id + '">Liberar</button>'
+                  : (pago > 0.004
+                      ? ''
+                      : ' <button class="btn-sm btn-cancelar" data-lp-bloquear="' + p.id + '" ' +
+                        'data-lote="' + l.id + '">Bloquear</button>'))
               : '') +
           '</td></tr>';
       }).join('') + '</tbody></table></td></tr>';
@@ -545,8 +606,74 @@ ERP.produtividade = (function () {
             }
             ERP.app.fecharModal();
             ERP.app.aviso('Pagamento de ' + nome + ' liberado.', 'ok');
-            render();
+            /* `render()` desenha a PRÉVIA da importação, que aqui
+               não existe: ela sai no primeiro `if (!L) return`. A
+               liberação acontecia e a tela ficava igual, mostrando
+               "bloqueado" — até alguém trocar de aba. */
+            renderLotes();
           } }]
+        });
+      });
+    });
+
+    /* BLOQUEAR depois de lançado. Antes só havia o caminho na
+       importação: descobrir o contrato pendente no dia seguinte
+       significava não ter onde segurar o pagamento. */
+    document.querySelectorAll('[data-lp-bloquear]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const pid = this.dataset.lpBloquear;
+        const loteId = this.dataset.lote;
+        const p = S.todasParcelas().find(function (x) { return x.id === pid; });
+        if (!p) return;
+        const nome = ERP.lancamento.nomeCredor(p.credor) || 'o médico';
+        ERP.app.modal({
+          titulo: 'Bloquear pagamento de ' + nome,
+          fecharTxt: 'Cancelar',
+          corpo: '<div class="ajuda">O lançamento continua valendo — o custo existe —, mas este ' +
+            'médico fica FORA da remessa de pagamento até alguém liberar aqui mesmo.</div>' +
+            '<label for="bl-motivo">Por que está bloqueando?</label>' +
+            '<input id="bl-motivo" placeholder="ex.: contrato não assinado, check-ins não confirmados">' +
+            '<div id="bl-erro"></div>',
+          acoes: [{ txt: 'Bloquear pagamento', cls: 'btn-cancelar', fn: function () {
+            const motivo = U.val('bl-motivo').trim();
+            const erro = U.el('bl-erro');
+            if (!motivo) {
+              if (erro) erro.innerHTML = '<div class="login-erro">Informe o motivo. ' +
+                'Bloqueio sem motivo é o médico esperando sem ninguém saber por quê.</div>';
+              return;
+            }
+            const r = S.bloquearPagamentoMedico(loteId, { titulo_id: p.titulo_id, motivo: motivo });
+            if (r.erro) {
+              if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+              return;
+            }
+            ERP.app.fecharModal();
+            ERP.app.aviso('Pagamento de ' + nome + ' bloqueado.', 'ok');
+            renderLotes();
+          } }]
+        });
+      });
+    });
+
+    /* Dados bancários do médico, no lançamento já feito. Mesmo
+       formulário da prévia; aqui o cadastro existe, então grava
+       direto pelo store. */
+    document.querySelectorAll('[data-lp-banco]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const pid = this.dataset.lpBanco;
+        const p = S.todasParcelas().find(function (x) { return x.id === pid; });
+        if (!p) return;
+        const cr = D.credor(p.credor);
+        if (!cr) return ERP.app.aviso('Este lançamento está sem cadastro de credor.', 'erro');
+        formularioBancario({
+          nome: cr.nome, credor: cr,
+          ajuda: 'O que for gravado aqui vale para a remessa e para os próximos fechamentos, ' +
+            'e fica na trilha com o valor anterior.',
+          aoGravar: function (dados) {
+            const r = S.informarDadosBancarios(cr.id, dados);
+            if (!r.erro) { ERP.contas.render(); renderLotes(); }
+            return r;
+          }
         });
       });
     });
@@ -1319,6 +1446,132 @@ ERP.produtividade = (function () {
       });
   }
 
+  /* ── DADOS BANCÁRIOS A MÃO ──────────────────────────────
+
+     UM formulário, dois lugares: a prévia da importação (onde o
+     cadastro do médico ainda não existe) e o detalhe do lançamento
+     já feito (onde existe). Se fossem dois, um dia aceitariam coisas
+     diferentes — e o que o banco recusa é igual nos dois.
+
+     A validação não está aqui: está no store
+     (`S.validarDadosBancarios`), que é a mesma regra que o contas a
+     pagar usa para travar o pagamento. Um formulário que aceita o
+     que o pagamento recusa não resolve nada, só muda o lugar onde a
+     pessoa descobre. */
+  function formularioBancario(opcoes) {
+    const o = opcoes || {};
+    const c = o.credor || {};
+    const temBanco = !!(c.banco || c.agencia || c.conta_bancaria);
+    const formaAtual = c.forma_pagamento === 'ted' || (temBanco && !c.pix) ? 'ted' : 'pix';
+    ERP.app.modal({
+      titulo: 'Dados bancários · ' + (o.nome || 'profissional'),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="ajuda">' + (o.ajuda ||
+          'O arquivo do fechamento não trouxe como este profissional recebe. ' +
+          'Sem isso o pagamento fica travado e ele não entra na remessa.') + '</div>' +
+        '<label for="db-forma">Como recebe</label>' +
+        '<select id="db-forma">' +
+          '<option value="pix"' + (formaAtual === 'pix' ? ' selected' : '') + '>PIX</option>' +
+          '<option value="ted"' + (formaAtual === 'ted' ? ' selected' : '') + '>Transferência (banco, agência e conta)</option>' +
+        '</select>' +
+        '<div id="db-pix">' +
+          '<div class="row2" style="margin-top:8px">' +
+            '<div><label for="db-chave">Chave PIX</label>' +
+              '<input id="db-chave" value="' + U.esc(c.pix || '') + '" ' +
+              'placeholder="CPF, CNPJ, e-mail, telefone ou chave aleatória"></div>' +
+            '<div><label for="db-tipo">Tipo da chave</label><select id="db-tipo">' +
+              ['', 'CPF', 'CNPJ', 'Email', 'Telefone', 'Aleatoria'].map(function (t) {
+                return '<option value="' + t + '"' + ((c.tipo_chave || '') === t ? ' selected' : '') +
+                  '>' + (t || 'descobrir pela chave') + '</option>';
+              }).join('') + '</select></div></div>' +
+          '<div class="ajuda" id="db-tipo-nota"></div>' +
+        '</div>' +
+        '<div id="db-ted" style="display:none">' +
+          '<div class="row3" style="margin-top:8px">' +
+            '<div><label for="db-banco">Banco</label><input id="db-banco" value="' +
+              U.esc(c.banco || '') + '" placeholder="nome ou número"></div>' +
+            '<div><label for="db-ag">Agência</label><input id="db-ag" value="' +
+              U.esc(c.agencia || '') + '" placeholder="com dígito, se tiver"></div>' +
+            '<div><label for="db-conta">Conta</label><input id="db-conta" value="' +
+              U.esc(c.conta_bancaria || '') + '" placeholder="com dígito"></div></div>' +
+          '<div class="ajuda">O banco recusa a remessa inteira se faltar um dos três — ' +
+            'não só a linha errada.</div>' +
+        '</div>' +
+        '<div id="db-erro"></div>',
+      aoAbrir: function () {
+        const troca = function () {
+          const ted = U.val('db-forma') === 'ted';
+          U.el('db-pix').style.display = ted ? 'none' : '';
+          U.el('db-ted').style.display = ted ? '' : 'none';
+        };
+        U.el('db-forma').addEventListener('change', troca);
+        troca();
+        /* O TIPO DA CHAVE SAI DA CHAVE, não do que a pessoa marcou.
+           É a mesma função que a importação usa (`tipoDaChavePix`):
+           chave de CPF declarada como e-mail gera remessa recusada
+           pelo banco — ou, pior, paga na chave de outra pessoa. */
+        const aferir = function () {
+          const chave = U.val('db-chave');
+          const real = chave ? tipoDaChavePix(chave) : '';
+          const nota = U.el('db-tipo-nota');
+          if (!real) { nota.textContent = ''; return; }
+          U.setVal('db-tipo', real);
+          nota.textContent = 'Pela chave, o tipo é ' + (NOME_TIPO_PIX[real] || real) + '.';
+        };
+        U.el('db-chave').addEventListener('blur', aferir);
+        aferir();
+      },
+      acoes: [{ txt: 'Gravar dados bancários', cls: 'btn-aprovar', fn: function () {
+        const forma = U.val('db-forma');
+        const dados = forma === 'ted'
+          ? { forma_pagamento: 'ted', banco: U.val('db-banco'),
+              agencia: U.val('db-ag'), conta_bancaria: U.val('db-conta') }
+          : { forma_pagamento: 'pix', pix: U.val('db-chave'),
+              tipo_chave: U.val('db-tipo') || tipoDaChavePix(U.val('db-chave')) };
+        const v = S.validarDadosBancarios(dados);
+        if (v.erro) {
+          U.el('db-erro').innerHTML = '<div class="login-erro">' + U.esc(v.erro) + '</div>';
+          return;
+        }
+        const r = o.aoGravar(dados);
+        if (r && r.erro) {
+          U.el('db-erro').innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
+          return;
+        }
+        ERP.app.fecharModal();
+        ERP.app.aviso('Dados bancários gravados.', 'ok');
+      } }]
+    });
+  }
+
+  /* O que falta para este profissional poder receber, contando o
+     cadastro, o que o arquivo trouxe e o que foi digitado agora. É
+     UMA conta, usada pela prévia e pelo detalhe: a prévia dizia
+     "completa cadastro — chave PIX" olhando só o cadastro, e
+     chamava de incompleto quem tinha a chave no arquivo, na linha
+     de baixo. Era o aviso que mandou alguém reorganizar a planilha
+     para resolver o que não era problema de planilha. */
+  function faltaParaPagar(cad, pg, digitado) {
+    const npx = normalizarPix(pg || {});
+    const d = digitado || {};
+    const fonte = function (campo, doArquivo) {
+      if (d[campo]) return 'digitado';
+      if (cad && cad[campo]) return 'cadastro';
+      if (doArquivo) return 'arquivo';
+      return '';
+    };
+    const pix = fonte('pix', npx.pix);
+    const ted = (d.banco && d.agencia && d.conta_bancaria) ? 'digitado'
+      : (cad && cad.banco && cad.agencia && cad.conta_bancaria) ? 'cadastro' : '';
+    const doc = fonte('documento', (pg || {}).documento);
+    const falta = [];
+    if (!pix && !ted) falta.push('como recebe (PIX ou banco/agência/conta)');
+    if (!doc) falta.push('CPF/CNPJ');
+    return { falta: falta, pix: pix, ted: ted, doc: doc, chave: npx.pix,
+             tipo_chave: npx.tipo_chave, divergente: npx.divergente, declarado: npx.declarado };
+  }
+
   /* ── prévia ─────────────────────────────────────────────*/
   function centroSugerido(projeto) {
     const p = txt(projeto).toUpperCase();
@@ -1454,28 +1707,59 @@ ERP.produtividade = (function () {
             ? '<label class="bloq-pg"><input type="checkbox" data-bloq="' + U.esc(chaveNome(m.medico)) +
               '"' + (bloqueiosPre[chaveNome(m.medico)] ? ' checked' : '') + '> bloquear</label>'
             : '') + '</td>' +
-          '<td>' + (cad
-            ? (cad.pix && cad.documento
-                ? '<span class="badge b-pago">cadastrado</span>'
-                : '<span class="badge b-aguardando">completa cadastro</span>' +
-                  '<div class="sub">' + (cad.pix ? '' : 'chave PIX ') + (cad.documento ? '' : 'CPF/CNPJ') + '</div>')
-            : '<span class="badge b-pendente">novo médico</span>' +
-              (function () {
-                /* Mostra a CHAVE e o tipo dela — antes aparecia o CPF
-                   com o rótulo do tipo ("115.367.877-28 · Email"), que
-                   parecia cadastro errado e escondia a chave real. */
-                const npx = normalizarPix(pg);
-                if (!npx.pix && !pg.documento) return '';
-                return '<div class="sub">' +
-                  (npx.pix
-                    ? U.esc(npx.pix) + ' · ' + U.esc(NOME_TIPO_PIX[npx.tipo_chave] || npx.tipo_chave || 'tipo?')
-                    : 'sem chave PIX') +
-                  (pg.documento ? '<br>doc ' + U.esc(pg.documento) : '') +
-                  (npx.divergente
-                    ? '<div class="erro">planilha diz ' + U.esc(npx.declarado) + ', a chave é ' +
-                      U.esc(NOME_TIPO_PIX[npx.tipo_chave] || npx.tipo_chave) + ' — vale a chave</div>'
-                    : '') + '</div>';
-              })()) + '</td>' +
+          /* ── A COLUNA LIA SÓ O CADASTRO ────────────────────────
+
+             Dizia "completa cadastro — chave PIX" para quem já está
+             cadastrado e tem a chave no ARQUIVO, uma linha abaixo na
+             mesma tela. O coordenador caía nisso: médico antigo da
+             casa, cadastrado como sócio sem chave PIX (ninguém nunca
+             lhe pagou produtividade), com a chave ali na aba
+             FINANCEIRO. A tela acusava falta, a importação ia
+             preencher, e quem leu o aviso foi reorganizar a planilha.
+
+             Agora a conta é uma só e considera as três fontes —
+             cadastro, arquivo e o que foi digitado agora. Falta é só
+             o que, somando tudo, continua faltando. */
+          (function () {
+            const f = faltaParaPagar(cad, pg, bancariosPre[chaveNome(m.medico)]);
+            const dig = bancariosPre[chaveNome(m.medico)];
+            const botao = '<button class="btn-sm btn-cancelar" data-pr-banco="' +
+              U.esc(chaveNome(m.medico)) + '" title="informar como este profissional recebe">' +
+              'Incluir dados bancários</button>';
+            const comoRecebe = dig
+              ? (dig.forma_pagamento === 'ted'
+                  ? 'banco ' + U.esc(dig.banco) + ' ag. ' + U.esc(dig.agencia) + ' c/c ' + U.esc(dig.conta_bancaria)
+                  : U.esc(dig.pix) + ' · ' + U.esc(NOME_TIPO_PIX[dig.tipo_chave] || dig.tipo_chave || 'tipo?'))
+              : f.ted === 'cadastro'
+                ? 'banco ' + U.esc(cad.banco) + ' ag. ' + U.esc(cad.agencia)
+                : f.pix === 'cadastro'
+                  ? U.esc(cad.pix) + ' · ' + U.esc(NOME_TIPO_PIX[cad.tipo_chave] || cad.tipo_chave || 'tipo?')
+                  : f.chave
+                    ? U.esc(f.chave) + ' · ' + U.esc(NOME_TIPO_PIX[f.tipo_chave] || f.tipo_chave || 'tipo?')
+                    : '';
+            const deOnde = dig ? 'digitado agora'
+              : (f.pix === 'arquivo' || f.doc === 'arquivo') ? 'vem do arquivo' : '';
+            return '<td>' +
+              (f.falta.length
+                ? '<span class="badge b-cancelado">sem como pagar</span>' +
+                  '<div class="sub">falta ' + U.esc(f.falta.join(' e ')) + '</div>' +
+                  '<div style="margin-top:4px">' + botao + '</div>'
+                : (cad
+                    ? '<span class="badge b-pago">cadastrado</span>'
+                    : '<span class="badge b-pendente">médico novo</span>') +
+                  (comoRecebe ? '<div class="sub">' + comoRecebe +
+                    (deOnde ? ' <span class="ajuda">(' + deOnde + ')</span>' : '') + '</div>' : '') +
+                  (f.divergente
+                    ? '<div class="erro">planilha diz ' + U.esc(f.declarado) + ', a chave é ' +
+                      U.esc(NOME_TIPO_PIX[f.tipo_chave] || f.tipo_chave) + ' — vale a chave</div>'
+                    : '') +
+                  /* Deixa trocar mesmo quando está completo: médico
+                     que mudou de banco é caso de todo mês, e o
+                     cadastro de médico não abre em Cadastros. */
+                  '<div style="margin-top:4px"><button class="btn-ghost" data-pr-banco="' +
+                    U.esc(chaveNome(m.medico)) + '">trocar</button></div>') +
+              '</td>';
+          })() +
         '</tr>';
       }).join('') + '</tbody></table></div>' +
 
@@ -1498,6 +1782,30 @@ ERP.produtividade = (function () {
         g.coordenacao = !g.coordenacao;
         aplicarClasse(L.linhas, L.medicos);
         render();
+      });
+    });
+    /* O botão vermelho da coluna do credor: abre o formulário e
+       guarda o que foi digitado para a hora de gerar. */
+    document.querySelectorAll('[data-pr-banco]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const k = this.dataset.prBanco;
+        const m2 = porMedico(L).find(function (x) { return chaveNome(x.medico) === k; });
+        if (!m2) return;
+        const pg2 = L.pagto[k] || {};
+        const doc2 = String(pg2.documento || '').replace(/\D/g, '');
+        const cad2 = (doc2 && D.credores.find(function (c) {
+            return String(c.documento || '').replace(/\D/g, '') === doc2; })) ||
+          D.credores.find(function (c) { return chaveNome(c.nome) === k; });
+        formularioBancario({
+          nome: m2.medico,
+          credor: bancariosPre[k] || cad2 ||
+            { pix: normalizarPix(pg2).pix, tipo_chave: normalizarPix(pg2).tipo_chave },
+          aoGravar: function (dados) {
+            bancariosPre[k] = dados;
+            render();
+            return { ok: true };
+          }
+        });
       });
     });
     document.querySelectorAll('[data-bloq]').forEach(function (cb) {
@@ -1630,6 +1938,10 @@ ERP.produtividade = (function () {
      até alguém liberar. */
   const bloqueiosPre = {};
   const motivosPre = {};
+  /* Dados bancários digitados na prévia, por médico. Valem no
+     `garantirCredor`, na hora de gerar — antes disso não existe
+     cadastro para gravar neles (o médico novo nasce ali). */
+  const bancariosPre = {};
 
   let complementar = null;   // null = ainda não perguntado nesta importação; 'substituir' | true | false
 
@@ -1652,11 +1964,32 @@ ERP.produtividade = (function () {
     if (!S.podeMover('produtividade') && !S.pode('lancar')) {
       return ERP.app.aviso('Seu perfil não fecha a produtividade do mês.', 'erro');
     }
+    /* A CHAVE AQUI TEM DE SER A MESMA QUE É GRAVADA.
+
+       A v162 pôs a classe na referência do título (plantão e
+       coordenação são dois títulos), e esta conferência ficou
+       procurando a chave antiga, sem classe — que nunca existiu no
+       banco. Resultado: nenhum médico era reconhecido como "já
+       lançado", a pergunta sobre substituir o fechamento anterior
+       não aparecia, e reimportar um arquivo CORRIGIDO não fazia
+       nada — cada médico era recusado um por um como duplicado, com
+       o aviso "N já existiam e foram ignorados", sem oferecer o
+       caminho de substituir. */
     const jaLancados = porMedico(L).filter(function (m) {
-      return S.refJaUsada([refPadrao(L), m.medico].join('|'));
+      return S.refJaUsada([refPadrao(L), m.medico, m.classe].join('|'));
     });
-    if (jaLancados.length && complementar === null) {
-      const centroAtual = U.val('pr-centro'), compAtual = U.val('pr-comp');
+    /* ── O CABEÇALHO ÓRFÃO TAMBÉM PRECISA DA PERGUNTA ──────
+
+       Fechamento gravado sem os títulos (ver `fechamentosSemTitulos`)
+       não é reconhecido por `jaLancados`: não há título para achar.
+       Sem isto, reimportar o arquivo criaria um segundo cabeçalho ao
+       lado do primeiro — dois lançamentos para a mesma competência,
+       um vazio — e ninguém ofereceria o caminho de substituir, que é
+       o certo aqui. */
+    const centroPre = U.val('pr-centro'), compPre = U.val('pr-comp');
+    const orfaos = (centroPre && compPre) ? S.fechamentosSemTitulos(centroPre, compPre) : [];
+    if ((jaLancados.length || orfaos.length) && complementar === null) {
+      const centroAtual = centroPre, compAtual = compPre;
       const vivos = centroAtual && compAtual ? S.fechamentosVivosDe(centroAtual, compAtual) : [];
       const valorVivo = vivos.reduce(function (s2, l) { return s2 + (l.valor || 0); }, 0);
       const medicosVivos = vivos.reduce(function (s2, l) { return s2 + (l.medicos || 0); }, 0);
@@ -1669,6 +2002,13 @@ ERP.produtividade = (function () {
           '<div class="resumo-linha"><span>Neste arquivo</span><span class="v">' + porMedico(L).length +
             ' médico(s) · ' + U.brl(porMedico(L).reduce(function (s2, m) { return s2 + m.valor; }, 0)) +
             '</span></div>' +
+          (orfaos.length
+            ? '<div class="aviso" style="border-left-color:var(--red)"><b>' + orfaos.length +
+              ' lançamento(s) desta competência estão no banco só pelo cabeçalho</b>, sem os ' +
+              'médicos dentro — foi o que aconteceu com os fechamentos lançados antes da ' +
+              'correção de permissão. <b>Substituir</b> é o caminho: cancela o cabeçalho vazio e ' +
+              'lança este arquivo inteiro.</div>'
+            : '') +
           '<div class="ajuda">' + jaLancados.length + ' médico(s) aparecem nos dois: ' +
             jaLancados.slice(0, 8).map(function (m) { return U.esc(m.medico); }).join(' · ') +
             (jaLancados.length > 8 ? ' · e mais ' + (jaLancados.length - 8) : '') + '</div>' +
@@ -1713,7 +2053,7 @@ ERP.produtividade = (function () {
     const paresGerados = [];   // médico → título, para aplicar os bloqueios marcados
     let valorLote = 0;
     let complementares = 0;
-    novos = 0; atualizados = 0; divergencias = [];
+    novos = 0; atualizados = 0; divergencias = []; errosBancarios = [];
     porMedico(L).forEach(function (m) {
       const pg = L.pagto[chaveNome(m.medico)] || {};
       const credor = garantirCredor(m, pg);
@@ -1813,6 +2153,10 @@ ERP.produtividade = (function () {
     ERP.contas.render();
     ERP.app.atualizarContadores();
     atualizarAlerta();
+    /* Recusa ao gravar dado bancário entra na mesma lista: calar
+       isso faria o lançamento sair "com sucesso" e o médico seguir
+       sem como receber. */
+    errosBancarios.forEach(function (e) { erros.push(e); });
     if (erros.length) ERP.app.aviso(erros[0], 'erro');
     else ERP.app.aviso(feitos + ' lançamento(s) gerado(s)' +
       (complementares ? ', ' + complementares + ' como complemento de fechamento já lançado' : '') +
@@ -1898,8 +2242,23 @@ ERP.produtividade = (function () {
      com o que faltava — é isso que faz a remessa sair sem retrabalho.
      A busca é por documento primeiro, depois por nome. */
   let novos = 0, atualizados = 0, divergencias = [];
+  /* Recusa ao gravar o que foi digitado na prévia. Mora aqui, e
+     não dentro do `gerar`, porque quem a produz é o
+     `garantirCredor`; o `gerar` a junta às outras no fim. */
+  let errosBancarios = [];
 
   function garantirCredor(l, pg) {
+    /* O que foi digitado na prévia manda sobre cadastro e arquivo:
+       quem digitou agora sabe mais do que os dois. Aplicado pela
+       função do store, que valida e registra na trilha — a tela não
+       grava chave PIX por conta própria. */
+    const digitado = bancariosPre[chaveNome(l.medico)];
+    const aplicarDigitado = function (id) {
+      if (!digitado || !id) return id;
+      const r = S.informarDadosBancarios(id, digitado);
+      if (r && r.erro) errosBancarios.push(l.medico + ': ' + r.erro);
+      return id;
+    };
     const doc = String(pg.documento || '').replace(/\D/g, '');
     let c = doc ? D.credores.find(function (x) {
       return String(x.documento || '').replace(/\D/g, '') === doc; }) : null;
@@ -1953,7 +2312,7 @@ ERP.produtividade = (function () {
       if (!c.forma_pagamento && pg.pix) { c.forma_pagamento = 'pix'; mudou.push('forma de pagamento'); }
       if (c.tipo !== 'medico') c.tipo = 'medico';
       if (mudou.length) atualizados++;
-      return c.id;
+      return aplicarDigitado(c.id);
     }
 
     const id = 'cr' + Date.now().toString(36) + '-' + (D.credores.length + 1);
@@ -1969,7 +2328,7 @@ ERP.produtividade = (function () {
       forma_pagamento: normalizarPix(pg).pix ? 'pix' : null
     });
     novos++;
-    return id;
+    return aplicarDigitado(id);
   }
 
   return { montar: montar, ler: ler };

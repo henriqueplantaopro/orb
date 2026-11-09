@@ -1,61 +1,87 @@
 O QUE MUDOU NESTA VERSAO:
 
-   EXCLUIR PASSA A EXCLUIR. Contrato, cliente, regra de conciliacao
-   e previsao saiam da tela e nao saiam do banco: atualizando a
-   pagina, voltavam. Em todos os modulos, desde sempre, e sem
-   nenhum erro em nenhuma tentativa - era por isso que o problema
-   voltava: nao havia o que ler.
+   POR QUE O PIX DO COORDENADOR NAO FICAVA. Nao era a planilha. O
+   arquivo do SAMU esta certo: o leitor reconhece o David, a chave, o
+   CPF e os R$ 2.000,00, e os tres totais fecham em R$ 301.200,00.
+   Eram tres silencios somados.
 
-   A CAUSA. A seguranca do banco (RLS) foi montada com tres
-   permissoes por tabela: ver, criar e alterar. EXCLUIR nao foi
-   dada a ninguem, de proposito, quando o desenho era "o sistema
-   cancela e estorna, nunca apaga". Depois o sistema ganhou telas
-   que apagam mesmo, e o pedido delas passou a cair no vazio.
+   PRIMEIRO SILENCIO, e o que resolve o caso: quem lanca produtividade
+   nao tinha permissao no banco para gravar o que a tela dela produz.
+   A importacao escreve em TRES modulos - o lote em Produtividade, o
+   cadastro do medico em Cadastros, o titulo e a parcela em
+   Financeiro. O perfil de Gerencia de produtividade tem alteracao
+   so no primeiro. O sistema tem a valvula certa no navegador (que
+   deixa a produtividade criar o repasse sem poder lancar conta a
+   pagar avulsa); o banco nao tinha valvula nenhuma. O navegador
+   dizia sim e o banco dizia nao.
 
-   POR QUE ERA MUDO. Criar e alterar recusados voltam COM erro, e a
-   faixa vermelha acende. Excluir, nao: a permissao de exclusao nao
-   barra o pedido, ela faz a linha nao existir para aquele pedido -
-   e apagar nada e sucesso. O banco responde "apagadas: 0", sem
-   erro. O sistema tirava a linha da tela, mandava o pedido, recebia
-   silencio e dava por gravado.
+   SEGUNDO SILENCIO, que escondeu o primeiro: ALTERACAO recusada pelo
+   banco nao devolve erro. Criar recusado grita; alterar recusado
+   devolve "zero linha" e mais nada. Medido num Postgres de verdade
+   com esta mesma seguranca: o comando que completa a chave PIX
+   devolveu UPDATE 0, sem erro, e o campo continuou vazio. A
+   importacao preenchia o cadastro na memoria, o banco ignorava, a
+   tela dava por gravado, e o F5 trazia o cadastro vazio. E a
+   gravacao em lote ainda pedia ao banco para NAO dizer o que havia
+   gravado - era o silencio contratado. E a mesma falha que a v163
+   corrigiu na EXCLUSAO, no outro verbo.
 
-   Medido num Postgres de verdade, com esta mesma seguranca e com
-   TODOS os niveis e TODAS as acoes concedidos: o comando de
-   exclusao devolveu "apagadas: 0", sem erro, e o contrato continuou
-   la. Com a permissao criada, devolve "apagadas: 1".
+   TERCEIRO: a tela acusava falta onde nao havia. A coluna do credor
+   na previa lia so o cadastro e dizia "completa cadastro - chave
+   PIX" para quem tem a chave no ARQUIVO, uma linha abaixo na mesma
+   tela. Foi esse aviso que mandou alguem reorganizar a planilha.
+   Agora a conta e uma so: cadastro, arquivo e o que foi digitado
+   agora. Falta e so o que, somando as tres fontes, continua
+   faltando.
 
-   A CORRECAO TEM DUAS PONTAS. No banco, a permissao de exclusao
-   onde o sistema realmente apaga - e so ali (ATUALIZAR-v163.sql).
-   No sistema, a gravacao passou a CONFERIR quantas linhas o banco
-   apagou, em vez de supor. Zero linha com o registro ainda la nao
-   e mais sucesso: acende a faixa vermelha, diz o que falta, e O
-   REGISTRO VOLTA PARA A TELA na hora - em vez de sumir e reaparecer
-   depois. Isso vale para qualquer tabela e para qualquer tela de
-   exclusao futura, nao so para as quatro de agora.
+   O MESMO VALE PARA O PESSOAL: a folha cria titulo e parcela, e o
+   perfil de DP tambem nao tem Financeiro. Mesma causa, consertada
+   junto - e a ficha do funcionario, onde mora a conta bancaria de
+   quem recebe a folha, passou a ser conferida do mesmo jeito.
 
-   O QUE CONTINUA SEM EXCLUSAO: nota, titulo, pagamento,
-   procedimento, fechamento, folha, movimento de estoque e trilha de
-   auditoria. Esses se cancelam e se estornam, com rastro. A folha e
-   a ficha do funcionario ganharam TRAVA explicita: tinham permissao
-   ampla que incluia excluir sem ninguem ter decidido isso.
+   DADOS BANCARIOS A MAO, com botao vermelho. Quando falta como
+   pagar o profissional, aparece o botao na linha dele - na previa da
+   importacao e no lancamento ja feito. Aceita PIX (com o tipo da
+   chave aferido pela propria chave) OU banco, agencia e conta, que
+   e o caso de quem nao recebe por PIX. Os tres campos da
+   transferencia sao cobrados juntos: faltando um, o banco recusa a
+   remessa inteira, nao so a linha. Tudo fica na trilha com o valor
+   anterior.
 
-   O SALDO INFORMADO DO BANCO NUNCA ERA GRAVADO. Achado pela
-   verificacao escrita para a correcao acima. Duas faltas juntas: o
-   registro nascia sem identificador (e a gravacao ignora registro
-   sem identificador), e informar o saldo de novo no mesmo dia
-   removia o registro anterior - remocao que o banco tambem recusava
-   calado. O valor digitado nao subia, o antigo "sumia" sem sumir, e
-   a prova real (saldo do banco contra saldo do sistema) comparava
-   contra um numero velho. Agora o registro do mesmo banco e mesma
-   data e atualizado no lugar, com a divergencia gravada.
+   BLOQUEAR E LIBERAR NO DETALHE DO LANCAMENTO. Bloquear so existia
+   no instante da importacao - quem descobre o contrato pendente no
+   dia seguinte nao tinha onde segurar o pagamento. Agora os dois
+   estao na linha do medico, com motivo obrigatorio nos dois lados.
+   E a tela se atualiza na hora: liberar funcionava e a lista
+   continuava dizendo "bloqueado" ate alguem trocar de aba.
 
-   ALTERAR O VALOR DA MEDICAO NA ESTEIRA. A tela perguntava por uma
-   permissao que nao existe na lista de permissoes do sistema: a
-   resposta era NAO para qualquer perfil criado pela tela de
-   Administracao, sem jeito de conceder. Agora pergunta pelo nivel
-   do modulo Produtividade, que a matriz concede e revoga. Quem ja
-   podia continua podendo.
+   DETALHE VAZIO DIZ POR QUE ESTA VAZIO. Lancamento cujos titulos nao
+   estao carregados mostrava uma tabela em branco. "Vazio" era duas
+   coisas opostas - o repasse nao chegou ao banco, ou chegou e o seu
+   perfil nao ve o modulo Financeiro - e nenhuma delas se descobre
+   olhando mais forte para a tabela.
 
-   DEPOIS DE RODAR O SQL: os contratos e clientes que voltaram nas
-   tentativas anteriores continuam no banco. Exclua de novo - agora
-   vai.
+   REIMPORTAR ARQUIVO CORRIGIDO VOLTA A OFERECER SUBSTITUIR. A
+   conferencia de "ja lancado" procurava uma chave que deixou de
+   existir na v162 (quando coordenacao e plantao passaram a ser dois
+   titulos). Nenhum medico era reconhecido, a pergunta sobre
+   substituir o fechamento anterior nao aparecia, e o arquivo novo
+   era recusado medico por medico como duplicado.
+
+   ESTEIRA: SITUACAO "SEM FATURAMENTO". Projeto que num mes nao
+   fatura - mutirao que nao houve, mes que o orgao nao autorizou,
+   contrato entre renovacoes - ficava como "Previsto" para sempre,
+   igual a quem esta atrasado. O botao "Nao tem faturamento" esta na
+   linha, pede o motivo e tira a competencia da lista de pendencias;
+   a classificacao nova aparece na barra de filtros e tem volta
+   ("Voltar a faturar"). Em grupo de nota unica, vale para as
+   especialidades todas. Os dois rotulos da aba Cobertura estavam
+   dizendo o contrario do que sao e foram trocados: "nada lancado
+   ainda" para o mes em branco, "sem faturamento neste mes" para a
+   decisao.
+
+   DEPOIS DE RODAR O SQL: os quatro fechamentos de outubro lancados
+   pela gerencia provavelmente estao no banco so pelo cabecalho, sem
+   os medicos. Abra o detalhe de cada um: se a lista vier com a
+   explicacao em vermelho, cancele o lancamento e importe o arquivo
+   de novo - agora grava.

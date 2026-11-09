@@ -79,7 +79,13 @@ ERP.persistencia = (function () {
     empresas: { tabela: 'empresas', colunas: ['id', 'apelido', 'nome', 'cnpj', 'municipio', 'uf', 'codigo_ibge', 'inscricao_municipal', 'matriz', 'ativo'] },
     centros: { tabela: 'centros', colunas: ['id', 'curto', 'codigo', 'nome', 'tipo', 'unidade', 'cidade', 'uf', 'cnpj', 'empresa', 'cliente', 'grupo_faturamento', 'especialidade_pate', 'impostos', 'ativo', 'tipo_servico', 'prev_faturamento', 'prev_repasse', 'produtividade', 'retencao_pct', 'prazo_dias'] },
     clientes: { tabela: 'clientes', colunas: ['id', 'nome', 'documento', 'centro_padrao', 'prazo_dias', 'endereco', 'numero', 'bairro', 'cidade', 'uf', 'cep', 'email', 'ativo'] },
-    credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta', 'dados_aprovados', 'ativo'] },
+    /* `conta_bancaria` entrou na lista na v164: a coluna passou a
+       existir (SQL 72). Antes o número da conta do favorecido ia
+       para o `extra`, enquanto `banco` e `agencia` iam para as
+       colunas — metade do dado bancário escondida de qualquer
+       consulta feita no banco. A coluna `conta`, de uma versão
+       antiga, fica fora: o sistema nunca escreveu nela. */
+    credores: { tabela: 'credores', colunas: ['id', 'nome', 'tipo', 'documento', 'conta_padrao', 'forma_pagamento', 'pix', 'tipo_chave', 'banco', 'agencia', 'conta_bancaria', 'dados_aprovados', 'ativo'] },
     bancos: { tabela: 'bancos', colunas: ['id', 'empresa', 'apelido', 'banco', 'agencia', 'agencia_dv', 'conta', 'conta_dv', 'layout_remessa', 'convenio', 'saldo_inicial', 'saldo_inicial_em', 'ativo'] },
     produtos: { tabela: 'produtos', colunas: ['id', 'codigo', 'descricao', 'unidade', 'ncm', 'cest', 'familia', 'minimo', 'ideal', 'custo', 'conta', 'ativo'] },
     armazens: { tabela: 'armazens', colunas: ['id', 'codigo', 'nome', 'centro', 'tipo', 'pai', 'responsavel', 'ativo', 'especialidade'] },
@@ -532,9 +538,24 @@ ERP.persistencia = (function () {
     if (!mudaram.length) return null;
 
     const linhas = mudaram.map(function (f) { return paraBanco(f, COLUNAS_FUNCIONARIO, 'funcionarios'); });
-    const { error } = await c.from('funcionarios')
-      .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
+    /* CONFERIDO como o resto (ver `conferirEscrita`): `funcionarios`
+       tem política própria, que exige o módulo Pessoal com alteração
+       E a ação de ver dados pessoais. Faltando qualquer uma, o
+       UPDATE volta com zero linha e sem erro — e a conta bancária
+       de quem recebe a folha "salvava" e desaparecia na recarga.
+       Era o sintoma que a v152 atribuiu ao `extra` não desempacotado;
+       a causa do `extra` era real, esta é a outra metade. */
+    const { data, error } = await c.from('funcionarios')
+      .upsert(linhas, { onConflict: 'id' }).select('id');
     if (error) return 'funcionarios: ' + error.message;
+    const voltaram = (data || []).map(function (x) { return x.id; });
+    const faltando = linhas.map(function (l) { return l.id; })
+      .filter(function (id) { return voltaram.indexOf(id) < 0; });
+    if (faltando.length) {
+      return 'funcionarios (' + faltando.length + ' ficha(s): ' + faltando.slice(0, 3).join(', ') +
+        '): o banco NÃO gravou e não devolveu erro. A ficha do funcionário exige o módulo ' +
+        'Pessoal com alteração e a permissão de ver dados pessoais.';
+    }
     mudaram.forEach(function (f) { sombraFuncionarios[f.id] = JSON.stringify(f); });
     return null;
   }
@@ -829,6 +850,102 @@ ERP.persistencia = (function () {
       'quem cuida do sistema precisa rodar a atualização do banco. ' +
       (voltou ? 'O registro voltou para a tela, que é onde ele está de verdade.'
               : 'Atualize a página: o registro continua no banco.');
+  }
+
+  /* ── E A ALTERAÇÃO? ERA MUDA DO MESMO JEITO ─────────────
+
+     A v163 fechou o silêncio do DELETE. Faltava metade: o UPDATE
+     recusado pela RLS também devolve zero linha e NENHUM erro. A
+     política não barra o pedido — ela faz a linha não existir para
+     ele, e alterar nada é sucesso.
+
+     Medido no Postgres 16 com a RLS deste sistema, no perfil
+     "Gerência de produtividade" (produtividade VMFA, cadastros V,
+     nada de financeiro):
+
+       insert into credores  ...  ->  ERRO, row-level security   (alto)
+       update credores set pix ...  ->  UPDATE 0, sem erro        (mudo)
+       insert into titulos   ...  ->  ERRO, row-level security   (alto)
+
+     O INSERT grita; o UPDATE não. E era por isso que a chave PIX do
+     coordenador não ficava: a importação preenchia o cadastro dele
+     na memória, mandava o UPDATE, o banco ignorava sem reclamar, a
+     tela dava por gravado — e o F5 trazia o cadastro vazio de
+     volta. O mesmo mecanismo da exclusão, no outro verbo.
+
+     Pior: a gravação em lote pedia `returning: 'minimal'`, ou seja,
+     pedia ao banco para NÃO dizer o que gravou. Era o silêncio
+     contratado.
+
+     Agora toda escrita volta com os ids que entraram, e o que não
+     volta é cobrado. `select('id')` em vez do antigo `*` resolve de
+     uma vez o motivo pelo qual o `minimal` existia: `RETURNING *`
+     tocava a coluna `paciente`, revogada por permissão, e derrubava
+     a gravação inteira com 42501. Pedindo só o id, nada revogado é
+     lido e o número de linhas aparece.
+
+     DOIS LUGARES CONTINUAM COM `minimal`, e é de propósito:
+     `posicoes_estoque`, cuja chave é o par produto+armazém e não um
+     id — conferir ali exigiria comparar pares, e quem escreve é o
+     módulo dono da tabela, de modo que a recusa calada precisaria de
+     um perfil com alteração e sem consulta no mesmo módulo; e o
+     reenvio linha a linha de `culpadas`, que existe para descobrir
+     QUAL linha derruba o lote e só se interessa por erro. */
+  const MODULO_DA_TABELA = (function () {
+    /* ESPELHO do mapa do 02-rls.sql. Existe para a mensagem poder
+       dizer QUAL módulo falta — sem isso o aviso é "o banco
+       recusou", que não diz a ninguém o que fazer. Uma verificação
+       no teste de fumaça confronta este mapa com o do SQL: dois
+       lugares com a mesma verdade só se sustentam se alguém
+       conferir que continuam iguais. */
+    const mapa = {
+      financeiro: ['titulos', 'parcelas', 'pagamentos', 'retencoes_registradas', 'guias_retencao',
+        'extratos', 'linhas_extrato', 'saldos_informados', 'transferencias_banco',
+        'regras_conciliacao'],
+      faturamento: ['receber', 'previsoes', 'lotes_rps'],
+      contratos: ['contratos'],
+      estoque: ['produtos', 'armazens', 'posicoes_estoque', 'estoque_camadas',
+        'estoque_movimentos', 'minimos_estoque'],
+      compras: ['compras'],
+      procedimentos: ['procedimentos', 'fechamentos_procedimentos'],
+      produtividade: ['lotes_produtividade'],
+      ativos: ['ativos', 'ativo_movimentos', 'ordens_servico'],
+      dp: ['decimos', 'cargos'],
+      cadastros: ['centros', 'clientes', 'credores', 'bancos', 'plano_contas', 'empresas']
+    };
+    const porTabela = {};
+    Object.keys(mapa).forEach(function (mod) {
+      mapa[mod].forEach(function (t) { porTabela[t] = mod; });
+    });
+    return porTabela;
+  })();
+
+  const NOME_DO_MODULO = {
+    financeiro: 'Financeiro', faturamento: 'Faturamento', contratos: 'Contratos',
+    estoque: 'Estoque', compras: 'Compras', procedimentos: 'Procedimentos',
+    produtividade: 'Produtividade', ativos: 'Ativos', dp: 'Pessoal', cadastros: 'Cadastros'
+  };
+
+  async function conferirEscrita(c, m, enviados, voltaram, verbo) {
+    const faltando = enviados.filter(function (id) { return id && voltaram.indexOf(id) < 0; });
+    if (!faltando.length) return null;
+    /* Nada voltou para estes ids. Duas coisas diferentes levam a
+       isto, e uma leitura separa as duas: o banco recusou a
+       alteração, ou este perfil grava e não lê a tabela (a matriz
+       aceita M sem V). Dizer a coisa errada aqui manda a pessoa
+       procurar no lugar errado. */
+    const r = await c.from(fonteDeLeitura(m.nome, m.def.tabela))
+      .select('id').eq('id', faltando[0]);
+    const cego = !!r.error || !r.data || !r.data.length;
+    const mod = MODULO_DA_TABELA[m.def.tabela];
+    return m.def.tabela + ' (' + verbo + ' ' + faltando.length + ' registro(s): ' +
+      faltando.slice(0, 3).join(', ') + (faltando.length > 3 ? '…' : '') + '): ' +
+      (cego
+        ? 'o banco não confirmou a gravação e também não deixa conferir esta tabela.'
+        : 'o banco NÃO gravou e não devolveu erro — a política recusou a alteração. ' +
+          (mod ? 'Esta tabela é do módulo ' + (NOME_DO_MODULO[mod] || mod) +
+                 ', e o seu perfil não tem alteração nele. ' : '') +
+          'Quem administra o sistema resolve em Administração › Perfis.');
   }
 
   /* QUAL LINHA DERRUBOU O LOTE.
@@ -1456,8 +1573,13 @@ ERP.persistencia = (function () {
             for (const it of inserir) {
               const linha = completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
               delete linha.id;
-              const r2 = await c.from(m.def.tabela).update(linha).eq('id', it.id);
+              const r2 = await c.from(m.def.tabela).update(linha).eq('id', it.id).select('id');
               if (r2.error) falhas.push(m.def.tabela + ' (' + it.id + '): ' + r2.error.message);
+              else {
+                const f2 = await conferirEscrita(c, m, [it.id],
+                  (r2.data || []).map(function (x) { return x.id; }), 'gravar');
+                if (f2) falhas.push(f2);
+              }
             }
           } else if (error) {
             falhas.push(m.def.tabela + ': ' + error.message +
@@ -1467,20 +1589,31 @@ ERP.persistencia = (function () {
         for (const it of atualizar) {
           const linha = completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
           delete linha.id;
-          const { error } = await c.from(m.def.tabela).update(linha).eq('id', it.id);
+          const { data, error } = await c.from(m.def.tabela)
+            .update(linha).eq('id', it.id).select('id');
           if (error) falhas.push(m.def.tabela + ' (atualizar ' + it.id + '): ' + error.message);
+          else {
+            const f2 = await conferirEscrita(c, m, [it.id],
+              (data || []).map(function (x) { return x.id; }), 'alterar');
+            if (f2) falhas.push(f2);
+          }
         }
       } else if (m.novos.length) {
         const linhas = m.novos.map(function (it) {
           return completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
         });
-        /* `returning: 'minimal'` — sem isto, o supabase-js manda
-           `Prefer: return=representation`, o Postgres faz RETURNING *,
-           e o * inclui a coluna `paciente`, que está revogada: a
-           gravação inteira volta 42501. Não precisamos da linha de
-           volta — ela já está na memória, foi de lá que saiu. */
-        const { error } = await c.from(m.def.tabela)
-          .upsert(linhas, { onConflict: 'id', returning: 'minimal' });
+        /* VOLTA COM OS IDS — e só com eles.
+
+           Era `returning: 'minimal'`, que é pedir ao banco para não
+           dizer o que gravou. O motivo era real: `RETURNING *` toca
+           a coluna `paciente`, revogada por permissão, e derrubava a
+           gravação inteira com 42501. Mas o preço era o silêncio —
+           uma alteração recusada pela política passava por gravada.
+
+           `select('id')` resolve os dois: nada revogado é lido, e o
+           número de linhas aparece. Ver `conferirEscrita`. */
+        const { data, error } = await c.from(m.def.tabela)
+          .upsert(linhas, { onConflict: 'id' }).select('id');
         if (error && /duplicate key|23505/i.test(error.message || '')) {
           /* Idem: já está no banco. Com upsert isto é raro, mas
              acontece quando a tabela tem outra chave única. */
@@ -1488,6 +1621,11 @@ ERP.persistencia = (function () {
         } else if (error) {
           falhas.push(m.def.tabela + ': ' + error.message +
             await culpadas(c, m.def.tabela, linhas, m.novos, error.message));
+        } else {
+          const f2 = await conferirEscrita(c, m,
+            linhas.map(function (l) { return l.id; }),
+            (data || []).map(function (x) { return x.id; }), 'gravar');
+          if (f2) falhas.push(f2);
         }
       }
       /* Registro que saiu do estado. O sistema cancela e estorna em

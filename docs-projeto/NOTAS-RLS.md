@@ -111,11 +111,69 @@ dessas telas caía no vazio, e o registro voltava na recarga.
 
 **Delete recusado pela RLS não devolve erro.** A política de
 exclusão não barra o pedido: ela faz a linha não existir para ele, e
-apagar nada é sucesso — "DELETE 0", 204, `error: null`. É o único
-verbo com esse comportamento; insert e update recusados gritam. Por
-isso a falta ficou anos invisível, e por isso o cliente passou a
-conferir o número de linhas em vez de supor (`apagarNoBanco`, em
+apagar nada é sucesso — "DELETE 0", 204, `error: null`. Por isso a
+falta ficou anos invisível, e por isso o cliente passou a conferir o
+número de linhas em vez de supor (`apagarNoBanco`, em
 `persistencia.js`).
+
+**Correção da v164: o delete não era o único.** Esta seção dizia que
+ele era ("insert e update recusados gritam"). O insert grita; o
+UPDATE, não — ele é filtrado pelo `using` da política e devolve zero
+linha, sem erro, exatamente como o delete. Medido no mesmo Postgres:
+
+```
+insert into credores ...       ->  ERRO: row-level security
+update credores set pix = ...  ->  UPDATE 0, SEM ERRO
+```
+
+Era isso que fazia a chave PIX completada pela importação do
+fechamento desaparecer na recarga. Agora toda escrita volta com os
+ids que entraram (`select('id')`, que também resolveu o motivo pelo
+qual existia o `returning: 'minimal'`: `RETURNING *` tocava a coluna
+`paciente`, revogada, e derrubava a gravação com 42501). O id que não
+volta é cobrado por `conferirEscrita`, que separa "a política
+recusou" de "este perfil grava e não lê esta tabela" com uma leitura.
+
+## Módulo que escreve na tabela de outro módulo (v164)
+
+O mapa do laço acima dá a cada tabela UM módulo dono. Quatro telas
+escrevem fora do seu:
+
+| tela | tabela | módulo dono |
+|---|---|---|
+| Produtividade (importação do fechamento) | `titulos`, `parcelas` | financeiro |
+| Produtividade (cadastro do médico) | `credores` | cadastros |
+| Pessoal (folha e décimo) | `titulos`, `parcelas` | financeiro |
+| Pessoal (espelho do funcionário) | `credores` | cadastros |
+
+O navegador já tratava isso com a válvula `_interno` do
+`criarTitulo`: fechar produtividade não é lançar conta a pagar
+avulsa, e por isso não exige a ação `lancar`. O banco não tinha
+equivalente, então a gravação era recusada — com erro no insert e em
+silêncio no update.
+
+O SQL 72 dá a permissão pela ORIGEM do registro, não pelo módulo:
+`origem = 'produtividade'` com `tipo_titulo = 'medicao'`, e
+`origem in ('folha','decimo')` para o Pessoal. Só origem não bastava:
+medido, com ela sozinha a gerência conseguia gravar um título de
+qualquer natureza marcado como produtividade. O `with check` repete a
+condição, para que ninguém MUDE a origem depois e saia da regra.
+
+Em `credores` a regra é o TIPO: médico para a produtividade,
+funcionário para o Pessoal. Nenhum dos dois alcança fornecedor,
+órgão ou sócio, e o `with check` impede converter um fornecedor em
+médico para poder editá-lo.
+
+A leitura entra junto (`ver_titulos_produtividade`): sem ver o que
+lançou, a gerência não confere o fechamento nem libera médico
+bloqueado, e perde o detalhe no primeiro F5. Ela passa a ver os
+títulos de produtividade, e só eles.
+
+Isto dá à gerência de produtividade o poder de alterar a chave PIX de
+um médico — que é o trabalho dela. O controle não é a permissão, é o
+rastro: toda alteração fica na trilha com o valor anterior, e a
+importação aponta divergência entre arquivo e cadastro em vez de
+trocar calada.
 
 Hoje: cinco tabelas com política de exclusão, no mesmo nível que a
 tela já exige — `contratos` e `clientes` (ação `admin`),

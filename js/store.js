@@ -611,6 +611,91 @@ ERP.store = (function () {
     return Object.assign({ codigo: c.forma_pagamento }, D.formasPagamento[c.forma_pagamento] || {});
   }
 
+  /* ── DADOS BANCÁRIOS A MÃO, QUANDO O ARQUIVO NÃO TROUXE ──
+
+     O cadastro do médico se completa pela importação do fechamento:
+     é o arquivo que traz CPF, CRM, razão social e chave PIX, e é
+     essa conferência que faz a remessa sair sem retrabalho. Quando o
+     arquivo NÃO traz — o coordenador que não está na tabela dos
+     plantonistas, o médico que recebe por transferência e não por
+     PIX —, não havia caminho nenhum: a tela de Cadastros fecha
+     esses campos para médico de propósito (para ninguém mexer em
+     chave por fora da conferência), e a importação só preenche o
+     que o arquivo tem. O cadastro ficava incompleto para sempre e o
+     pagamento, travado.
+
+     Então o caminho existe aqui, com três condições que são o que
+     separa "completar cadastro" de "mexer em chave alheia":
+
+       · é só para médico (fornecedor tem a tela de Cadastros);
+       · o que falta é cobrado ANTES de gravar, pela mesma regra que
+         o contas a pagar usa para travar o pagamento — senão o
+         conserto produz um cadastro que trava do mesmo jeito, só
+         mais adiante;
+       · e tudo fica na trilha, com o valor anterior.
+
+     Chave PIX e conta bancária são excludentes na prática: quem
+     recebe por PIX não precisa de agência. A forma de pagamento
+     sai daqui JUNTO com o dado, e não depois — forma sem o dado
+     que ela exige é exatamente a trava que isto vem resolver. */
+  function validarDadosBancarios(d) {
+    d = d || {};
+    const forma = String(d.forma_pagamento || '').trim();
+    if (forma === 'pix') {
+      if (!String(d.pix || '').trim()) return { erro: 'Informe a chave PIX.' };
+      return { ok: true };
+    }
+    if (forma === 'ted') {
+      const falta = [];
+      if (!String(d.banco || '').trim()) falta.push('banco');
+      if (!String(d.agencia || '').trim()) falta.push('agência');
+      if (!String(d.conta_bancaria || '').trim()) falta.push('conta');
+      if (falta.length) {
+        return { erro: 'Para transferência o banco exige ' + falta.join(', ') +
+          '. Sem os três a remessa volta.' };
+      }
+      return { ok: true };
+    }
+    return { erro: 'Escolha como este profissional recebe: PIX ou transferência.' };
+  }
+
+  function informarDadosBancarios(credorId, d) {
+    if (!podeMover('produtividade') && !pode('lancar')) {
+      return { erro: 'Seu perfil não altera dados bancários de médico.' };
+    }
+    const c = D.credor(credorId);
+    if (!c) return { erro: 'Cadastro não encontrado.' };
+    if (c.tipo !== 'medico') {
+      return { erro: 'Este cadastro não é de médico: use Cadastros › Fornecedores.' };
+    }
+    const v = validarDadosBancarios(d);
+    if (v.erro) return v;
+    const antes = [c.forma_pagamento || 'sem forma', c.pix || '',
+      [c.banco, c.agencia, c.conta_bancaria].filter(Boolean).join('/')].filter(Boolean).join(' · ');
+    if (String(d.forma_pagamento) === 'pix') {
+      c.forma_pagamento = 'pix';
+      c.pix = String(d.pix).trim();
+      c.tipo_chave = d.tipo_chave || '';
+      /* Banco, agência e conta saem de cena: deixar o par antigo
+         gravado ao lado da chave nova é o começo de um pagamento
+         feito na conta errada no dia em que alguém trocar a forma. */
+      c.banco = ''; c.agencia = ''; c.conta_bancaria = '';
+    } else {
+      c.forma_pagamento = 'ted';
+      c.banco = String(d.banco).trim();
+      c.agencia = String(d.agencia).trim();
+      c.conta_bancaria = String(d.conta_bancaria).trim();
+      c.pix = ''; c.tipo_chave = '';
+    }
+    if (d.documento && !c.documento) c.documento = d.documento;
+    const depois = c.forma_pagamento === 'pix'
+      ? 'PIX ' + c.pix
+      : 'transferência ' + c.banco + ' ag. ' + c.agencia + ' c/c ' + c.conta_bancaria;
+    logar('credor', c.id, 'informou dados bancários a mão',
+      (antes || 'sem dados') + ' → ' + depois);
+    return { ok: true, credor: c };
+  }
+
   function impedimentos(par) {
     const c = D.credor(par.credor);
     const f = formaDoCredor(par.credor);
@@ -3107,7 +3192,7 @@ ERP.store = (function () {
     if (!pode('lancar')) {
       return { erro: 'Seu perfil não lança título no financeiro, e o fechamento gera o repasse dos médicos.' };
     }
-    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
+    if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
       return { erro: 'Seu perfil não confirma valor de faturamento.' };
     }
     const alvo = d.centro || D.PATE_CENTRO;
@@ -4401,7 +4486,7 @@ ERP.store = (function () {
      com o velho, num grupo que só faz sentido inteiro. */
   function valoresPorSetor(grupo, competencia, partes, opcoes) {
     opcoes = opcoes || {};
-    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
+    if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
       return { erro: 'Seu perfil não altera valor de faturamento.' };
     }
     if (!competencia) return { erro: 'Informe a competência.' };
@@ -9123,6 +9208,27 @@ ERP.store = (function () {
     });
   }
 
+  /* ── CABEÇALHO SEM OS MÉDICOS DENTRO ────────────────────
+
+     Fechamento cujo registro existe e cujos títulos não: foi o que
+     sobrou dos quatro fechamentos de outubro, lançados por um perfil
+     que o banco não deixava gravar `titulos` nem `parcelas`. O
+     cabeçalho é do módulo Produtividade e foi gravado; o dinheiro é
+     do Financeiro e não foi.
+
+     Reconhecer isto importa na hora de reimportar o arquivo: sem
+     olhar para cá, a conferência de "já lançado" não acha título
+     nenhum (não existem), não oferece substituir, e o sistema cria
+     um SEGUNDO cabeçalho ao lado do primeiro — dois lançamentos para
+     a mesma competência, um vazio. */
+  function fechamentosSemTitulos(centro, competencia) {
+    return fechamentosVivosDe(centro, competencia).filter(function (l) {
+      const ids = Array.isArray(l.titulo_ids) ? l.titulo_ids : [];
+      if (!ids.length) return true;
+      return !st.parcelas.some(function (p) { return ids.indexOf(p.titulo_id) > -1; });
+    });
+  }
+
   /* O que muda entre o fechamento lançado e o arquivo novo: quem saiu,
      quem entrou, quem mudou de valor — e, dentro disso, quem JÁ
      RECEBEU. É o que a gestão precisa ver antes de substituir. */
@@ -9258,8 +9364,24 @@ ERP.store = (function () {
   /* Bloqueio de pagamento por médico: contrato não assinado, check-in
      não confirmado, o que a gestão precisar segurar. O título continua
      lançado (o custo é real), mas não entra em remessa. */
+  /* ── `pode('produtividade')` NUNCA EXISTIU COMO AÇÃO ────
+
+     `pode()` procura o nome na matriz de ações e, não achando, na
+     lista de ações do perfil. 'produtividade' é nome de MÓDULO: não
+     está na lista oficial de ações, logo não há como concedê-la pela
+     tela de Administração. Funcionava por acidente em dois perfis de
+     origem, que têm a palavra escrita na lista de ações deles; para
+     qualquer perfil criado na tela, a resposta era NÃO — sem
+     conserto possível.
+
+     A v163 corrigiu a pergunta nas telas e deixou o store como
+     estava: meia correção, que é a pior espécie, porque a tela mostra
+     o botão e a gravação recusa. As cinco perguntas deste arquivo
+     passam a ser pelo NÍVEL do módulo, que a matriz concede e
+     revoga. Quem já podia continua podendo: todo perfil que tinha a
+     palavra na lista tem M em Produtividade. */
   function bloquearPagamentoMedico(loteId, d) {
-    if (!pode('produtividade') && !pode('lancar')) {
+    if (!podeMover('produtividade') && !pode('lancar')) {
       return { erro: 'Seu perfil não bloqueia pagamento de médico.' };
     }
     const l = st.lotesProdutividade.find(function (x) { return x.id === loteId; });
@@ -9287,7 +9409,7 @@ ERP.store = (function () {
   }
 
   function liberarPagamentoMedico(loteId, tituloId, motivo) {
-    if (!pode('produtividade') && !pode('lancar')) {
+    if (!podeMover('produtividade') && !pode('lancar')) {
       return { erro: 'Seu perfil não libera pagamento de médico.' };
     }
     const l = st.lotesProdutividade.find(function (x) { return x.id === loteId; });
@@ -14713,7 +14835,7 @@ ERP.store = (function () {
      situação "previsto": ele já entra no fluxo e aparece na lista, com
      a etiqueta certa, em vez de existir só numa tela paralela.
      Encerrar cancela o que sobrou de previsto. */
-  function marcarPrevisoes(comp, status, centro) {
+  function marcarPrevisoes(comp, status, centro, motivo) {
     if (!pode('faturar') && !pode('lancar')) return { erro: 'Seu perfil não marca previsões.' };
     let alvo = st.previsoes.filter(function (p) {
       return p.tipo !== 'despesa' && p.competencia === comp && (!centro || p.centro === centro);
@@ -14727,7 +14849,7 @@ ERP.store = (function () {
       const nova = {
         id: novoId('pv'), centro: centro, competencia: comp, tipo: 'receita',
         faturamento: 0, produtividade: 0, status: 'estimada',
-        observacao: 'Sem faturamento nesta competência', criado_em: new Date()
+        observacao: motivo || 'Sem faturamento nesta competência', criado_em: new Date()
       };
       st.previsoes.push(nova);
       alvo = [nova];
@@ -14741,6 +14863,18 @@ ERP.store = (function () {
       if (p.status === 'confirmada_prod' && status === 'confirmada') { mantidas++; return; }
       p.status = status;
       p.status_em = U.hoje();
+      /* O MOTIVO É O QUE FAZ A MARCA VALER DEPOIS.
+         "Sem faturamento" sem motivo, três meses adiante, é
+         indistinguível de esquecimento — e alguém vai refazer a
+         conta para descobrir o que já foi decidido. */
+      if (status === 'encerrada') {
+        p.sem_faturamento_motivo = motivo || '';
+        p.sem_faturamento_por = usuario().nome;
+        if (motivo) p.observacao = motivo;
+      } else if (p.sem_faturamento_motivo) {
+        p.sem_faturamento_motivo = null;
+        p.sem_faturamento_por = null;
+      }
       if (confirmada({ status: status })) criarReceberPrevisto(p);
       if (status === 'encerrada') {
         st.receber.filter(function (r) {
@@ -14752,8 +14886,10 @@ ERP.store = (function () {
         });
       }
     });
-    logar('previsao', comp, status === 'encerrada' ? 'encerrou competência' : 'confirmou previsões',
+    logar('previsao', comp,
+      status === 'encerrada' ? 'marcou sem faturamento' : 'confirmou previsões',
       alvo.length + ' previsão(ões) de ' + U.fComp(comp) +
+      (status === 'encerrada' && motivo ? ' · ' + motivo : '') +
       (mantidas ? ' · ' + mantidas + ' mantida(s) como confirmadas pela produtividade' : ''));
     return { ok: true, n: alvo.length, mantidas: mantidas };
   }
@@ -15084,10 +15220,39 @@ ERP.store = (function () {
      Quem confirma a produtividade marca a autorização do órgão (é quem
      fala com o hospital); a liberação é de quem responde pelo
      faturamento. São duas mãos diferentes de propósito. */
-  const ETAPAS = ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado'];
+  /* 'sem_faturamento' no FIM, e é de propósito: o `indice` serve
+     para achar a etapa mais atrasada de um grupo, e a especialidade
+     que não fatura no mês não pode ser a mais atrasada do grupo.
+     Posta no começo (ou fora da lista, com indexOf devolvendo -1),
+     um mutirão marcado como "sem faturamento" arrastaria o grupo
+     inteiro para "sem faturamento" — e a nota única do grupo, que
+     tem de sair, sairia da tela. Estando no fim, ela só vence
+     quando TODAS as especialidades estão marcadas, que é justamente
+     quando o grupo não fatura mesmo. */
+  const ETAPAS = ['previsao', 'confirmado', 'autorizado', 'liberado', 'faturado', 'sem_faturamento'];
 
+  /* ── "SEM FATURAMENTO" É UMA SITUAÇÃO, NÃO UMA OMISSÃO ──
+
+     Projeto que num mês não fatura — mutirão que não teve, plantão
+     que o órgão não autorizou, contrato entre renovações — aparecia
+     na esteira como "Previsto", exatamente igual ao projeto cujo
+     faturamento está atrasado. A decisão de não faturar existia no
+     sistema (`marcarPrevisoes` com 'encerrada', na aba Cobertura) e
+     NÃO tinha como aparecer: a esteira não lia esse status, então a
+     competência marcada continuava cobrando providência de quem
+     olhasse.
+
+     É a diferença entre "ninguém fez" e "foi decidido que não tem".
+     A primeira é trabalho; a segunda é informação — e misturar as
+     duas faz a lista de pendências mentir todo mês.
+
+     O status no banco continua 'encerrada' (é o que já está gravado
+     nas competências marcadas até hoje; trocar o nome do dado para
+     arrumar o nome na tela perderia o que existe). O que muda é que
+     ele passa a ter etapa própria, com rótulo próprio. */
   function etapaDaPrevisao(pv) {
     if (!pv) return 'previsao';
+    if (pv.status === 'encerrada') return 'sem_faturamento';
     if (pv.liberado_em) return 'liberado';
     if (pv.autorizado_em) return 'autorizado';
     if (pv.status === 'confirmada_prod') return 'confirmado';
@@ -15478,6 +15643,10 @@ ERP.store = (function () {
       linhas.push({
         centro: centro, projeto: c, competencia: competencia, previsao: pv || null,
         etapa: etapa, indice: ETAPAS.indexOf(etapa),
+        /* Por que não tem faturamento, na linha: a etiqueta sem o
+           motivo é só mais uma palavra na tela. */
+        sem_faturamento_motivo: (pv && pv.sem_faturamento_motivo) || '',
+        sem_faturamento_por: (pv && pv.sem_faturamento_por) || '',
         /* Para a tela marcar a linha quando alguém pede para ver os
            escondidos. */
         inativo: marcaInativo(c, centro),
@@ -15719,7 +15888,7 @@ ERP.store = (function () {
   }
 
   function confirmarFaturamentoProdutividade(d) {
-    if (!pode('faturar') && !pode('lancar') && !pode('produtividade')) {
+    if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
       return { erro: 'Seu perfil não confirma valor de faturamento.' };
     }
     const c = D.centro(d.centro);
@@ -20673,7 +20842,7 @@ ERP.store = (function () {
     aprovarRequisicao, registrarCotacao, totalCotado, aprovarCompra, emailDoPedido,
     registrarLoteProdutividade, lotesProdutividade, cancelarLoteProdutividade,
     confirmarLoteProdutividade, bloquearPagamentoMedico, liberarPagamentoMedico, situacaoLoteProdutividade,
-    substituirFechamento, fechamentosVivosDe, compararFechamento,
+    substituirFechamento, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,
@@ -20721,6 +20890,7 @@ ERP.store = (function () {
     retencoesPendentes, resumoRetencoesPendentes, guiasRetencao, fecharGuiaRetencao, cancelarGuiaRetencao,
     listar, parcela, saldoDe, valorNoCentro, aguardandoDe,
     formaDoCredor, impedimentos, editarParcela, CAMPOS_EDITAVEIS,
+    informarDadosBancarios, validarDadosBancarios,
     pagamentosAguardando, pagamento, autorizarPagamento, recusarPagamento,
     autorizadosDe, enviadosDe, emCursoDe, pagoDe, caixaDe, pagamentosDe, pagamentosTodos, eventosDe,
     pendentesAprovacao, semAnexo, pagoSemNota, temNota, dispensaNota, informarNF, todasParcelas,
