@@ -2988,9 +2988,49 @@ function liberarParaFaturar(centro, competencia) {
 (function () {
   const Ut = sandbox.window.ERP.util;
   S.setUsuario('u1');
+  /* v166 — O FINANCEIRO SÓ MANDA PARA APROVAÇÃO DEPOIS DA CONFIRMAÇÃO.
+     Três casos, cada um com a sua expectativa:
+       • título de fechamento POR CONFIRMAR      → não vai, "não foi confirmado";
+       • título IMPORTADO sem fechamento à vista → não vai, "não encontrei o
+         fechamento" (o passo QA91, acima, cria exatamente isso);
+       • título de produtividade ANTIGO, sem referência de importação →
+         a regra da confirmação não se aplica a ele: vai. */
+  const travaDe = function (pp) { return S.travaDaProdutividade(pp) || {}; };
+  const abertas = S.todasParcelas().filter(function (pp) {
+    return ['aberto', 'parcial'].indexOf(pp.status) > -1 && S.saldoDe(pp) > 0 && !S.emCursoDe(pp.id).length;
+  });
+  const tituloDe = function (pp) { return S.st.titulos.find(function (x) { return x.id === pp.titulo_id; }) || {}; };
+  const porConfirmar = abertas.find(function (pp) { return travaDe(pp).tipo === 'nao_confirmado'; });
+  const orfa = abertas.find(function (pp) { return tituloDe(pp).origem_ref === 'QA91|m1'; });
+  const antiga = abertas.find(function (pp) {
+    const tt = tituloDe(pp); return tt.origem === 'produtividade' && !tt.origem_ref; });
+  const tenta = function (pp) {
+    return pp ? S.registrarPagamento(pp.id, { data: Ut.hoje(), valor: pp.valor, banco: D.bancos[0].id,
+      situacao: 'aguardando', confirmar_cruzamento: true }) : { erro: '(caso não encontrado)' };
+  };
+  const r1v = tenta(porConfirmar);
+  verificar('fechamento por confirmar: o envio é recusado dizendo que falta a confirmação',
+    /não foi confirmado/.test(r1v.erro || ''), JSON.stringify(r1v));
+  const r2v = tenta(orfa);
+  verificar('título importado sem fechamento à vista: recusado, "não encontrei o fechamento"',
+    /Não encontrei o fechamento/.test(r2v.erro || ''), JSON.stringify(r2v));
+  verificar('título de produtividade antigo, sem referência de importação: a confirmação não se aplica',
+    antiga && S.travaDaProdutividade(antiga) === null, antiga ? JSON.stringify(S.travaDaProdutividade(antiga)) : '(sem caso)');
+  /* desfaz o pagamento da antiga, se o teste acima tiver criado algum */
+  /* a gestão da produtividade confirma o que estiver por confirmar */
+  S.setUsuario('u11');
+  S.st.lotesProdutividade.filter(function (l) { return !l.cancelado && !l.confirmado_em; })
+    .forEach(function (l) { S.confirmarLoteProdutividade(l.id, { ciente_bloqueios: true }); });
+  S.setUsuario('u1');
+  verificar('confirmado o fechamento, aquele título passa a poder ir para aprovação',
+    porConfirmar && S.travaDaProdutividade(porConfirmar) === null, porConfirmar ? JSON.stringify(S.travaDaProdutividade(porConfirmar)) : '');
   const ag = S.agruparRepasses(S.listar({ status: 'apagar' }));
   verificar('fechamento de produtividade vira um grupo', ag.grupos.length >= 1, ag.grupos.length);
-  const g = ag.grupos[0];
+  /* O grupo usado daqui para baixo é um que PODE ir para pagamento —
+     o do passo QA91 é órfão de propósito e fica travado. */
+  const g = ag.grupos.find(function (gr) { return gr.selecionaveis.length >= 2; });
+  verificar('há fechamento pagável para o teste do envio parcial', !!g,
+    JSON.stringify(ag.grupos.map(function (gr) { return [gr.chave, gr.selecionaveis.length]; })));
   verificar('o grupo soma os médicos e os valores',
     g.medicos >= 2 && Math.abs(g.valor - g.parcelas.reduce((a, p) => a + p.valor, 0)) < 0.01,
     JSON.stringify([g.medicos, g.valor]));
@@ -3004,7 +3044,7 @@ function liberarParaFaturar(centro, competencia) {
   const r1 = S.solicitarLote(doisIds, { banco: D.bancos[0].id, data: Ut.hoje() });
   verificar('dá para mandar só alguns médicos do fechamento', r1.ok, JSON.stringify(r1.erro));
   verificar('os demais continuam disponíveis',
-    S.agruparRepasses(S.listar({ status: 'apagar' })).grupos[0].selecionaveis.length ===
+    S.agruparRepasses(S.listar({ status: 'apagar' })).grupos.find(function (gr) { return gr.chave === g.chave; }).selecionaveis.length ===
       g.selecionaveis.length - 2, '');
 
   // aprovação: o gestor vê o grupo fechado
