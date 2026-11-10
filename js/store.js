@@ -3652,29 +3652,95 @@ ERP.store = (function () {
           : null) };
   }
 
+  /* ── A TRAVA DA PRODUTIVIDADE — UMA REGRA SÓ ──────────────
+
+     Duas regras do Henrique para o dinheiro do médico:
+       1. o financeiro só manda para aprovação de pagamento depois
+          que a gestão da produtividade CONFIRMA o fechamento;
+       2. médico bloqueado continua na previsão, mas não vai para
+          pagamento — e aparece como "bloqueado", mesmo com o
+          fechamento confirmado.
+
+     A trava 1 já existia dentro do `registrarPagamento`, e FALHAVA
+     ABERTA: procurava o fechamento e, sem achar, deixava passar. O
+     financeiro sem Produtividade no perfil não enxerga fechamento
+     nenhum (o banco não mostra) — então nunca achava, e mandava
+     para aprovação antes da confirmação. Medido na pilha real: 35
+     das 36 parcelas do SAMU passaram com o fechamento por confirmar.
+
+     Agora: título de produtividade cujo fechamento não aparece NÃO
+     vai para pagamento, e o motivo é dito. Não achar não é
+     autorização. (O SQL 74 deixa o Financeiro ver os fechamentos —
+     com isso o caso "não achei" vira exceção de verdade.)
+
+     A mesma função serve a quem paga (a trava) e a quem mostra (a
+     tag e a caixa de seleção do contas a pagar). Eram lugares
+     separados: a lista deixava marcar e o erro só vinha no envio. */
+  function travaDaProdutividade(par) {
+    if (!par) return null;
+    const tit = st.titulos.find(function (t) { return t.id === par.titulo_id; });
+    if (!tit || tit.origem !== 'produtividade') return null;
+    const lote = st.lotesProdutividade.find(function (l) {
+      return !l.cancelado && (l.titulo_ids || []).indexOf(tit.id) > -1;
+    });
+    /* O bloqueio vem PRIMEIRO: é a tag que tem de aparecer mesmo com o
+       fechamento confirmado. Lido da parcela E do fechamento — quem
+       bloqueia grava nos dois, e qualquer um basta para segurar. */
+    const noLote = lote && (lote.bloqueios || []).find(function (b) {
+      return b.titulo_id === tit.id && !b.liberado_em;
+    });
+    const bloq = par.bloqueio_pagamento || noLote || null;
+    if (bloq) {
+      return { tipo: 'bloqueado', curto: 'bloqueado',
+        texto: 'Pagamento deste médico está bloqueado pela produtividade' +
+          (bloq.motivo ? ' (' + bloq.motivo + ')' : '') +
+          '. A liberação é na aba de lançamentos da produtividade.' };
+    }
+    /* NÃO ACHAR O FECHAMENTO: quando isso trava e quando não.
+
+       Título que veio de IMPORTAÇÃO carrega `origem_ref` ("FECH-…"), e
+       a importação registra o fechamento logo em seguida — ele SEMPRE
+       tem fechamento. Não achar, aí, é não enxergar (perfil sem acesso
+       à tabela) ou fechamento perdido: trava, e diz por quê.
+
+       Título de produtividade SEM `origem_ref` é anterior ao mecanismo
+       de fechamento, ou foi lançado à mão: nunca teve fechamento para
+       ser confirmado. Travá-lo seria segurar o pagamento de médico por
+       uma regra que não se aplica a ele. O bloqueio, acima, continua
+       valendo para ele.
+
+       Por que não decidir pela matriz da tela ("se o perfil vê a
+       Produtividade, então não achar é não existir"): a matriz da tela
+       e a do banco já divergiram na casa dele — a tela dizia que a
+       Bianca tinha Financeiro e o banco dizia que não. Decidir pela
+       tela reabriria a porta exatamente quando as duas discordam. O
+       `origem_ref` mora no título, que o financeiro sempre vê. */
+    if (!lote && !tit.origem_ref) return null;
+    if (!lote) {
+      return { tipo: 'sem_fechamento', curto: 'fechamento não encontrado',
+        texto: 'Não encontrei o fechamento de produtividade deste título, então não dá para ' +
+          'conferir se a gestão já confirmou. Ele não vai para pagamento até isso se resolver — ' +
+          'se o seu perfil não vê os fechamentos, quem administra o sistema precisa rodar a ' +
+          'atualização do banco (SQL 74).' };
+    }
+    if (!lote.confirmado_em) {
+      return { tipo: 'nao_confirmado', curto: 'aguardando confirmação da produtividade',
+        texto: 'O fechamento de produtividade de ' + U.fComp(lote.competencia) +
+          ' ainda não foi confirmado pela gestão. Enquanto não confirmarem, o valor não vai para pagamento.' };
+    }
+    return null;
+  }
+
   function registrarPagamento(pid, d) {
     if (!pode('pagar')) return { erro: 'Seu perfil não registra pagamento.' };
     const p = st.parcelas.find(x => x.id === pid);
     if (!p) return { erro: 'Parcela não encontrada.' };
     if (p.status === 'cancelado') return { erro: 'Parcela cancelada não recebe pagamento.' };
     if (p.aprovacao !== 'aprovado') return { erro: 'Parcela ainda não aprovada — pagamento bloqueado.' };
-    /* Duas travas da produtividade: o fechamento precisa estar
-       CONFIRMADO pela gestão (antes disso o valor ainda é de trabalho),
-       e o médico não pode estar com pagamento bloqueado. */
-    if (p.bloqueio_pagamento) {
-      return { erro: 'Pagamento deste médico está bloqueado pela produtividade' +
-        (p.bloqueio_pagamento.motivo ? ' (' + p.bloqueio_pagamento.motivo + ')' : '') +
-        '. A liberação é na aba de lançamentos da produtividade.' };
-    }
-    const tit = st.titulos.find(function (t) { return t.id === p.titulo_id; });
-    if (tit && tit.origem === 'produtividade') {
-      const lote = st.lotesProdutividade.find(function (l) {
-        return !l.cancelado && (l.titulo_ids || []).indexOf(tit.id) > -1; });
-      if (lote && !lote.confirmado_em) {
-        return { erro: 'O fechamento de produtividade de ' + U.fComp(lote.competencia) +
-          ' ainda não foi confirmado pela gestão. Enquanto não confirmarem, o valor não vai para pagamento.' };
-      }
-    }
+    /* As duas travas da produtividade (fechamento confirmado; médico
+       não bloqueado) — uma regra só, em `travaDaProdutividade`. */
+    const travaProd = travaDaProdutividade(p);
+    if (travaProd) return { erro: travaProd.texto };
     if (emCursoDe(pid).length && !d.situacao) {
       return { erro: 'Esta parcela já tem pagamento em andamento.' };
     }
@@ -9667,7 +9733,19 @@ ERP.store = (function () {
          puderem; as que não podem ficam visíveis dentro dele. */
       g.selecionaveis = g.parcelas.filter(function (p) {
         return p.aprovacao === 'aprovado' && ['cancelado', 'pago'].indexOf(p.status) < 0 &&
-          !emCursoDe(p.id).length && saldoDe(p) > 0;
+          !emCursoDe(p.id).length && saldoDe(p) > 0 && !travaDaProdutividade(p);
+      });
+      /* O que a produtividade segura, contado para o cabeçalho do
+         grupo: quem abre a lista vê de cara que há médico bloqueado
+         ou fechamento por confirmar, sem precisar abrir. */
+      g.bloqueados = g.parcelas.filter(function (p) {
+        const tv = travaDaProdutividade(p); return tv && tv.tipo === 'bloqueado';
+      }).length;
+      g.aguardando_confirmacao = g.parcelas.some(function (p) {
+        const tv = travaDaProdutividade(p); return tv && tv.tipo === 'nao_confirmado';
+      });
+      g.sem_fechamento = g.parcelas.some(function (p) {
+        const tv = travaDaProdutividade(p); return tv && tv.tipo === 'sem_fechamento';
       });
       g.em_curso = g.parcelas.filter(function (p) { return emCursoDe(p.id).length; }).length;
       g.pagas = g.parcelas.filter(function (p) { return p.status === 'pago'; }).length;
@@ -20556,8 +20634,13 @@ ERP.store = (function () {
          "(previsto)"; sem esta conferencia saia "(previsto)
          (previsto)". O marcador e um so. */
       const jaDiz = /\(previsto\)\s*$/.test(quem);
+      /* Médico bloqueado pela produtividade CONTINUA na previsão — a
+         obrigação existe, só está retida —, mas a linha diz que está
+         retida, para ninguém contar com ela no pagamento da semana. */
+      const tvFluxo = p.previsao ? null : travaDaProdutividade(p);
       põe(saidas, dia, saldo, quem + (vencido ? ' (vencida)' : '') +
-        (p.status === 'previsto' && !jaDiz ? ' (previsto)' : ''), p.status === 'previsto');
+        (p.status === 'previsto' && !jaDiz ? ' (previsto)' : '') +
+        (tvFluxo && tvFluxo.tipo === 'bloqueado' ? ' (bloqueado pela produtividade)' : ''), p.status === 'previsto');
     });
     /* Entrada prevista entra no fluxo diário (v133). Faltava: o
        relatório projetava as saídas previstas e nenhuma entrada
@@ -20906,7 +20989,7 @@ ERP.store = (function () {
     custoFuncionarios, provisaoMensalPessoal, calcular13, decimos, fechar13, cancelar13,
     retencoesPendentes, resumoRetencoesPendentes, guiasRetencao, fecharGuiaRetencao, cancelarGuiaRetencao,
     listar, parcela, saldoDe, valorNoCentro, aguardandoDe,
-    formaDoCredor, impedimentos, editarParcela, CAMPOS_EDITAVEIS,
+    formaDoCredor, impedimentos, travaDaProdutividade, editarParcela, CAMPOS_EDITAVEIS,
     informarDadosBancarios, validarDadosBancarios,
     pagamentosAguardando, pagamento, autorizarPagamento, recusarPagamento,
     autorizadosDe, enviadosDe, emCursoDe, pagoDe, caixaDe, pagamentosDe, pagamentosTodos, eventosDe,

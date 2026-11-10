@@ -462,6 +462,9 @@ ERP.contas = (function () {
           '<div class="sub">' + g.medicos + ' médicos' +
             (marcados ? ' · ' + marcados + ' selecionado(s)' : '') +
             (g.em_curso ? ' · ' + g.em_curso + ' aguardando aprovação' : '') +
+            (g.bloqueados ? ' · <span class="erro">' + g.bloqueados + ' bloqueado(s) pela produtividade</span>' : '') +
+            (g.aguardando_confirmacao ? ' · <b>fechamento ainda não confirmado pela produtividade</b>' : '') +
+            (g.sem_fechamento ? ' · <span class="erro">fechamento de produtividade não encontrado</span>' : '') +
             (g.pagas ? ' · ' + g.pagas + ' pago(s)' : '') + '</div></td>' +
         '<td class="sub">' + U.esc((g.projeto || {}).curto || '') + '</td>' +
         '<td class="num">' + U.brl(g.valor) + '</td>' +
@@ -513,9 +516,14 @@ ERP.contas = (function () {
          dado bancário não tira o título da seleção em lote (era por
          isso que "marcar vencidas e de hoje" pulava justamente os que
          precisavam de atenção). A trava vive na remessa. */
+      /* A trava da produtividade (fechamento por confirmar, médico
+         bloqueado) tira a parcela da seleção — a mesma regra que o
+         envio aplica. Antes a lista deixava marcar e o erro só vinha
+         no envio; e quando o fechamento não era visível, nem vinha. */
+      const travaProd = p.status === 'pago' || p.status === 'cancelado' ? null : S.travaDaProdutividade(p);
       const podeSolicitar = S.pode('pagar') && p.aprovacao === 'aprovado' &&
         p.status !== 'cancelado' && p.status !== 'pago' && !S.emCursoDe(p.id).length &&
-        saldo > 0;
+        saldo > 0 && !travaProd;
       const podeSel = podeAprovarLanc || podeSolicitar;
       const centros = (p.rateio || []).map(function (r) {
         return ((D.centro(r.centro) || {}).curto || '?') + ((p.rateio || []).length > 1 ? ' ' + U.num(r.pct) + '%' : '');
@@ -563,6 +571,14 @@ ERP.contas = (function () {
         '<td class="col-situacao"><span class="badge b-' + p.status + '"' +
           (p.previsao ? ' title="' + U.esc(trava.join(' · ')) + '"' : '') + '>' +
           rotStatus[p.status] + '</span>' +
+          /* A tag da produtividade: "bloqueado" em vermelho (aparece mesmo
+             com o fechamento confirmado) ou o fechamento por confirmar.
+             O motivo inteiro fica ao passar o mouse. */
+          (travaProd
+            ? '<div><span class="badge ' + (travaProd.tipo === 'bloqueado' ? 'b-reprovado' : 'b-pendente') +
+              '" data-trava-prod="' + travaProd.tipo + '" title="' + U.esc(travaProd.texto) + '">' +
+              U.esc(travaProd.curto) + '</span></div>'
+            : '') +
           /* "falta p/ remessa" é sobre título que VAI para o banco e
              está com cadastro incompleto. Previsão de folha não vai
              para remessa nenhuma: o selo acusaria uma pendência que
@@ -730,7 +746,12 @@ ERP.contas = (function () {
         if (S.pode('aprovar')) b.push(btn('Aprovar pagto', 'btn-pagar', 'autorizar', p.id));
         if (S.pode('pagar')) b.push(btn('Desfazer', 'btn-cancelar', 'desfazer', p.id));
       } else if (p.status !== 'pago' && p.status !== 'autorizado' &&
-                 p.status !== 'enviado' && p.status !== 'previsto' && S.pode('pagar')) {
+                 p.status !== 'enviado' && p.status !== 'previsto' && S.pode('pagar') &&
+                 /* A produtividade segura (fechamento por confirmar ou
+                    médico bloqueado): sem botão — a tag na situação diz
+                    por quê. Falta de dado bancário é outra coisa e não
+                    esconde o botão; essa só barra na remessa. */
+                 !S.travaDaProdutividade(p)) {
         /* Falta de dado bancário não esconde mais o botão: o título
            segue para aprovação e só é barrado na geração da remessa. */
         b.push(btn('Pagar', 'btn-pagar', 'pagar', p.id));
