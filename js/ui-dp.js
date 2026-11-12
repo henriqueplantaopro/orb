@@ -1735,11 +1735,17 @@ ERP.dp = (function () {
       '<h3 style="font-size:12px;margin:18px 0 6px">INSS (empregado) — tabela progressiva</h3>' +
       '<div class="ajuda">Vigência de referência: INSS ' + U.esc(inss.vigencia) + ' · IRRF ' + U.esc(irrf.vigencia) +
         '. Só o perfil de Administração edita — peça pra ele se a tabela publicada for diferente.</div>' +
-      '<table class="parcelas"><thead><tr><th>Até (R$)</th><th>Alíquota</th><th>Parcela a deduzir</th></tr></thead><tbody>' +
+      /* O INSS é calculado FAIXA A FAIXA (v167): a "parcela a deduzir"
+         não entra mais na conta, então deixou de ser editável — um campo
+         que se altera sem mudar nada engana quem altera. No lugar, a
+         coluna de conferência: quanto se paga ao chegar ao fim de cada
+         faixa, para bater com a planilha da contabilidade. */
+      '<table class="parcelas"><thead><tr><th>Até (R$)</th><th>Alíquota</th><th>Paga no fim da faixa (conferência)</th></tr></thead><tbody>' +
         inss.faixas.map(function (f, i) {
+          const noFim = Math.round(S.inssPorFaixa(Number(f.ate)).total * 100 + 1e-9) / 100;
           return '<tr><td><input class="num" data-inss="' + i + '" data-c="ate" value="' + U.num(f.ate) + '"' + (podeEditar ? '' : ' disabled') + '></td>' +
             '<td><input class="num" data-inss="' + i + '" data-c="aliquota" value="' + U.num(f.aliquota) + '"' + (podeEditar ? '' : ' disabled') + '>%</td>' +
-            '<td><input class="num" data-inss="' + i + '" data-c="deduzir" value="' + U.num(f.deduzir) + '"' + (podeEditar ? '' : ' disabled') + '></td></tr>';
+            '<td class="num">' + U.num(noFim) + '</td></tr>';
         }).join('') +
         '<tr><td colspan="2">Teto de contribuição</td><td><input class="num" id="dp-inss-teto" value="' + U.num(inss.teto_contribuicao) + '"' + (podeEditar ? '' : ' disabled') + '></td></tr>' +
       '</tbody></table>' +
