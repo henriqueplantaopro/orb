@@ -5223,17 +5223,50 @@ ERP.store = (function () {
      não tem two-lugares-que-podem-divergir.
   ══════════════════════════════════════════════════════════ */
 
-  /* Tabela progressiva com parcela a deduzir — o jeito que INSS e IRRF
-     são publicados oficialmente. Acima do teto da última faixa, INSS
-     cobra o teto fixo; IRRF não tem teto (a última faixa é infinita). */
+  /* INSS DO EMPREGADO — FAIXA A FAIXA, ARREDONDANDO SÓ NO FIM.
+
+     Cada faixa paga a sua alíquota SÓ sobre o pedaço do salário que cai
+     dentro dela, e as partes se somam — é como a contabilidade calcula:
+       base R$ 3.190,95:
+         1.621,00                      × 7,5% = 121,575
+         (2.902,84 − 1.621,00) 1.281,84 × 9%   = 115,3656
+         (3.190,95 − 2.902,84)   288,11 × 12%  =  34,5732
+                                       soma   = 271,5138 → R$ 271,51
+
+     Até a v166 o cálculo usava a "parcela a deduzir" publicada
+     (base × alíquota da faixa − dedução). É a mesma conta, MAS a dedução
+     publicada vem arredondada (24,32 no lugar de 24,315), e isso fazia o
+     holerite sair 1 centavo diferente da conta faixa a faixa em cerca de
+     29% dos salários. Agora a conta sai das faixas, sem a constante.
+
+     Por que arredondar no fim e não faixa por faixa: o teto oficial
+     (R$ 988,09 no salário de R$ 8.475,55) só bate assim — arredondando
+     cada faixa dá R$ 988,10. É também o critério com que a validação da
+     tabela (`salvarTabelasDP`) confere o teto.
+
+     Acima da última faixa, cobra o teto fixo. */
   function calcularINSS(base) {
     base = Math.round((base || 0) * 100) / 100;
     if (base <= 0) return 0;
     const t = D.tabelaINSS;
     const ultima = t.faixas[t.faixas.length - 1];
     if (base > ultima.ate) return t.teto_contribuicao;
-    const faixa = t.faixas.find(function (f) { return base <= f.ate; }) || ultima;
-    return Math.round(Math.max(0, base * faixa.aliquota / 100 - faixa.deduzir) * 100) / 100;
+    return Math.round(inssPorFaixa(base).total * 100 + 1e-9) / 100;
+  }
+  /* A memória da conta, faixa a faixa — usada pelo cálculo e pela tela
+     de parâmetros (conferência). Valores SEM arredondar por faixa. */
+  function inssPorFaixa(base) {
+    const faixas = D.tabelaINSS.faixas;
+    let piso = 0, total = 0;
+    const partes = [];
+    for (let i = 0; i < faixas.length && base > piso; i++) {
+      const ate = Math.min(base, Number(faixas[i].ate));
+      const valor = (ate - piso) * Number(faixas[i].aliquota) / 100;
+      partes.push({ de: piso, ate: ate, aliquota: Number(faixas[i].aliquota), valor: valor });
+      total += valor;
+      piso = Number(faixas[i].ate);
+    }
+    return { partes: partes, total: total };
   }
 
   /* Depois do IR apurado pela tabela, a Lei 15.270/2025 aplica um
@@ -20980,7 +21013,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO,
-    calcularINSS, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
+    calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
     criarFuncionario, editarFuncionario, desligarFuncionario, registrarReajusteSalarial, historicoSalarial, criarCargo,
     aprovarDadosPagamento, pagamentoLiberado,

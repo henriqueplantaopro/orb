@@ -890,6 +890,30 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
   S.setUsuario('u8');
 })();
 
+// ── v167: INSS do empregado FAIXA A FAIXA, como a contabilidade calcula ──
+(function () {
+  /* O exemplo que a contabilidade mandou: base R$ 3.190,95.
+       1.621,00 × 7,5% = 121,575 · 1.281,84 × 9% = 115,3656 · 288,11 × 12% = 34,5732
+       soma 271,5138 → R$ 271,51
+     (O exemplo deles dizia 271,54: 121,57 e 34,60 eram escorregões de conta.) */
+  verificar('INSS base 3.190,95 = 271,51 (exemplo da contabilidade, conta certa)',
+    S.calcularINSS(3190.95) === 271.51, S.calcularINSS(3190.95));
+  const mem = S.inssPorFaixa(3190.95);
+  verificar('a memória da conta tem as três faixas, com os pedaços certos',
+    mem.partes.length === 3 && Math.abs(mem.partes[1].ate - mem.partes[1].de - 1281.84) < 0.001 &&
+    Math.abs(mem.partes[2].ate - mem.partes[2].de - 288.11) < 0.001,
+    JSON.stringify(mem.partes));
+  /* Onde a conta antiga ("parcela a deduzir" 24,32 publicada, no lugar
+     de 24,315) errava o centavo: R$ 1.800 = 121,575 + 16,11 = 137,685. */
+  verificar('INSS R$ 1.800,00 = 137,69 (a parcela a deduzir arredondada dava 137,68)',
+    S.calcularINSS(1800) === 137.69, S.calcularINSS(1800));
+  verificar('INSS salário mínimo (1.621,00) = 121,58', S.calcularINSS(1621) === 121.58, S.calcularINSS(1621));
+  verificar('INSS no teto (8.475,55) = 988,09 — o teto oficial, arredondando só no fim',
+    S.calcularINSS(8475.55) === 988.09, S.calcularINSS(8475.55));
+  verificar('INSS acima do teto continua 988,09', S.calcularINSS(20000) === 988.09, S.calcularINSS(20000));
+  verificar('FGTS segue 8% fixo sobre a base, sem faixa', S.calcularFGTS(3190.95) === 255.28, S.calcularFGTS(3190.95));
+})();
+
 // ── IRRF: desconto simplificado SUBSTITUI INSS + dependentes + pensão (valores do relatório de QA da v73) ──
 (function () {
   const ir = (b, dep, pen) => S.calcularIRRF(b, S.calcularINSS(b), dep || 0, pen || 0);
