@@ -298,7 +298,7 @@ ERP.produtividade = (function () {
                   ? '<button class="btn-sm ' + (S.temNota(x.p) ? 'btn-nf-ok' : 'btn-nf-falta') +
                     '" data-lp-nf="' + x.p.id + '">' + (S.temNota(x.p) ? 'NF ok' : 'Falta NF') + '</button> '
                   : '<button class="btn-sm btn-nf-na" data-lp-nf="' + x.p.id + '">NF —</button> ') +
-                '<button class="btn-sm" data-lp-medico="' + x.p.id + '">Plantões</button></td></tr>';
+                '<button class="btn-sm" data-lp-medico="' + x.p.id + '">' + rotuloComposicao(x.p) + '</button></td></tr>';
           }).join('') + '</tbody></table>'
         : '<div class="vazio"><strong>Ninguém pendente.</strong>Toda produtividade lançada já foi paga.</div>');
     document.querySelectorAll('#pr-aba-pendentes [data-lp-medico]').forEach(function (b) {
@@ -404,6 +404,15 @@ ERP.produtividade = (function () {
      principalmente a situação. Cliente, projeto e setor saíram daqui —
      projeto e competência já estão na linha do lote, e o setor abre no
      detalhe do médico (botão "Plantões"). */
+  /* Os itens da parcela dizem de que formato ela veio: plantão (setor ×
+     tipo, com horas) ou procedimento (especialidade × procedimento,
+     só quantidade). Lançamento antigo, sem a marca, é plantão. */
+  const ehProcedimento = function (p) {
+    const it = (p && p.itens) || [];
+    return it.length > 0 && it.every(function (i) { return i.unidade === 'procedimento'; });
+  };
+  const rotuloComposicao = function (p) { return ehProcedimento(p) ? 'Procedimentos' : 'Plantões'; };
+
   function detalheLote(l) {
     const ids = Array.isArray(l.titulo_ids) ? l.titulo_ids : [];
     const parcelas = S.todasParcelas().filter(function (p) { return ids.indexOf(p.titulo_id) > -1; });
@@ -452,9 +461,10 @@ ERP.produtividade = (function () {
             'Administração › Perfis.</div>') +
         '</div></td></tr>';
     }
+    const loteProc = parcelas.length > 0 && parcelas.every(ehProcedimento);
     return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
       '<table style="margin:0"><thead><tr><th>Médico</th>' +
-      '<th class="num">Plantões</th><th class="num">Horas</th><th class="num">Valor</th>' +
+      '<th class="num">' + (loteProc ? 'Procedimentos' : 'Plantões') + '</th><th class="num">Horas</th><th class="num">Valor</th>' +
       '<th class="num">Pago</th><th>Situação</th><th>Como recebe</th><th></th></tr></thead><tbody>' +
       parcelas.map(function (p) {
         const itens = p.itens || [];
@@ -464,7 +474,7 @@ ERP.produtividade = (function () {
         const pago = S.pagoDe(p.id);
         return '<tr><td class="desc">' + U.esc(ERP.lancamento.nomeCredor(p.credor) || '—') + '</td>' +
           '<td class="num">' + qtd + '</td>' +
-          '<td class="num">' + Math.floor(min / 60) + 'h' + String(min % 60).padStart(2, '0') + '</td>' +
+          '<td class="num">' + (ehProcedimento(p) ? '—' : Math.floor(min / 60) + 'h' + String(min % 60).padStart(2, '0')) + '</td>' +
           '<td class="num">' + U.brl(p.valor) + '</td>' +
           '<td class="num">' + (pago > 0.004 ? U.brl(pago) : '—') + '</td>' +
           '<td><span class="badge ' + s.cls + '">' + s.txt + '</span>' +
@@ -495,7 +505,7 @@ ERP.produtividade = (function () {
               (pod ? '<button class="btn-sm btn-cancelar" data-lp-banco="' + p.id + '">' +
                 'Incluir dados bancários</button>' : '') + '</td>';
           })() +
-          '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">Plantões</button>' +
+          '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">' + rotuloComposicao(p) + '</button>' +
             /* BLOQUEAR E DESBLOQUEAR AQUI, os dois.
                Só o "Liberar" existia, e só aparecia em quem já
                estava bloqueado — então bloquear por falta de
@@ -529,8 +539,21 @@ ERP.produtividade = (function () {
         '<div class="resumo-linha"><span>Valor do repasse</span><span class="v">' + U.brl(p.valor) + '</span></div>' +
         '<div class="resumo-linha"><span>Pago até agora</span><span class="v">' + U.brl(S.pagoDe(parcelaId)) + '</span></div>' +
         '<div class="resumo-linha"><span>Saldo</span><span class="v">' + U.brl(S.saldoDe(p)) + '</span></div>' +
-        '<h3 style="font-size:12px;margin:14px 0 4px">Plantões deste fechamento</h3>' +
-        (itens.length
+        (ehProcedimento(p)
+          /* PROCEDIMENTOS: a quantidade de cada um, sem horas. */
+          ? '<h3 style="font-size:12px;margin:14px 0 4px">Procedimentos deste fechamento</h3>' +
+            '<table class="parcelas"><thead><tr><th>Especialidade</th><th>Procedimento</th>' +
+            '<th class="num">Qtd.</th><th class="num">Valor</th></tr></thead><tbody>' +
+            itens.map(function (i) {
+              return '<tr><td class="desc">' + U.esc(i.setor || '—') + '</td><td>' + U.esc(i.tipo || '—') + '</td>' +
+                '<td class="num">' + (i.qtd || 0) + '</td><td class="num">' + U.brl(i.valor || 0) + '</td></tr>';
+            }).join('') +
+            '<tr><td colspan="2"><b>Total</b></td><td class="num"><b>' +
+              itens.reduce(function (t, i) { return t + (i.qtd || 0); }, 0) + '</b></td><td class="num"><b>' +
+              U.brl(p.valor) + '</b></td></tr></tbody></table>'
+          : '') +
+        (ehProcedimento(p) ? '' : '<h3 style="font-size:12px;margin:14px 0 4px">Plantões deste fechamento</h3>') +
+        (ehProcedimento(p) ? '' : itens.length
           ? '<table class="parcelas"><thead><tr><th>Setor</th><th>Tipo</th><th class="num">Plantões</th>' +
             '<th class="num">Horas</th><th class="num">Valor</th></tr></thead><tbody>' +
             itens.map(function (i) {
@@ -1050,7 +1073,198 @@ ERP.produtividade = (function () {
     });
   }
 
+  /* ══ FORMATO DE PROCEDIMENTOS (Dr Consulta e afins) ════════════
+
+     Projetos em que o médico ganha por PROCEDIMENTO, não por plantão.
+     O arquivo tem duas abas:
+       • PRODUTIVIDADE — um bloco por médico ("Nome — CRM RJ-…"), com
+         Data | Código | Paciente | Procedimento | Repasse, e TOTAL;
+       • FINANCEIRO — uma linha por médico: CRM, CPF, Chave PIX,
+         quantidade, Valor a pagar e Status do contrato ("SCP |
+         ASSINADO"); e um RESUMO com o total de repasse.
+
+     A saída é a MESMA estrutura do leitor de plantões — grupos de
+     médico × (setor, tipo) com quantidade e valor —, para que títulos,
+     travas, bloqueio e confirmação sigam pelo caminho já provado.
+     Aqui o "setor" é a especialidade e o "tipo" é o procedimento; a
+     quantidade é quantas vezes ele aparece no bloco do médico.
+
+     O NOME DO PACIENTE NÃO É LIDO. A coluna existe no arquivo, mas a
+     produtividade só precisa de quantos procedimentos de cada tipo; o
+     ERP protege dado de paciente (a coluna `paciente` é fechada), e
+     guardá-lo aqui no meio dos itens do título abriria um caminho em
+     volta dessa proteção. */
+  const semAc = function (v) { return semAcento(txt(v)).toLowerCase().replace(/\s+/g, ' ').trim(); };
+  function linhaCabProcedimentos(linha) {
+    const c = (linha || []).map(semAc);
+    return c.indexOf('procedimento') > -1 && c.indexOf('repasse') > -1;
+  }
+  function ehProcedimentos(wb) {
+    return wb.SheetNames.some(function (n) {
+      return linhasDe(wb, n).slice(0, 40).some(linhaCabProcedimentos);
+    });
+  }
+  function lerProcedimentos(wb, arquivo) {
+    let projeto = '', especialidade = '', periodo = '', competenciaLida = '';
+    let totalArquivo = 0, totalResumo = 0, procResumo = 0;
+    const grupos = {}, medicos = {}, pagto = {}, abasLidas = [];
+    const compsDasDatas = {};
+
+    /* Títulos do topo de cada aba: projeto, especialidade, período. */
+    wb.SheetNames.forEach(function (nome) {
+      linhasDe(wb, nome).slice(0, 8).forEach(function (r) {
+        r.forEach(function (v) {
+          const t = txt(v).replace(/\s+/g, ' ');
+          if (!t) return;
+          const p = lerPeriodo(t);
+          if (p) { if (!periodo) { periodo = p.texto; competenciaLida = p.competencia; } return; }
+          let m = t.match(/^FINANCEIRO\s*-\s*(.+?)[\s-]*$/i);
+          if (m && !projeto) { projeto = m[1].trim(); return; }
+          m = t.match(/^PROCEDIMENTOS?\s*-\s*(.+?)[\s-]*$/i);
+          if (m && !especialidade) especialidade = m[1].trim();
+        });
+      });
+    });
+
+    /* Aba(s) de procedimentos. */
+    wb.SheetNames.forEach(function (nome) {
+      const l = linhasDe(wb, nome);
+      if (!l.slice(0, 40).some(linhaCabProcedimentos)) return;
+      abasLidas.push(nome);
+      let medico = null, crm = '', cols = null;
+      l.forEach(function (linha) {
+        const cheias = [];
+        (linha || []).forEach(function (v, j) { if (txt(v) !== '') cheias.push(j); });
+        if (!cheias.length) return;
+        if (linhaCabProcedimentos(linha)) {
+          const c = linha.map(semAc);
+          cols = { data: c.indexOf('data'), proc: c.indexOf('procedimento'), valor: c.indexOf('repasse') };
+          return;
+        }
+        const primeira = txt(linha[cheias[0]]);
+        /* Total geral do arquivo: o número na coluna do repasse (ou o
+           último número da linha, se o cabeçalho ainda não apareceu). */
+        if (/^TOTAL GERAL$/i.test(semAcento(primeira))) {
+          let v = cols && cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
+          if (!v) for (let k = linha.length - 1; k >= 0; k--) { v = valorNum(linha[k]); if (v) break; }
+          totalArquivo = Math.round((totalArquivo + v) * 100) / 100;
+          return;
+        }
+        if (/^TOTAL\b/i.test(semAcento(primeira))) return;          // rodapé do bloco
+        /* Nome do médico: uma célula só, "Nome — CRM RJ-…". */
+        if (cheias.length === 1) {
+          const m = primeira.match(/^(.*?)\s+[—–-]+\s+CRM\b\s*:?\s*(.*)$/i);
+          if (m) {
+            medico = m[1].trim(); crm = m[2].trim();
+            medicos[chaveNome(medico)] = medicos[chaveNome(medico)] ||
+              { nome: medico, crm: crm, total: 0, plantoes: 0 };
+          }
+          return;
+        }
+        if (!medico || !cols || cols.proc < 0) return;
+        const proc = txt(linha[cols.proc]).replace(/\s+/g, ' ');
+        if (!proc) return;
+        const val = cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
+        /* A data do atendimento ("28/10/2026, 12:30") diz a competência
+           quando o cabeçalho não diz — e denuncia procedimento de outro
+           mês misturado no fechamento. */
+        if (cols.data > -1) {
+          const d = String(txt(linha[cols.data])).match(/(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+          if (d) { const cp = d[3] + '-' + doisDig(+d[2]); compsDasDatas[cp] = (compsDasDatas[cp] || 0) + 1; }
+        }
+        const setor = especialidade || 'Procedimentos';
+        const k = medico + '||' + setor + '||' + proc;
+        const gr = grupos[k] = grupos[k] || { medico: medico, crm: crm, setor: setor, tipo: proc,
+          linhas_origem: 0, plantoes: 0, minutos: 0, valor: 0,
+          coordenacao: false, coordenacao_sugerida: false };
+        gr.linhas_origem++;
+        gr.valor = Math.round((gr.valor + val) * 100) / 100;
+        const md = medicos[chaveNome(medico)];
+        md.total = Math.round((md.total + val) * 100) / 100;
+      });
+    });
+    aplicarClasse(grupos, medicos);
+
+    /* Aba FINANCEIRO: um médico por linha, e o RESUMO embaixo. */
+    wb.SheetNames.forEach(function (nome) {
+      const l = linhasDe(wb, nome);
+      let m = null;
+      l.forEach(function (linha) {
+        const c = (linha || []).map(semAc);
+        if (c.indexOf('medico') > -1 && (c.indexOf('valor a pagar') > -1 || c.indexOf('chave pix') > -1)) {
+          const ach = function (nomeCol) { return c.indexOf(nomeCol); };
+          m = { nome: ach('medico'), crm: ach('crm'), cpf: ach('cpf'), pix: ach('chave pix'),
+            qtd: c.findIndex(function (v) { return v.indexOf('proc') === 0; }),
+            valor: ach('valor a pagar'), status: c.findIndex(function (v) { return v.indexOf('status') === 0; }) };
+          return;
+        }
+        /* RESUMO: rótulo numa célula, número na seguinte. */
+        const rot = c.findIndex(function (v) { return v === 'total de repasse' || v.indexOf('n de procedimentos') === 0 || v.indexOf('no de procedimentos') === 0 || v.indexOf('nº de procedimentos') === 0; });
+        if (rot > -1) {
+          let n = 0;
+          for (let k = rot + 1; k < linha.length; k++) { n = valorNum(linha[k]); if (n) break; }
+          if (c[rot] === 'total de repasse') totalResumo = n; else procResumo = n;
+          return;
+        }
+        if (!m) return;
+        const nomeMed = txt(linha[m.nome]);
+        if (!nomeMed || /^(TOTAL|RESUMO)/i.test(semAcento(nomeMed))) return;
+        const status = m.status > -1 ? txt(linha[m.status]) : '';
+        pagto[chaveNome(nomeMed)] = {
+          observacao: status,
+          regime: S.regimeDeTexto(status),
+          razao_social: '',
+          crm: m.crm > -1 ? txt(linha[m.crm]) : '',
+          documento: m.cpf > -1 ? txt(linha[m.cpf]) : '',
+          tipo_chave: '',
+          pix: m.pix > -1 ? txt(linha[m.pix]) : '',
+          valor: m.valor > -1 ? valorNum(linha[m.valor]) : 0,
+          qtd_arquivo: m.qtd > -1 ? valorNum(linha[m.qtd]) : 0
+        };
+      });
+    });
+
+    const linhas = Object.keys(grupos).map(function (k) { return grupos[k]; })
+      .sort(function (a, b) { return a.medico.localeCompare(b.medico) || a.tipo.localeCompare(b.tipo); });
+    const soma = Math.round(linhas.reduce(function (s, l) { return s + l.valor; }, 0) * 100) / 100;
+    const somaFin = Math.round(Object.keys(pagto).reduce(function (s, k) { return s + pagto[k].valor; }, 0) * 100) / 100;
+    const qtdLida = linhas.reduce(function (s, l) { return s + l.linhas_origem; }, 0);
+
+    /* Sem período no cabeçalho, a competência sai das DATAS dos
+       atendimentos — é o arquivo dizendo, não um palpite. */
+    const compsDatas = Object.keys(compsDasDatas).sort(function (a, b) { return compsDasDatas[b] - compsDasDatas[a]; });
+    if (!competenciaLida && compsDatas.length) competenciaLida = compsDatas[0];
+    const competencia = competenciaLida || '';
+    const foraDoMes = Object.keys(compsDasDatas).filter(function (c) { return c !== competencia; })
+      .reduce(function (s, c) { return s + compsDasDatas[c]; }, 0);
+
+    /* O que mais o arquivo imprime e precisa bater com a soma. */
+    const conferencias = [];
+    if (totalResumo > 0) conferencias.push({ rotulo: 'Resumo · total de repasse', valor: totalResumo, dinheiro: true,
+      diverge: Math.abs(totalResumo - soma) > 0.01 });
+    if (procResumo > 0) conferencias.push({ rotulo: 'Resumo · nº de procedimentos', valor: procResumo, dinheiro: false,
+      diverge: procResumo !== qtdLida });
+
+    return {
+      formato: 'procedimentos',
+      arquivo: arquivo, projeto: projeto, especialidade: especialidade,
+      /* A referência do título leva a ESPECIALIDADE: o mesmo projeto
+         manda um arquivo por especialidade no mesmo mês, e sem ela os
+         arquivos teriam a mesma referência e pareceriam repetidos. */
+      ref_projeto: especialidade ? projeto + ' ' + especialidade : projeto,
+      unidade: projeto, periodo: periodo || (competencia ? U.fComp(competencia) : ''),
+      competencia: competencia,
+      linhas: linhas, medicos: medicos, pagto: pagto,
+      abasPlantoes: abasLidas,
+      periodo_ausente: !competencia,
+      soma: soma, somaFin: somaFin, totalArquivo: totalArquivo,
+      conferencias: conferencias, qtd_procedimentos: qtdLida,
+      fora_do_mes: foraDoMes
+    };
+  }
+
   function ler(wb, arquivo) {
+    if (ehProcedimentos(wb)) return lerProcedimentos(wb, arquivo);
     const abas = acharAbas(wb);
     const prod = abas.plantoes;
     if (!prod) {
@@ -1447,6 +1661,9 @@ ERP.produtividade = (function () {
         medico: l.medico, crm: l.crm, classe: classe, itens: [], plantoes: 0, minutos: 0, valor: 0
       };
       m.itens.push({ setor: l.setor, tipo: l.tipo, qtd: l.plantoes, minutos: l.minutos, valor: l.valor,
+        /* Gravada com o item: depois de lançado, é ela que diz ao
+           detalhe do médico que aquilo é procedimento, não plantão. */
+        unidade: L.formato === 'procedimentos' ? 'procedimento' : 'plantao',
         coordenacao: !!l.coordenacao, coordenacao_sugerida: !!l.coordenacao_sugerida,
         chave: l.medico + '||' + l.setor + '||' + l.tipo });
       m.plantoes += l.plantoes;
@@ -1621,10 +1838,17 @@ ERP.produtividade = (function () {
     const temTotalImpresso = L.totalArquivo > 0;
     const divergeArquivo = temTotalImpresso && Math.abs(L.soma - L.totalArquivo) > 0.01;
     const divergeFin = Math.abs(L.soma - L.somaFin) > 0.01;
+    /* Formato de procedimentos: a quantidade é de PROCEDIMENTOS, não de
+       plantões, e não há horas. Um rótulo só, decidido aqui, para a
+       tela inteira não misturar os dois vocabulários. */
+    const proc = L.formato === 'procedimentos';
+    const extras = L.conferencias || [];
+    const divergeExtra = extras.some(function (c) { return c.diverge; });
 
     U.el('pr-saida').innerHTML =
       '<div class="pr-cab">' +
-        '<div><label>Projeto no arquivo</label><input value="' + U.esc(L.projeto) + '" disabled></div>' +
+        '<div><label>Projeto no arquivo</label><input value="' +
+          U.esc(L.projeto + (L.especialidade ? ' · ' + L.especialidade : '')) + '" disabled></div>' +
         '<div><label for="pr-centro">Centro de custo *</label><select id="pr-centro">' +
           '<option value="">Escolher…</option>' +
           D.centros.filter(function (c) { return c.ativo; }).map(function (c) {
@@ -1647,21 +1871,33 @@ ERP.produtividade = (function () {
       '</div>' +
 
       '<div class="pr-confere">' +
-        '<span>Soma dos plantões <b>' + U.brl(L.soma) + '</b></span>' +
+        '<span>Soma dos ' + (proc ? 'procedimentos' : 'plantões') + ' <b>' + U.brl(L.soma) + '</b></span>' +
         '<span>Aba FINANCEIRO <b class="' + (divergeFin ? 'erro' : '') + '">' + U.brl(L.somaFin) + '</b></span>' +
         '<span>Total impresso no arquivo <b class="' + (divergeArquivo ? 'erro' : '') + '">' +
           (temTotalImpresso ? U.brl(L.totalArquivo) : '<span class="sub">não vem no arquivo</span>') + '</b></span>' +
-        '<span>' + medicos.length + ' lançamento(s) · ' + L.linhas.length + ' linha(s) de setor/tipo</span>' +
+        extras.map(function (c) {
+          return '<span>' + U.esc(c.rotulo) + ' <b class="' + (c.diverge ? 'erro' : '') + '">' +
+            (c.dinheiro ? U.brl(c.valor) : c.valor) + '</b></span>';
+        }).join('') +
+        '<span>' + medicos.length + ' lançamento(s) · ' +
+          (proc ? L.qtd_procedimentos + ' procedimento(s) de ' + L.linhas.length + ' tipo(s)'
+                : L.linhas.length + ' linha(s) de setor/tipo') + '</span>' +
       '</div>' +
+      (proc && L.fora_do_mes
+        ? '<div class="aviso" style="margin:10px 0"><b>' + L.fora_do_mes + ' procedimento(s) com data fora de ' +
+          U.fComp(L.competencia) + '.</b> Eles entram neste fechamento como vieram — confira com quem fechou ' +
+          'se pertencem mesmo a este mês.</div>'
+        : '') +
       (L.periodo_ausente
         ? '<div class="aviso" style="margin:10px 0"><b>Não reconheci a competência no arquivo.</b> ' +
           'Procurei por "21/08/2026 - 20/09/2026", "OUTUBRO DE 2026" e "10/2026" em todas as ' +
           'células e não achei nenhuma. Li o resto normalmente — <b>escolha a competência acima</b> ' +
           'antes de gerar o financeiro.</div>'
         : '') +
-      (divergeArquivo || divergeFin
+      (divergeArquivo || divergeFin || divergeExtra
         ? '<div class="aviso" style="margin:10px 0">Os totais do arquivo não fecham entre si. ' +
-          'O sistema vai lançar a soma dos plantões (' + U.brl(L.soma) + '); confira com quem fechou antes de aprovar.</div>'
+          'O sistema vai lançar a soma dos ' + (proc ? 'procedimentos' : 'plantões') + ' (' + U.brl(L.soma) +
+          '); confira com quem fechou antes de aprovar.</div>'
         : '') +
       /* O PALPITE FICA À VISTA. Linha sem horário é quase sempre
          coordenação, mas "quase sempre" não é sempre — e classificar
@@ -1682,7 +1918,7 @@ ERP.produtividade = (function () {
       })() +
 
       '<div class="tabela-rolagem" style="margin:10px -14px 0">' +
-      '<table><thead><tr><th>Médico</th><th>CRM</th><th class="num">Plantões</th>' +
+      '<table><thead><tr><th>Médico</th><th>CRM</th><th class="num">' + (proc ? 'Procedimentos' : 'Plantões') + '</th>' +
       '<th class="num">Horas</th><th class="num">Valor</th><th>Bloqueio de PG</th>' +
       '<th>Credor</th></tr></thead><tbody>' +
       medicos.map(function (m) {
@@ -1707,11 +1943,13 @@ ERP.produtividade = (function () {
                   'title="esta linha veio sem horário; o sistema sugeriu coordenação">' +
                   (i.coordenacao ? 'é plantão' : 'é coordenação') + '</button>';
               }
+              /* Procedimento: quantidade de cada um, sem horas. */
+              if (proc) return U.esc(i.tipo) + ': <b>' + i.qtd + '</b> · ' + U.brl(i.valor);
               return U.esc(i.tipo) + ': ' + i.qtd + ' × ' + hhmm(i.minutos) + ' · ' + U.brl(i.valor);
             }).join(' &nbsp;|&nbsp; ') + '</div></td>' +
           '<td class="mono">' + U.esc(m.crm || pg.crm || '—') + '</td>' +
           '<td class="num">' + m.plantoes + '</td>' +
-          '<td class="num">' + hhmm(m.minutos) + '</td>' +
+          '<td class="num">' + (proc ? '—' : hhmm(m.minutos)) + '</td>' +
           '<td class="num">' + U.brl(m.valor) + '</td>' +
           /* `S.pode('produtividade')` NÃO EXISTE: não está na matriz
              nem na lista de ações do perfil, então devolvia `false`
@@ -1781,7 +2019,8 @@ ERP.produtividade = (function () {
       }).join('') + '</tbody></table></div>' +
 
       '<div class="form-acoes" style="margin:14px -14px -14px">' +
-        '<span class="ajuda" style="margin-right:auto">Um título por médico, com a composição por setor e tipo ' +
+        '<span class="ajuda" style="margin-right:auto">Um título por médico, com a composição ' +
+        (proc ? 'por procedimento ' : 'por setor e tipo ') +
         'no detalhe do lançamento. Tudo aguardando aprovação; reimportar o mesmo arquivo não duplica.</span>' +
         '<button class="btn-primary" id="pr-gerar" style="width:auto;margin:0">Gerar ' + medicos.length + ' lançamentos</button>' +
       '</div>';
@@ -1869,7 +2108,7 @@ ERP.produtividade = (function () {
   /* Confirmação do valor a faturar, no fechamento da produtividade.
      Sugere o valor da previsão do mês (ou a estimativa do cadastro do
      projeto) — quem fecha ajusta pro número real da medição. */
-  function perguntarFaturamento(centro, comp, valorRepasse, lote) {
+  function perguntarFaturamento(centro, comp, valorRepasse, lote, depois) {
     const c = D.centro(centro) || {};
     /* Especialidade de grupo (GHC-HGB): o faturamento é negociado em
        valor GLOBAL com o hospital, não por especialidade. Lançar a
@@ -1888,6 +2127,7 @@ ERP.produtividade = (function () {
             .reduce(function (x, l) { return x + (l.valor || 0); }, 0); }, 0)
       : valorRepasse;
     ERP.app.modal({
+      aoFechar: depois || null,
       titulo: 'Valor a faturar · ' + (grupo || c.curto || c.nome) + ' · ' + U.fComp(comp),
       fecharTxt: 'Depois',
       corpo:
@@ -1941,7 +2181,10 @@ ERP.produtividade = (function () {
   function textoVencto(centroId) {
     return S.origemDoPrazo(centroId).texto;
   }
-  const refPadrao = L => 'FECH-' + txt(L.projeto).toUpperCase() + '-' + L.competencia;
+  /* `ref_projeto` existe no formato de procedimentos: projeto +
+     especialidade, porque o mesmo projeto manda um arquivo por
+     especialidade. Nos arquivos de plantão não existe e nada muda. */
+  const refPadrao = L => 'FECH-' + txt(L.ref_projeto || L.projeto).toUpperCase() + '-' + L.competencia;
 
   /* ── geração em lote ────────────────────────────────────
      Quando parte do arquivo já foi lançada, o sistema PERGUNTA: é
@@ -2098,8 +2341,12 @@ ERP.produtividade = (function () {
         _interno: true,
         descricao: m.classe === 'coordenacao'
           ? 'Coordenação médica ' + U.fComp(comp)
-          : 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
-            (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
+          : L.formato === 'procedimentos'
+            ? 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
+              (m.plantoes > 1 ? ' procedimentos' : ' procedimento') +
+              (L.especialidade ? ' · ' + L.especialidade : '')
+            : 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
+              (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
         /* O CAMPO DE NF NASCE VAZIO, inclusive para o PJ.
 
            Antes ia aqui o número do FECHAMENTO ("FECH-HPM-2026-09"),
@@ -2142,6 +2389,7 @@ ERP.produtividade = (function () {
       } else if (r.duplicado) repetidos++;
       else erros.push(m.medico + ': ' + r.erro);
     });
+    let loteFeito = null, bloqueadosFeitos = 0;
     if (tituloIds.length) {
       const lotReg = S.registrarLoteProdutividade({
         centro: centro, competencia: comp, arquivo: L.arquivo, periodo: L.periodo,
@@ -2157,14 +2405,13 @@ ERP.produtividade = (function () {
         const rb = S.bloquearPagamentoMedico(loteId, { titulo_id: par.titulo_id, motivo: motivosPre[k] || '' });
         if (rb.ok) bloqueados++;
       });
-      if (bloqueados) {
-        ERP.app.aviso(bloqueados + ' médico(s) com pagamento bloqueado — ficam fora da remessa até ' +
-          'serem liberados na aba de lançamentos.', 'erro');
-      }
+      bloqueadosFeitos = bloqueados;
       /* Fechou a produtividade: é aqui que a responsável informa quanto
          vai ser faturado do projeto. Esse número vale mais que a
-         estimativa — vai pro contas a receber com status próprio. */
-      setTimeout(function () { perguntarFaturamento(centro, comp, valorLote, lotReg); }, 400);
+         estimativa — vai pro contas a receber com status próprio. A
+         pergunta entra na FILA de janelas, lá embaixo — antes ela abria
+         por cima da janela de divergências e a escondia. */
+      loteFeito = lotReg;
     }
 
     ERP.contas.render();
@@ -2174,6 +2421,71 @@ ERP.produtividade = (function () {
        isso faria o lançamento sair "com sucesso" e o médico seguir
        sem como receber. */
     errosBancarios.forEach(function (e) { erros.push(e); });
+
+    /* ── AS JANELAS DO FIM, EM FILA ────────────────────────
+       Eram três coisas abrindo ao mesmo tempo: o aviso do canto, a
+       janela de divergências e, 0,4 s depois, a pergunta do
+       faturamento — que abria POR CIMA das divergências e as fazia
+       sumir sem ninguém ler. Agora uma abre quando a anterior fecha. */
+    const fila = [];
+    if (loteFeito) fila.push(function (seguir) { perguntarFaturamento(centro, comp, valorLote, loteFeito, seguir); });
+    if (divergencias.length) fila.push(function (seguir) { avisarDivergencias(seguir); });
+    const seguir = function () { const f = fila.shift(); if (f) f(seguir); };
+
+    /* ── "LANÇAMENTO REALIZADO", NO MEIO DA TELA, E A TELA LIMPA ──
+
+       O único sinal de que tinha dado certo era o aviso do canto,
+       que some em segundos — e a prévia continuava ali, inteira, com
+       o botão de gerar. Quem não viu o aviso ficava na dúvida e
+       clicava de novo. Agora o resultado fica no centro até ser
+       fechado, e a prévia sai: não há mais o que lançar duas vezes.
+
+       Só com o lançamento INTEIRO. Se algum médico falhou, a prévia
+       fica, para corrigir e gerar o que faltou. */
+    if (!erros.length && feitos > 0) {
+      const resumo = { projeto: L.projeto + (L.especialidade ? ' · ' + L.especialidade : ''),
+        comp: comp, feitos: feitos, valor: valorLote, bloqueados: bloqueadosFeitos,
+        complementares: complementares, repetidos: repetidos, novos: novos, atualizados: atualizados,
+        formato: L.formato };
+      lote = null;
+      Object.keys(bloqueiosPre).forEach(function (k) { delete bloqueiosPre[k]; });
+      Object.keys(motivosPre).forEach(function (k) { delete motivosPre[k]; });
+      Object.keys(bancariosPre).forEach(function (k) { delete bancariosPre[k]; });
+      const saida = U.el('pr-saida');
+      if (saida) {
+        saida.innerHTML = '<div class="ajuda" style="margin:10px 0" id="pr-ultimo">Último lançamento: <b>' +
+          U.esc(resumo.projeto) + ' · ' + U.fComp(comp) + '</b> — ' + feitos + ' lançamento(s), ' +
+          U.brl(valorLote) + '. Está na aba de lançamentos. Para lançar outro, escolha o arquivo acima.</div>';
+      }
+      ERP.app.modal({
+        titulo: 'Lançamento realizado',
+        fecharTxt: fila.length ? 'Continuar' : 'OK',
+        aoFechar: seguir,
+        corpo:
+          '<div class="lancamento-ok" id="pr-lancado">' +
+          '<div class="resumo-linha"><span>Projeto</span><span class="v">' + U.esc(resumo.projeto) + '</span></div>' +
+          '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(comp) + '</span></div>' +
+          '<div class="resumo-linha"><span>Lançamentos</span><span class="v">' + feitos + '</span></div>' +
+          '<div class="resumo-linha"><span>Valor do repasse</span><span class="v">' + U.brl(valorLote) + '</span></div>' +
+          (bloqueadosFeitos ? '<div class="resumo-linha"><span>Com pagamento bloqueado</span><span class="v erro">' +
+            bloqueadosFeitos + '</span></div>' : '') +
+          (complementares ? '<div class="ajuda">' + complementares + ' como complemento de fechamento já lançado.</div>' : '') +
+          (repetidos ? '<div class="ajuda">' + repetidos + ' já existiam e foram ignorados.</div>' : '') +
+          (novos || atualizados ? '<div class="ajuda">' +
+            (novos ? novos + ' médico(s) cadastrado(s)' : '') + (novos && atualizados ? ' e ' : '') +
+            (atualizados ? atualizados + ' atualizado(s) com dados bancários' : '') + '.</div>' : '') +
+          '<div class="ajuda">Os lançamentos estão em Financeiro › Contas a pagar' +
+            (fila.length ? '. Em seguida: ' + (loteFeito ? 'o valor a faturar' : '') +
+              (loteFeito && divergencias.length ? ' e ' : '') +
+              (divergencias.length ? 'as divergências de cadastro' : '') : '') + '.</div>' +
+          '</div>'
+      });
+      complementar = null;
+      const campoArqOk = U.el('pr-arquivo');
+      if (campoArqOk) campoArqOk.value = '';
+      return;
+    }
+
     if (erros.length) ERP.app.aviso(erros[0], 'erro');
     else ERP.app.aviso(feitos + ' lançamento(s) gerado(s)' +
       (complementares ? ', ' + complementares + ' como complemento de fechamento já lançado' : '') +
@@ -2183,7 +2495,7 @@ ERP.produtividade = (function () {
       (atualizados ? atualizados + ' atualizado(s) com dados bancários' : '') +
       (novos || atualizados ? '. ' : '') +
       'Os lançamentos estão em Financeiro › Contas a pagar.', 'ok');
-    if (divergencias.length) avisarDivergencias();
+    seguir();
 
     /* ── A RESPOSTA VALE PARA UMA GERAÇÃO, NÃO PARA A TELA ────
 
@@ -2213,8 +2525,9 @@ ERP.produtividade = (function () {
     'regime (PJ/SCP)': 'regime'
   };
 
-  function avisarDivergencias() {
+  function avisarDivergencias(depois) {
     ERP.app.modal({
+      aoFechar: depois || null,
       titulo: divergencias.length + ' divergência(s) de cadastro',
       corpo:
         '<div class="ajuda erro">O arquivo discorda do cadastro em alguns pontos. O sistema ' +

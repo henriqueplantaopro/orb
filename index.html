@@ -142,10 +142,11 @@
       </div>
       <div id="pr-aba-pendentes" style="display:none"></div>
       <div id="pr-aba-importar">
-        <h2>Importar fechamento de produtividade<span class="sub">arquivo do PegaPlantão</span></h2>
+        <h2>Importar fechamento de produtividade<span class="sub">PegaPlantão ou relatório de procedimentos</span></h2>
         <input type="file" id="pr-arquivo" accept=".xlsx,.xls" style="border:none;padding:0">
-        <div class="ajuda">Lê a aba PRODUTIVIDADE (projeto, período e plantões por médico) e a aba
-          FINANCEIRO (razão social, CNPJ/CPF e chave PIX). Agrupa por médico, setor e tipo.</div>
+        <div class="ajuda">Lê a aba PRODUTIVIDADE e a aba FINANCEIRO (CPF/CNPJ, chave PIX, regime). No arquivo do
+          PegaPlantão, agrupa os plantões por médico, setor e tipo; no relatório de procedimentos (ex.: Dr Consulta),
+          conta quantos procedimentos de cada tipo cada médico fez. Nome de paciente não é lido.</div>
         <div id="pr-saida"></div>
       </div>
       <div id="pr-aba-lotes" style="display:none"></div>
