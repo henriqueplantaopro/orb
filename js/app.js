@@ -337,6 +337,10 @@ ERP.app = (function () {
     const mod = ERP[telas[id]];
     if (mod && typeof mod.render === 'function') { mod.render(); return; }
     if (id === 'faturamento') {
+      /* O alerta dos projetos sem classificação e os contadores das
+         abas dependem dos projetos — que chegam do banco DEPOIS de o
+         módulo ser montado. Refeitos aqui, com o dado que chegou. */
+      if (ERP.faturamento && ERP.faturamento.renderSub) ERP.faturamento.renderSub();
       if (ERP.previsoes && ERP.previsoes.render) ERP.previsoes.render();
       if (ERP.faturamento && ERP.faturamento.renderStatus) ERP.faturamento.renderStatus();
     }
@@ -358,6 +362,7 @@ ERP.app = (function () {
        a operação começa o dia. */
     if (id === 'faturamento') {
       setTimeout(function () {
+        if (ERP.faturamento && ERP.faturamento.renderSub) ERP.faturamento.renderSub();
         if (ERP.previsoes) ERP.previsoes.render();
         if (ERP.faturamento && ERP.faturamento.renderStatus) ERP.faturamento.renderStatus();
       }, 0);

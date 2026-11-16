@@ -157,6 +157,12 @@
   <!-- ══════════ FATURAMENTO ══════════ -->
   <div data-modulo="faturamento" style="display:none">
     <div class="card">
+      <!-- Dois submódulos: tudo abaixo filtra pelo tipo do projeto. -->
+      <div class="fa-sub" id="fa-sub" role="tablist" aria-label="Submódulo do faturamento">
+        <button data-fasub="medico" role="tab" aria-selected="true">Serviços médicos</button>
+        <button data-fasub="locacao" role="tab" aria-selected="false">Locações</button>
+      </div>
+      <div id="fa-semclass"></div>
       <div class="rel-nav" id="fa-nav" style="margin:0 0 10px">
         <button data-faaba="status" aria-pressed="true">Status</button>
         <button data-faaba="resultado">Resultado</button>

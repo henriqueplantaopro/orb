@@ -92,7 +92,8 @@ const permitido = {
     lancar: 'O faturamento gera título a receber; quem lança precisa alcançar essa ponte.',
     ver_custo: 'O resultado por cliente compara receita com custo — sem o custo, a tela mostra metade da conta.',
     pagar: 'A baixa do recebimento encosta no caixa.',
-    produtividade: 'Alterar o VALOR da medição na esteira é responsabilidade de quem responde pela produtividade — é medição, não texto de nota. A tela aceita faturamento, financeiro ou produtividade.'
+    produtividade: 'Alterar o VALOR da medição na esteira é responsabilidade de quem responde pela produtividade — é medição, não texto de nota. A tela aceita faturamento, financeiro ou produtividade.',
+    cadastros: 'O alerta "projetos sem classificação" deixa classificar ali mesmo, e classificar é alteração do CADASTRO do projeto — a mesma regra do formulário de projetos e do banco (a tabela de projetos é de Cadastros). Quem tem só o faturamento vê a lista e a quem pedir; nenhum botão some sem explicação.'
   },
   'ui-procedimentos.js': {
     estoque: 'O procedimento consome material do estoque: dar baixa é operação de estoque, feita de dentro desta tela.',

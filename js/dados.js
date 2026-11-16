@@ -481,6 +481,19 @@ ERP.dados = (function () {
   const temRepasse = c => !!c && (c.tipo_servico
     ? c.tipo_servico === 'medico'
     : c.produtividade !== false);
+  /* EM QUAL SUBMÓDULO DO FATURAMENTO O PROJETO MORA.
+     Serviços médicos ou Locações — e `null` quando o projeto não diz
+     o que é (registro antigo, de antes do campo, ou importado sem ele).
+     Venda de material fica em Locações: as duas são faturamento de
+     coisa, não de gente, e nenhuma tem produtividade.
+
+     `null` NÃO É "nenhum dos dois": o projeto sem classificação aparece
+     NOS DOIS submódulos, marcado, até alguém dizer o que ele é. Se
+     sumisse dos dois, a nota dele ficaria sem ninguém olhar. */
+  const submoduloFaturamento = c => !c ? null
+    : c.tipo_servico === 'medico' ? 'medico'
+    : (c.tipo_servico === 'locacao' || c.tipo_servico === 'venda') ? 'locacao'
+    : null;
   const unidades = () => Array.from(new Set(centros.filter(function (c) { return c.unidade; })
     .map(function (c) { return c.unidade; }))).sort();
 
@@ -2114,7 +2127,7 @@ ERP.dados = (function () {
     return g ? g.tipo : null;
   };
 
-  return { empresa, usuarios, perfis, perfil, ACOES, MODULOS, centros, TIPOS_SERVICO, temRepasse, unidades, contratosSeed, TIPOS_CONTRATO,
+  return { empresa, usuarios, perfis, perfil, ACOES, MODULOS, centros, TIPOS_SERVICO, temRepasse, submoduloFaturamento, unidades, contratosSeed, TIPOS_CONTRATO,
            clienteDoCentro, projetosDoCliente, migrarVinculoCliente,
            ativosSeed, STATUS_ATIVO, nomeStatusAtivo, parametrosManutencao,
            empresas, empresaPor,
