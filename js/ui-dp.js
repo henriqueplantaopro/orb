@@ -601,7 +601,14 @@ ERP.dp = (function () {
         '<th class="num ce" title="Desconto de vale-refeição (R$)">VR</th>' +
         '<th class="num cv">Pensão</th>' +
         '<th class="num cv" title="Crédito do trabalhador">Créd. trab.</th>' +
-        '<th class="num cv">Proventos</th><th class="num cv">Descontos</th>' +
+        /* DESCONTOS AVULSOS: cartão de VT perdido, adiantamento, o que
+           mais tiver de ser abatido do pagamento. Cada um vira uma
+           linha própria no holerite, com a descrição — o funcionário
+           lê o que foi descontado. O total calculado, que se chamava
+           "Descontos", passou a ser "Total desc." para não confundir. */
+        '<th class="num ce" title="Descontos avulsos: cartão de VT perdido, adiantamento e outros — ' +
+          'clique para lançar (cada um sai como linha no holerite)">Descontos</th>' +
+        '<th class="num cv">Proventos</th><th class="num cv" title="todos os descontos do mês">Total desc.</th>' +
         '<th class="num cv">Líquido</th><th style="width:7%"></th></tr></thead><tbody>' +
         linhas.map(function (x) {
           const insalPericul = somaCodigos(x.h.proventos, ['105', '106']);
@@ -627,6 +634,14 @@ ERP.dp = (function () {
               : '<td class="num sub">R$ 0,00</td>') +
             '<td class="num">' + U.brl(pensao) + '</td>' +
             '<td class="num">' + U.brl(credito) + '</td>' +
+            (function () {
+              const ds = ajusteAtual.outros_descontos || [];
+              const tot = ds.reduce(function (t, d) { return t + (d.valor || 0); }, 0);
+              const tit = ds.map(function (d) { return d.descricao + ': ' + U.brl(d.valor); }).join(' · ');
+              return '<td class="num"><button class="btn-sm' + (tot > 0 ? ' btn-cancelar' : '') + '" data-desc-extra="' +
+                x.f.id + '" title="' + U.esc(tit || 'lançar desconto avulso') + '">' +
+                (tot > 0 ? U.brl(tot) : '+ lançar') + '</button></td>';
+            })() +
             '<td class="num">' + U.brl(x.h.total_proventos) + '</td>' +
             '<td class="num">' + U.brl(x.h.total_descontos) + '</td>' +
             '<td class="num"><b>' + U.brl(x.h.liquido) + '</b></td>' +
@@ -653,6 +668,9 @@ ERP.dp = (function () {
     });
     box.querySelectorAll('[data-mais-ajustes]').forEach(function (b) {
       b.addEventListener('click', function () { abrirMaisAjustesFolha(b.dataset.maisAjustes, comp, ativos); });
+    });
+    box.querySelectorAll('[data-desc-extra]').forEach(function (b) {
+      b.addEventListener('click', function () { abrirDescontosAvulsos(b.dataset.descExtra, comp, ativos); });
     });
     if (podeDP() && U.el('dp-fechar-folha')) {
       U.el('dp-fechar-folha').addEventListener('click', function () {
@@ -689,6 +707,76 @@ ERP.dp = (function () {
         });
       });
     }
+  }
+
+  /* ── DESCONTOS AVULSOS DO MÊS ─────────────────────────────
+     Uma linha por desconto, com descrição e valor. Vai para
+     `outros_descontos` do holerite — que o cálculo já sabia somar,
+     mas que nenhuma tela preenchia. Não mexe na base de INSS/IRRF:
+     ressarcir um cartão perdido não é remuneração a menos. */
+  const ATALHOS_DESCONTO = ['Cartão de VT perdido', 'Adiantamento salarial', 'Outro desconto'];
+  function abrirDescontosAvulsos(fid, comp, ativos) {
+    const f = D.funcionario(fid) || {};
+    const atuais = ((ajustesFolha[fid] || {}).outros_descontos || []).map(function (d) {
+      return { descricao: d.descricao, valor: d.valor };
+    });
+    if (!atuais.length) atuais.push({ descricao: '', valor: 0 });
+    const linhaHtml = function (d, i) {
+      return '<tr><td><input data-dx-desc="' + i + '" value="' + U.esc(d.descricao || '') + '" ' +
+          'placeholder="o que está sendo descontado" maxlength="60"></td>' +
+        '<td><input class="num" data-dx-valor="' + i + '" inputmode="decimal" value="' + U.num(d.valor || 0) + '"></td>' +
+        '<td><button class="btn-ghost" data-dx-tirar="' + i + '" title="tirar esta linha">✕</button></td></tr>';
+    };
+    const desenhar = function () {
+      U.el('dx-linhas').innerHTML = atuais.map(linhaHtml).join('');
+      U.el('dx-linhas').querySelectorAll('[data-dx-tirar]').forEach(function (b) {
+        b.addEventListener('click', function () { ler(); atuais.splice(+b.dataset.dxTirar, 1); desenhar(); });
+      });
+    };
+    const ler = function () {
+      atuais.forEach(function (d, i) {
+        const de = document.querySelector('[data-dx-desc="' + i + '"]');
+        const va = document.querySelector('[data-dx-valor="' + i + '"]');
+        if (de) d.descricao = de.value.trim();
+        if (va) d.valor = U.parseValor(va.value);
+      });
+    };
+    ERP.app.modal({
+      titulo: 'Descontos · ' + (f.nome || '') + ' · ' + U.fComp(comp),
+      corpo:
+        '<div class="ajuda">Cada desconto sai como uma linha no holerite, com a descrição que você escrever — ' +
+          'é o que o funcionário vai ler. Não altera a base de INSS e IRRF.</div>' +
+        '<div style="margin:8px 0">' + ATALHOS_DESCONTO.map(function (a) {
+          return '<button class="btn-sm" data-dx-atalho="' + U.esc(a) + '">+ ' + U.esc(a) + '</button> ';
+        }).join('') + '</div>' +
+        '<table class="parcelas"><thead><tr><th>Descrição</th><th class="num" style="width:28%">Valor (R$)</th><th style="width:8%"></th></tr></thead>' +
+        '<tbody id="dx-linhas"></tbody></table>',
+      acoes: [{ txt: 'Aplicar descontos', cls: 'btn-aprovar', fn: function () {
+        ler();
+        const validos = [];
+        for (let i = 0; i < atuais.length; i++) {
+          const d = atuais[i];
+          if (!d.valor && !d.descricao) continue;                 // linha vazia
+          if (!(d.valor > 0)) { ERP.app.aviso('Informe o valor de "' + (d.descricao || 'desconto') + '".', 'erro'); return; }
+          if (!d.descricao) { ERP.app.aviso('Descreva o desconto de ' + U.brl(d.valor) + ' — é o que aparece no holerite.', 'erro'); return; }
+          validos.push({ descricao: d.descricao, valor: Math.round(d.valor * 100) / 100 });
+        }
+        ajustesFolha[fid] = ajustesFolha[fid] || {};
+        ajustesFolha[fid].outros_descontos = validos;
+        ERP.app.fecharModal();
+        renderPreviaFolha(comp, ativos);
+      } }]
+    });
+    desenhar();
+    document.querySelectorAll('[data-dx-atalho]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        ler();
+        const vazia = atuais.find(function (d) { return !d.descricao && !d.valor; });
+        const desc = b.dataset.dxAtalho === 'Outro desconto' ? '' : b.dataset.dxAtalho;
+        if (vazia) vazia.descricao = desc; else atuais.push({ descricao: desc, valor: 0 });
+        desenhar();
+      });
+    });
   }
 
   function abrirMaisAjustesFolha(fid, comp, ativos) {

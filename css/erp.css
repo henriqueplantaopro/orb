@@ -404,6 +404,15 @@ td.acoes > :first-child{margin-left:0;}
 .rel-nav{display:flex;gap:4px;flex-wrap:wrap;}
 .rel-nav button{background:#fff;border:1px solid var(--line);color:var(--ink2);padding:5px 10px;font-size:12px;font-weight:500;}
 .rel-nav button[aria-pressed="true"]{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;}
+/* Submódulos do faturamento: um nível ACIMA das abas — mais forte que
+   elas, para ninguém confundir "estou em Locações" com "estou numa aba". */
+.fa-sub{display:flex;gap:0;margin:0 0 10px;border-bottom:2px solid var(--line);}
+.fa-sub button{background:none;border:none;border-bottom:3px solid transparent;margin-bottom:-2px;
+  padding:8px 16px;font-size:14px;font-weight:600;color:var(--ink2);border-radius:0;}
+.fa-sub button[aria-selected="true"]{color:var(--brand);border-bottom-color:var(--brand);}
+.fa-semclass{display:flex;align-items:center;gap:10px;margin:0 0 10px;padding:8px 12px;
+  border-left:3px solid var(--amber, #c98a00);background:#fff8e6;font-size:13px;}
+.fa-semclass button{margin-left:auto;}
 .rel-acoes{display:flex;gap:6px;margin-left:auto;}
 /* ── COLUNAS DE NÚMERO COM A MESMA LARGURA ────────────────────
    A largura de uma coluna automática é a do seu conteúdo: no DRE do

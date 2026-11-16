@@ -890,6 +890,31 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
   S.setUsuario('u8');
 })();
 
+// ── v169: submódulos do faturamento e a classificação do projeto ──
+(function () {
+  const sub = D.submoduloFaturamento;
+  verificar('serviço médico mora em Serviços médicos', sub({ tipo_servico: 'medico' }) === 'medico');
+  verificar('locação mora em Locações', sub({ tipo_servico: 'locacao' }) === 'locacao');
+  verificar('venda de material mora em Locações (faturamento de coisa, sem produtividade)',
+    sub({ tipo_servico: 'venda' }) === 'locacao', sub({ tipo_servico: 'venda' }));
+  verificar('projeto sem tipo não tem submódulo (aparece nos dois, marcado)',
+    sub({ tipo_servico: '' }) === null && sub({}) === null && sub(null) === null);
+  const c = D.centros.find(function (x) { return x.tipo === 'projeto' && x.tipo_servico === 'medico'; });
+  const antes = c.tipo_servico;
+  c.tipo_servico = '';
+  S.setUsuario('u11');   // sem alteração em Cadastros
+  const r1 = S.classificarProjeto(c.id, 'locacao');
+  verificar('classificar exige alterar Cadastros', /não altera Cadastros/.test(r1.erro || '') && c.tipo_servico === '', JSON.stringify(r1));
+  S.setUsuario('u5');
+  const r2 = S.classificarProjeto(c.id, 'locacao');
+  verificar('classificado como locação: tipo gravado e produtividade desligada',
+    r2.ok && c.tipo_servico === 'locacao' && c.produtividade === false && D.temRepasse(c) === false, JSON.stringify(r2.erro));
+  verificar('tipo inexistente é recusado', !!S.classificarProjeto(c.id, 'qualquer').erro);
+  S.classificarProjeto(c.id, antes);
+  verificar('e volta a serviço médico com produtividade', c.tipo_servico === 'medico' && c.produtividade === true && D.temRepasse(c));
+  S.setUsuario('u8');
+})();
+
 // ── v167: INSS do empregado FAIXA A FAIXA, como a contabilidade calcula ──
 (function () {
   /* O exemplo que a contabilidade mandou: base R$ 3.190,95.

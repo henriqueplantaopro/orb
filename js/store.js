@@ -3676,6 +3676,28 @@ ERP.store = (function () {
      A mesma função serve a quem paga (a trava) e a quem mostra (a
      tag e a caixa de seleção do contas a pagar). Eram lugares
      separados: a lista deixava marcar e o erro só vinha no envio. */
+  /* CLASSIFICAR UM PROJETO: serviços médicos, locação ou venda.
+     Só o tipo — o resto do cadastro continua no formulário de
+     projetos. Existe para o alerta do faturamento ("N projetos sem
+     classificação") deixar resolver ali mesmo, sem trocar de módulo.
+     A permissão é a do cadastro de projetos: quem mexe em Cadastros. */
+  function classificarProjeto(id, tipo) {
+    if (!podeMover('cadastros')) {
+      return { erro: 'Classificar o projeto é alteração de cadastro, e o seu perfil não altera Cadastros. ' +
+        'Peça a quem cuida dos cadastros (ou ajuste o perfil em Administração › Perfis).' };
+    }
+    if (!D.TIPOS_SERVICO[tipo]) return { erro: 'Escolha serviços médicos, locação ou venda de material.' };
+    const c = D.centros.find(function (x) { return x.id === id; });
+    if (!c) return { erro: 'Projeto não encontrado.' };
+    const antes = c.tipo_servico || '';
+    c.tipo_servico = tipo;
+    /* A cópia guardada acompanha a origem, como no formulário. */
+    c.produtividade = tipo === 'medico';
+    logar('cadastro', c.id, 'classificou o projeto',
+      (c.curto || c.nome || '') + ': ' + (D.TIPOS_SERVICO[antes] || 'sem classificação') + ' → ' + D.TIPOS_SERVICO[tipo]);
+    return { ok: true, centro: c };
+  }
+
   function travaDaProdutividade(par) {
     if (!par) return null;
     const tit = st.titulos.find(function (t) { return t.id === par.titulo_id; });
@@ -15736,7 +15758,12 @@ ERP.store = (function () {
        escondido, pelo nome — não "um grupo". */
     f = Object.assign({}, f || {}, { incluir_inativos: true, sem_agrupar: true });
     delete f.centro;
-    const ocultos = esteiraFaturamento(f).filter(esteiraInativa);
+    /* `filtro`: o submódulo do faturamento (Serviços médicos ×
+       Locações) — o resumo conta só o que a tela aberta esconde. */
+    const filtro = typeof f.filtro === 'function' ? f.filtro : null;
+    delete f.filtro;
+    const ocultos = esteiraFaturamento(f).filter(esteiraInativa)
+      .filter(function (l) { return !filtro || filtro(l); });
     const abertos = ocultos.filter(esteiraAberta);
     return {
       total: ocultos.length,
@@ -21022,7 +21049,7 @@ ERP.store = (function () {
     custoFuncionarios, provisaoMensalPessoal, calcular13, decimos, fechar13, cancelar13,
     retencoesPendentes, resumoRetencoesPendentes, guiasRetencao, fecharGuiaRetencao, cancelarGuiaRetencao,
     listar, parcela, saldoDe, valorNoCentro, aguardandoDe,
-    formaDoCredor, impedimentos, travaDaProdutividade, editarParcela, CAMPOS_EDITAVEIS,
+    formaDoCredor, impedimentos, travaDaProdutividade, classificarProjeto, editarParcela, CAMPOS_EDITAVEIS,
     informarDadosBancarios, validarDadosBancarios,
     pagamentosAguardando, pagamento, autorizarPagamento, recusarPagamento,
     autorizadosDe, enviadosDe, emCursoDe, pagoDe, caixaDe, pagamentosDe, pagamentosTodos, eventosDe,

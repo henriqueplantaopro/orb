@@ -60,7 +60,12 @@ ERP.previsoes = (function () {
 
   function render() {
     const comp = U.val('pv-comp') || U.mesAtual();
-    const lista = projetos();
+    /* O submódulo do faturamento (Serviços médicos × Locações) vale
+       aqui também — o filtro é o do faturamento, não um segundo. */
+    const modFat = ERP.faturamento;
+    const lista = projetos().filter(function (c) {
+      return !modFat || !modFat.noSubmodulo || modFat.noSubmodulo(c.id);
+    });
     let tf = 0, tp = 0, trf = 0, trp = 0, tdf = 0, tdp = 0;
     const alertas = [];
 
@@ -136,6 +141,7 @@ ERP.previsoes = (function () {
       if (sit.alerta) alertas.push({ projeto: c.curto || c.nome, pc: pc, desvio: desvFat });
       return cab + '<tr>' +
         '<td class="desc">' + U.esc(c.curto || c.nome) +
+          (modFat && modFat.marcaSemClassificacao ? modFat.marcaSemClassificacao(c.id) : '') +
           /* A explicacao do prazo sai da mesma funcao que calcula a
              data. Projeto que paga em dia fixo nao tem "N dias", e
              escrever "null dias" seria pior que nao escrever nada. */
@@ -425,11 +431,23 @@ ERP.previsoes = (function () {
         });
       }
     });
+    const naTela = [];
     projetos().forEach(function (c) {
+      /* SÓ O QUE ESTÁ NA TELA É LIDO.
+
+         Com os submódulos (v169), a lista mostra só os projetos de
+         Serviços médicos ou só os de Locações. Lendo TODOS os projetos,
+         o campo de quem está escondido não existe, o valor lido vira
+         zero — e a previsão que esse projeto já tinha seria trocada
+         por zero sem ninguém ter tocado nela. Projeto sem campo na tela
+         não é "projeto com valor zero": é projeto que não foi editado. */
+      const campoFat = U.el('pv-saida').querySelector('[data-pv-fat="' + c.id + '"]');
+      if (!campoFat) return;
+      naTela.push(c.id);
       /* Projeto de grupo salva como qualquer outro: o faturamento é
          digitado na linha dele. O que o grupo define é a NOTA — uma
          só para todas as especialidades —, não a previsão. */
-      const fat = U.parseValor((U.el('pv-saida').querySelector('[data-pv-fat="' + c.id + '"]') || {}).value);
+      const fat = U.parseValor(campoFat.value);
       const pe = U.el('pv-saida').querySelector('[data-pv-prod="' + c.id + '"]');
       const prod = pe ? U.parseValor(pe.value) : 0;
       const antes = S.previsaoDe(c.id, comp);
@@ -443,7 +461,9 @@ ERP.previsoes = (function () {
        digitada mas invisível no contas a receber até alguém lembrar de
        clicar no segundo botão — e ninguém lembrava. Quem só quer
        rascunhar não precisa salvar. */
-    const r = S.marcarPrevisoes(comp, 'confirmada');
+    /* Confirma só as previsões dos projetos que estavam na tela — as
+       do outro submódulo não foram vistas por quem clicou. */
+    naTela.forEach(function (id) { S.marcarPrevisoes(comp, 'confirmada', id); });
     render();
     ERP.app.atualizarContadores();
     ERP.app.aviso(n + ' previsão(ões) salva(s) e confirmada(s) para ' + U.fComp(comp) +

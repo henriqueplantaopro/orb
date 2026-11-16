@@ -21,6 +21,130 @@ ERP.faturamento = (function () {
   };
   const compDe = n => comps[n.numero] || n.competencia;
 
+  /* ══ SUBMÓDULOS: SERVIÇOS MÉDICOS × LOCAÇÕES ══════════════════
+
+     O faturamento é um só, mas o trabalho não: nota de serviço médico
+     e fatura de locação têm clientes, prazos e documentos diferentes,
+     e misturadas na mesma lista uma esconde a outra. O submódulo é um
+     FILTRO por cima de todas as abas — não oito telas duplicadas, que
+     um dia passariam a calcular diferente.
+
+     A regra de quem mora onde é UMA, no cadastro
+     (`D.submoduloFaturamento`). O projeto sem classificação aparece
+     nos DOIS, marcado, até alguém classificar — e o alerta do topo
+     conta quantos são. Escondê-lo dos dois seria pior que misturar:
+     a nota dele ficaria sem ninguém olhar. */
+  let sub = 'medico';
+  try { const g = localStorage.getItem('orb-fa-sub'); if (g === 'medico' || g === 'locacao') sub = g; } catch (e) { /* sem armazenamento: começa em Serviços médicos */ }
+  const ROT_SUB = { medico: 'Serviços médicos', locacao: 'Locações' };
+  /* O centro de uma linha, venha ela de onde vier: as listas trazem
+     `centro` (id), algumas trazem `projeto` (objeto), e a esteira de
+     nota única traz as `especialidades`. */
+  function centrosDaLinha(x) {
+    if (!x) return [];
+    if (typeof x === 'string') return [x];
+    if (Array.isArray(x.especialidades) && x.especialidades.length) {
+      return x.especialidades.map(function (e) { return e.centro || (e.projeto && e.projeto.id); }).filter(Boolean);
+    }
+    const id = x.centro || (x.projeto && x.projeto.id) || (x.item && x.item.centro);
+    return id ? [id] : [];
+  }
+  /* Esta linha pertence ao submódulo aberto? Sem classificação: sim,
+     nos dois. Linha sem projeto nenhum (raro): também aparece — o
+     filtro não pode ser o lugar onde algo some. */
+  function noSub(x) {
+    const ids = centrosDaLinha(x);
+    if (!ids.length) return true;
+    return ids.some(function (id) {
+      const s = D.submoduloFaturamento(D.centro(id));
+      return s === null || s === sub;
+    });
+  }
+  const semClassificacao = function (id) { return D.submoduloFaturamento(D.centro(id)) === null; };
+  /* Marca para pôr ao lado do nome do projeto nas listas. */
+  function marcaSemClass(x) {
+    return centrosDaLinha(x).some(semClassificacao)
+      ? ' <span class="badge b-pendente" title="Este projeto não diz se é serviço médico ou locação — aparece nos dois submódulos até ser classificado.">sem classificação</span>'
+      : '';
+  }
+  const projetosSemClass = function () {
+    return D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo && D.submoduloFaturamento(c) === null; });
+  };
+
+  function renderSub() {
+    document.querySelectorAll('#fa-sub [data-fasub]').forEach(function (b) {
+      b.setAttribute('aria-selected', b.dataset.fasub === sub ? 'true' : 'false');
+    });
+    /* "Fatura (locação sem NF)" só existe em Locações. */
+    const bFat = document.querySelector('#fa-nav [data-faaba="fatura"]');
+    if (bFat) bFat.style.display = sub === 'locacao' ? '' : 'none';
+    const n = projetosSemClass().length;
+    const box = U.el('fa-semclass');
+    if (box) {
+      box.className = n ? 'fa-semclass' : '';
+      box.innerHTML = n
+        ? '<span><b>' + n + ' projeto(s) sem classificação</b> — não dizem se são serviços médicos ou ' +
+          'locações, então aparecem nos dois submódulos.</span>' +
+          '<button class="btn-sm" id="fa-semclass-ver">Ver quais</button>'
+        : '';
+      if (n) U.el('fa-semclass-ver').addEventListener('click', verSemClassificacao);
+    }
+  }
+  /* A lista dos sem classificação, com o ajuste ali mesmo para quem
+     mexe em Cadastros; para quem não mexe, a lista e a quem pedir. */
+  function verSemClassificacao() {
+    const lista = projetosSemClass();
+    const pode = S.podeMover('cadastros');
+    ERP.app.modal({
+      titulo: lista.length + ' projeto(s) sem classificação',
+      corpo:
+        '<div class="ajuda">Cada projeto precisa dizer se é <b>serviços médicos</b> ou <b>locação</b> ' +
+          '(ou venda de material, que fica junto das locações). Enquanto não diz, aparece nos dois submódulos.' +
+          (pode ? '' : ' <b>Seu perfil não altera Cadastros</b> — peça a quem cuida dos cadastros para classificar.') +
+        '</div>' +
+        (lista.length
+          ? '<table class="parcelas"><thead><tr><th>Projeto</th><th>Código</th><th>Classificação</th></tr></thead><tbody>' +
+            lista.map(function (c) {
+              return '<tr><td class="desc">' + U.esc(c.curto || c.nome) +
+                  (c.nome && c.nome !== c.curto ? '<div class="sub">' + U.esc(c.nome) + '</div>' : '') + '</td>' +
+                '<td class="mono">' + U.esc(c.codigo || '—') + '</td>' +
+                '<td>' + (pode
+                  ? '<select data-classif="' + c.id + '"><option value="">escolher…</option>' +
+                    Object.keys(D.TIPOS_SERVICO).map(function (k) {
+                      return '<option value="' + k + '">' + U.esc(D.TIPOS_SERVICO[k]) + '</option>';
+                    }).join('') + '</select>'
+                  : '<span class="sub">sem classificação</span>') + '</td></tr>';
+            }).join('') + '</tbody></table>'
+          : '<div class="vazio">Todos os projetos ativos estão classificados.</div>'),
+      acoes: pode && lista.length ? [{ txt: 'Salvar classificação', cls: 'btn-aprovar', fn: function () {
+        let feitos = 0;
+        const erros = [];
+        document.querySelectorAll('#modal-fundo [data-classif]').forEach(function (s) {
+          if (!s.value) return;
+          const r = S.classificarProjeto(s.dataset.classif, s.value);
+          if (r.erro) erros.push(r.erro); else feitos++;
+        });
+        if (erros.length) { ERP.app.aviso(erros[0], 'erro'); return; }
+        if (!feitos) { ERP.app.aviso('Escolha a classificação de pelo menos um projeto.', 'erro'); return; }
+        ERP.app.fecharModal();
+        ERP.app.aviso(feitos + ' projeto(s) classificado(s).', 'ok');
+        redesenharAbaAtual();
+      } }] : []
+    });
+  }
+  function redesenharAbaAtual() {
+    renderSub();
+    atualizarAlertaFat();
+    const ativa = document.querySelector('#fa-nav button[aria-pressed="true"]');
+    const aba = ativa ? ativa.dataset.faaba : 'status';
+    if (aba === 'fatura' && sub !== 'locacao') {
+      /* Saiu de Locações com a aba de fatura aberta: volta ao Status. */
+      document.querySelector('#fa-nav [data-faaba="status"]').click();
+      return;
+    }
+    if (ativa) ativa.click();
+  }
+
   function montar() {
     U.el('fa-arquivo').addEventListener('change', abrir);
     document.querySelectorAll('#fa-nav button').forEach(function (b) {
@@ -47,6 +171,14 @@ ERP.faturamento = (function () {
         if (b.dataset.faaba === 'previsoes') ERP.previsoes.render();
       });
     });
+    document.querySelectorAll('#fa-sub [data-fasub]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        sub = b.dataset.fasub;
+        try { localStorage.setItem('orb-fa-sub', sub); } catch (e) { /* sem armazenamento: vale só nesta visita */ }
+        redesenharAbaAtual();
+      });
+    });
+    renderSub();
     atualizarAlertaFat();
     renderStatus();   // é a primeira aba
   }
@@ -59,9 +191,9 @@ ERP.faturamento = (function () {
   function renderStatus() {
     const box = U.el('fa-aba-status');
     if (!box) return;
-    const lista = S.statusFaturamento({ competencia: stComp, centro: stCentro, status: stStatus });
-    const conta = s => S.statusFaturamento({ competencia: stComp, centro: stCentro })
-      .filter(function (l) { return l.status === s; }).length;
+    const lista = S.statusFaturamento({ competencia: stComp, centro: stCentro, status: stStatus }).filter(noSub);
+    const doSub = S.statusFaturamento({ competencia: stComp, centro: stCentro }).filter(noSub);
+    const conta = s => doSub.filter(function (l) { return l.status === s; }).length;
     box.innerHTML =
       '<h2>Status do faturamento<span class="sub">do previsto ao recebido, projeto a projeto</span>' +
         (S.pode('faturar')
@@ -72,7 +204,7 @@ ERP.faturamento = (function () {
           '<input type="month" id="st-comp" value="' + stComp + '" title="vazio = todas"></div>' +
         '<div class="f"><label for="st-centro">Projeto</label><select id="st-centro">' +
           '<option value="">todos</option>' +
-          D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo; })
+          D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo && noSub(c.id); })
             .sort(function (x, y) { return String(x.curto).localeCompare(String(y.curto), 'pt-BR'); })
             .map(function (c) {
               return '<option value="' + c.id + '"' + (c.id === stCentro ? ' selected' : '') + '>' +
@@ -102,7 +234,7 @@ ERP.faturamento = (function () {
               liberado: 'b-aprovado', autorizado: 'b-aguardando', confirmado: 'b-aguardando',
               previsao: 'b-pendente', faturado: 'b-pago', recebido: 'b-pago',
               recebido_parcial: 'b-parcial' }[l.status] || 'b-pendente';
-            return '<tr><td class="desc">' + U.esc(l.projeto.curto || l.projeto.nome) +
+            return '<tr><td class="desc">' + U.esc(l.projeto.curto || l.projeto.nome) + marcaSemClass(l) +
                 (l.eh_grupo ? '<div class="sub">nota única · ' + l.especialidades.length +
                   ' especialidades</div>' : '') + '</td>' +
               '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
@@ -128,7 +260,7 @@ ERP.faturamento = (function () {
   /* Complemento de nota já faturada: faturei 2 milhões do HGB e chegou
      um relatório de mais 50 mil. */
   function novoComplemento() {
-    const proj = D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo; })
+    const proj = D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo && noSub(c.id); })
       .sort(function (x, y) { return String(x.curto).localeCompare(String(y.curto), 'pt-BR'); });
     ERP.app.modal({
       titulo: 'Complemento de faturamento',
@@ -179,7 +311,7 @@ ERP.faturamento = (function () {
     const box = U.el('fa-aba-resultado');
     if (!box) return;
     if (!resComp) resComp = U.hoje().slice(0, 7);
-    const lista = S.resultadoFaturamento({ competencia: resComp, centro: resCentro });
+    const lista = S.resultadoFaturamento({ competencia: resComp, centro: resCentro }).filter(noSub);
     const som = campo => Math.round(lista.reduce(function (t, l) { return t + (l[campo] || 0); }, 0) * 100) / 100;
     const totFat = som('faturamento'), totLucro = som('lucro');
 
@@ -213,7 +345,7 @@ ERP.faturamento = (function () {
           '<input type="month" id="res-comp" value="' + resComp + '" required></div>' +
         '<div class="f"><label for="res-centro">Projeto</label><select id="res-centro">' +
           '<option value="">todos</option>' +
-          D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo; })
+          D.centros.filter(function (c) { return c.tipo === 'projeto' && c.ativo && noSub(c.id); })
             .sort(function (x, y) { return String(x.curto).localeCompare(String(y.curto), 'pt-BR'); })
             .map(function (c) {
               return '<option value="' + c.id + '"' + (c.id === resCentro ? ' selected' : '') + '>' +
@@ -293,8 +425,12 @@ ERP.faturamento = (function () {
   const rpsEscolhido = (i, pronto) => pronto && (rpsSel === null || rpsSel.has(refRps(i)));
 
   function renderRPS() {
-    const itens = S.itensParaRPS(rpsComp);
-    const lotes = S.st.lotesRPS.filter(function (l) { return !rpsComp || l.competencia === rpsComp; });
+    const itens = S.itensParaRPS(rpsComp).filter(noSub);
+    /* Lote já gerado aparece no submódulo se tiver ao menos um RPS dele. */
+    const lotes = S.st.lotesRPS.filter(function (l) {
+      return (!rpsComp || l.competencia === rpsComp) &&
+        (!(l.rps || []).length || l.rps.some(noSub));
+    });
     /* A CONFERÊNCIA OLHA A MESMA EMPRESA QUE O ARQUIVO VAI USAR.
        Olhando a cópia fixa, a tela dizia "pronto para gerar" com a
        inscrição da matriz enquanto o arquivo sairia com a da
@@ -736,7 +872,7 @@ ERP.faturamento = (function () {
 
   function renderEsteira() {
     if (!fEst.competencia) fEst.competencia = S.competenciaDeslocada(1);
-    const todas = S.esteiraFaturamento({});
+    const todas = S.esteiraFaturamento({}).filter(noSub);
 
     /* O QUE ESTÁ NA TELA, antes do filtro de etapa — é sobre ESTE
        conjunto que as contagens falam. Contando sobre todas as
@@ -753,15 +889,15 @@ ERP.faturamento = (function () {
        esteira escondeu, e dele sai a linha que diz quantos foram e
        quais ainda têm faturamento em aberto. Inativar não pode ser
        um jeito de perder nota emitida e não enviada. */
-    const ocultos = S.inativosNaEsteira({ competencia: fEst.competencia });
+    const ocultos = S.inativosNaEsteira({ competencia: fEst.competencia, filtro: noSub });
     const incl = fEst.inativos ? true : undefined;
-    const base = fEst.anteriores
+    const base = (fEst.anteriores
       ? S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO, incluir_inativos: incl,
           sem_documento: fEst.sem_doc, falta_enviar: fEst.falta_enviar })
       : (fEst.falta_enviar
           ? S.esteiraFaturamento({ falta_enviar: true, incluir_inativos: incl, sem_documento: fEst.sem_doc })
           : S.esteiraFaturamento({ competencia: fEst.competencia,
-              incluir_inativos: incl, sem_documento: fEst.sem_doc }));
+              incluir_inativos: incl, sem_documento: fEst.sem_doc }))).filter(noSub);
     const conta = {};
     ORDEM_ETAPAS.concat(['sem_faturamento']).forEach(function (e) {
       conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
@@ -777,7 +913,7 @@ ERP.faturamento = (function () {
        competências, como "sem documento": a nota esquecida é
        justamente a do mês que ninguém está mais olhando. */
     const aEnviar = todas.filter(function (l) { return l.falta_enviar; }).length;
-    const atrasadas = S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO }).length;
+    const atrasadas = S.esteiraFaturamento({ anteriores: COMPETENCIAS_DE_ATRASO }).filter(noSub).length;
     const limiteAtraso = S.competenciaDeslocada(COMPETENCIAS_DE_ATRASO);
 
     const comps = todas.map(function (l) { return l.competencia; })
@@ -916,7 +1052,7 @@ ERP.faturamento = (function () {
                 ? '<button class="btn-ghost" data-est-exp="' + U.esc(l.grupo + '|' + l.competencia) + '" ' +
                     'title="ver especialidades">' + (expandidos[l.grupo + '|' + l.competencia] ? '▾' : '▸') + '</button> ' +
                   U.esc(l.projeto.curto)
-                : U.esc(l.projeto.curto || l.projeto.nome)) +
+                : U.esc(l.projeto.curto || l.projeto.nome)) + marcaSemClass(l) +
               (l.inativo ? ' <span class="badge b-pendente">inativo</span>' : '') +
               /* POR QUAL CNPJ ESTA NOTA SAI.
 
@@ -2799,7 +2935,7 @@ ERP.faturamento = (function () {
 
   function renderFatura() {
     const box = U.el('fa-aba-fatura');
-    const projetos = D.centros.filter(function (c) { return c.ativo && c.tipo === 'projeto'; })
+    const projetos = D.centros.filter(function (c) { return c.ativo && c.tipo === 'projeto' && noSub(c.id); })
       .sort(function (a, b) { return String(a.curto || a.nome).localeCompare(String(b.curto || b.nome)); });
     if (!fatSel.centro) {
       const loc = projetos.find(function (c) { return c.tipo_servico === 'locacao'; });
@@ -2991,7 +3127,7 @@ ERP.faturamento = (function () {
       const d = new Date();
       covComp = new Date(Date.UTC(d.getFullYear(), d.getMonth() - 1, 1)).toISOString().slice(0, 7);
     }
-    const linhas = S.coberturaFaturamento(covComp);
+    const linhas = S.coberturaFaturamento(covComp).filter(noSub);
     const rot = {
       faturado: { t: 'faturado', c: 'sit-pago' },
       /* O rótulo acompanha a etapa: confirmar o valor não é autorizar,
@@ -3055,7 +3191,7 @@ ERP.faturamento = (function () {
           String(a.projeto.curto).localeCompare(String(b.projeto.curto));
       }).map(function (x) {
         const r = rot[x.situacao];
-        return '<tr><td class="desc">' + U.esc(x.projeto.curto || x.projeto.nome) +
+        return '<tr><td class="desc">' + U.esc(x.projeto.curto || x.projeto.nome) + marcaSemClass(x) +
             '<div class="sub">' + U.esc(x.projeto.unidade || '') + '</div></td>' +
           '<td><span class="badge ' + r.c + '">' + r.t + '</span>' +
             (x.confirmado_por ? '<div class="sub">por ' + U.esc(x.confirmado_por) + '</div>' : '') +
@@ -3130,13 +3266,15 @@ ERP.faturamento = (function () {
   }
 
   function atualizarAlertaFat() {
-    const nEst = S.esteiraFaturamento({ pendentes: true }).length;
+    /* Os contadores das abas falam do submódulo aberto: "Esteira 12"
+       em Locações tem de ser a esteira das locações. */
+    const nEst = S.esteiraFaturamento({ pendentes: true }).filter(noSub).length;
     const cont = U.el('fa-esteira-n');
     if (cont) { cont.textContent = nEst; cont.style.display = nEst ? '' : 'none'; }
     const el = U.el('fa-alerta');
     if (!el) return;
     const p = S.faturamentoPendente();
-    const n = (p.faltando || []).length;
+    const n = (p.faltando || []).filter(noSub).length;
     el.style.display = n ? '' : 'none';
     el.textContent = n;
   }
@@ -3733,6 +3871,13 @@ ERP.faturamento = (function () {
   }
 
   return { montar: montar, render: render, baixar: baixar, renderCobertura: renderCobertura,
+    /* A aba Previsões mora em ui-previsoes.js e usa o MESMO filtro —
+       uma regra, não duas. */
+    noSubmodulo: noSub, marcaSemClassificacao: marcaSemClass,
+    /* Refeito ao abrir o módulo: o alerta depende dos projetos, que
+       chegam do banco depois da montagem. Junto, os contadores. */
+    renderSub: function () { renderSub(); atualizarAlertaFat(); },
+    submodulo: function () { return sub; },
     renderStatus: renderStatus, renderResultado: renderResultado, atualizarAlertaFat: atualizarAlertaFat,
     /* v152: exposta para que a prova consiga ABRIR esta janela e
        clicar em Salvar. O defeito das retenções perdidas estava
