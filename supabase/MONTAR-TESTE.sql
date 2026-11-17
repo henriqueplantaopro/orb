@@ -398,7 +398,7 @@ create table linhas_extrato (
   valor         numeric(14,2) not null,
   memo          text,
   fitid         text,
-  saida         boolean not null,
+  saida         numeric(14,2) not null default 0,   -- valor que saiu da conta (v171: era boolean)
   situacao      text not null default 'pendente',  -- pendente|conciliado|ignorado
   alvo_tipo     text,
   alvo_id       text,
@@ -588,6 +588,30 @@ create table fechamentos_procedimentos (
   criado_por    text, criado_em timestamptz not null default now()
 );
 create index on fechamentos_procedimentos (competencia, cancelado);
+
+-- Previsões de DESPESA (v170): não são as do faturamento, que exigem
+-- projeto e são uma por projeto e mês.
+create table previsoes_despesa (
+  id            text primary key,
+  conta         text,
+  centro        text references centros (id),
+  competencia   char(7) not null,
+  data          date,
+  valor         numeric(14,2) not null default 0,
+  descricao     text,
+  credor        text,
+  serie         text,
+  parcial       boolean not null default false,
+  status        text not null default 'estimada',
+  efetivada     boolean not null default false,
+  valor_real    numeric(14,2),
+  atualizado_em timestamptz,
+  criado_por    text,
+  criado_por_id text,
+  criado_em     timestamptz not null default now(),
+  extra         jsonb not null default '{}'::jsonb
+);
+create index on previsoes_despesa (competencia);
 
 create table lotes_produtividade (
   id            text primary key,
@@ -853,7 +877,7 @@ declare
   mapa jsonb := '{
     "financeiro":    ["titulos","parcelas","pagamentos","retencoes_registradas","guias_retencao",
                       "extratos","linhas_extrato","saldos_informados","transferencias_banco",
-                      "regras_conciliacao"],
+                      "regras_conciliacao","previsoes_despesa"],
     "faturamento":   ["receber","previsoes","lotes_rps"],
     "contratos":     ["contratos"],
     "estoque":       ["produtos","armazens","posicoes_estoque","estoque_camadas",
@@ -903,6 +927,11 @@ end $$;
 -- o módulo mas não a ação, então perde as duas. Se o escritório
 -- precisar da folha para escriturar, o caminho é a exportação, não
 -- o acesso à tabela.
+-- Previsão de despesa não é fato contábil: quem movimenta o Financeiro
+-- pode excluí-la (o laço acima não dá DELETE a ninguém).
+create policy apagar_previsoes_despesa on previsoes_despesa
+  for delete using (tem_nivel('financeiro', 'M') and tem_nivel('financeiro', 'V'));
+
 create policy ver_funcionario_completo on funcionarios
   for select using (tem_nivel('dp', 'V') and tem_acao('ver_dados_pessoais'));
 create policy mexer_funcionario on funcionarios

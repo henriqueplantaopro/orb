@@ -890,6 +890,34 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
   S.setUsuario('u8');
 })();
 
+// ── v170: a despesa prevista grava no banco ──
+(function () {
+  S.setUsuario('u5');
+  const r = S.salvarPrevisaoDespesa({ conta: '6.07', competencia: '2043-05', data: '2043-05-15',
+    valor: 1234.56, descricao: 'CARTAO QA v170', repetir: 2 });
+  const pvs = S.st.previsoes.filter(function (p) { return p.descricao === 'CARTAO QA v170'; });
+  const pars = S.st.parcelas.filter(function (p) { return pvs.some(function (v) { return v.id === p.previsao_id; }); });
+  verificar('v170 — o título previsto nasce com a lista de itens (o banco recusa itens nulo)',
+    r.ok && pars.length === 2 && pars.every(function (p) { return Array.isArray(p.itens); }),
+    JSON.stringify(pars.map(function (p) { return p.itens; })));
+  const pv = pvs.sort(function (a, b) { return a.competencia < b.competencia ? -1 : 1; })[0];
+  S.salvarPrevisaoDespesa({ id: pv.id, conta: pv.conta, competencia: pv.competencia, data: pv.data,
+    valor: 999.99, descricao: pv.descricao });
+  const doPv = S.st.parcelas.filter(function (p) { return p.previsao_id === pv.id; });
+  verificar('v170 — editar a previsão atualiza o título dela, e não o dá por substituído',
+    doPv.length === 1 && doPv[0].status === 'previsto' && doPv[0].valor === 999.99,
+    JSON.stringify(doPv.map(function (p) { return p.status + '/' + p.valor; })));
+  /* a rede da gravação: parcela com itens vazio vai como lista */
+  const fsV = require('fs');
+  const per = fsV.readFileSync(__dirname + '/js/persistencia.js', 'utf8');
+  verificar('v170 — a rede de obrigatórias completa `itens` da parcela',
+    /\n\s*parcelas: \{[^}]*itens: \[\]/.test(per), '');
+  verificar('v170 — a previsão de despesa tem tabela própria no mapa de gravação',
+    /previsoesDespesa: \{ tabela: 'previsoes_despesa'/.test(per) &&
+    /previsoes: \{ tabela: 'previsoes'[^\n]*\n\s*colecao: 'previsoes', filtro: function \(p\) \{ return !p \|\| p.tipo !== 'despesa'; \}/.test(per), '');
+  S.excluirPrevisaoDespesa(pv.id, true);
+})();
+
 // ── v169: submódulos do faturamento e a classificação do projeto ──
 (function () {
   const sub = D.submoduloFaturamento;
@@ -7427,7 +7455,14 @@ function liberarParaFaturar(centro, competencia) {
   let m;
   while ((m = re.exec(bloco))) nomes.push(m[1]);
 
-  const semEstado = nomes.filter(function (n) { return !Array.isArray(S.st[n]); });
+  /* v170: uma entrada pode gravar PARTE de outra coleção (`colecao`):
+     as previsões de despesa saem de `st.previsoes`. */
+  const colecaoDoMapa = function (n) {
+    const r = new RegExp('^\\s*' + n + ': \\{ tabela: [^\\n]*\\n?[^\\n]*?colecao: \'(\\w+)\'', 'm');
+    const x = bloco.match(r);
+    return x ? x[1] : n;
+  };
+  const semEstado = nomes.filter(function (n) { return !Array.isArray(S.st[colecaoDoMapa(n)]); });
   verificar('v82 — toda coleção do mapa de gravação existe no estado',
     semEstado.length === 0, semEstado.join(', '));
 
@@ -12178,6 +12213,12 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     const m = t.match(/^ {4}(\w+): \{ tabela: '([\w]+)'/);
     tabelaDe[m[1]] = m[2];
   });
+  /* v170: entrada que grava PARTE de outra coleção (`colecao`) é
+     apagada quando aquela coleção é apagada. */
+  (srcPers.match(/^ {4}(\w+): \{ tabela: [^\n]*\n[^\n]*colecao: '(\w+)'/gm) || []).forEach(function (t) {
+    const m = t.match(/^ {4}(\w+): \{[\s\S]*colecao: '(\w+)'/);
+    if (m && apagam[m[2]] && m[1] !== m[2]) apagam[m[1]] = true;
+  });
   verificar('v163 — o MAPA da persistencia foi lido para conferir a exclusao',
     Object.keys(tabelaDe).length > 25, Object.keys(tabelaDe).length + ' colecoes');
 
@@ -12329,10 +12370,10 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
      ficam de propósito (ver o comentário de `conferirEscrita`). */
   const chamadas = srcPers.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/[^\n]*/gm, '');
   verificar('v164 — a gravação em lote volta com os ids, em vez de pedir silêncio',
-    /\.upsert\(linhas, \{ onConflict: 'id' \}\)\.select\('id'\)/.test(chamadas) &&
+    /\.upsert\(linhas, \{ onConflict: 'id'(?:, defaultToNull: false)? \}\)\.select\('id'\)/.test(chamadas) &&
     (chamadas.match(/returning: 'minimal'/g) || []).length === 2, '');
   verificar('v164 — a ficha do funcionário (e a conta bancária dela) também é conferida',
-    /from\('funcionarios'\)\s*\n?\s*\.upsert\(linhas, \{ onConflict: 'id' \}\)\.select\('id'\)/.test(chamadas) &&
+    /from\('funcionarios'\)\s*\n?\s*\.upsert\(linhas, \{ onConflict: 'id'(?:, defaultToNull: false)? \}\)\.select\('id'\)/.test(chamadas) &&
     /exige o módulo '/.test(chamadas), '');
   verificar('v164 — e as duas alterações linha a linha também conferem',
     (srcPers.match(/\.update\(linha\)\.eq\('id', it\.id\)\.select\('id'\)/g) || []).length === 2, '');

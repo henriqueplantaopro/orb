@@ -85,7 +85,7 @@ declare
   mapa jsonb := '{
     "financeiro":    ["titulos","parcelas","pagamentos","retencoes_registradas","guias_retencao",
                       "extratos","linhas_extrato","saldos_informados","transferencias_banco",
-                      "regras_conciliacao"],
+                      "regras_conciliacao","previsoes_despesa"],
     "faturamento":   ["receber","previsoes","lotes_rps"],
     "contratos":     ["contratos"],
     "estoque":       ["produtos","armazens","posicoes_estoque","estoque_camadas",
@@ -135,6 +135,11 @@ end $$;
 -- o módulo mas não a ação, então perde as duas. Se o escritório
 -- precisar da folha para escriturar, o caminho é a exportação, não
 -- o acesso à tabela.
+-- Previsão de despesa não é fato contábil: quem movimenta o Financeiro
+-- pode excluí-la (o laço acima não dá DELETE a ninguém).
+create policy apagar_previsoes_despesa on previsoes_despesa
+  for delete using (tem_nivel('financeiro', 'M') and tem_nivel('financeiro', 'V'));
+
 create policy ver_funcionario_completo on funcionarios
   for select using (tem_nivel('dp', 'V') and tem_acao('ver_dados_pessoais'));
 create policy mexer_funcionario on funcionarios
