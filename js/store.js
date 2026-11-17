@@ -15163,7 +15163,11 @@ ERP.store = (function () {
      título real daquela natureza, centro e competência é lançado. */
   function sincronizarTituloPrevisto(pv) {
     const jaReal = st.parcelas.some(function (p) {
-      return p.origem !== 'previsao' && p.status !== 'cancelado' &&
+      /* Título gerado por PREVISÃO (`previsao_id`) não é o título
+         real: sem isto, editar a previsão achava o PRÓPRIO título
+         previsto dela e o marcava como substituído — a previsão
+         sumia do contas a pagar a cada edição. */
+      return p.origem !== 'previsao' && !p.previsao_id && p.status !== 'cancelado' &&
              p.conta === pv.conta && p.comp === pv.competencia &&
              (!pv.centro || (p.rateio || []).some(function (r) { return r.centro === pv.centro; }));
     });
@@ -15200,7 +15204,10 @@ ERP.store = (function () {
       valor: pv.valor, valor_pago: 0, pago_em: null,
       status: 'previsto', aprovacao: 'aprovado', aprovado_por: null, motivo: '',
       obs: 'Gerado pela previsão de despesa', arquivo: null, chave: null,
-      itens: null, previsao_id: pv.id, criado_por: usuario().nome, criado_em: new Date()
+      /* `itens` é lista, nunca nulo: o banco exige (NOT NULL) e
+         recusava o título previsto inteiro com "null value in column
+         itens". Título previsto não tem itens de nota — lista vazia. */
+      itens: [], previsao_id: pv.id, criado_por: usuario().nome, criado_em: new Date()
     };
     st.parcelas.push(p);
     return p;

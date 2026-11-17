@@ -102,7 +102,19 @@ ERP.persistencia = (function () {
     parcelas: { tabela: 'parcelas', colunas: ['id', 'titulo_id', 'num', 'total', 'descricao', 'credor', 'conta', 'centro', 'rateio', 'tipo_titulo', 'emissao', 'comp', 'venc', 'valor', 'status', 'valor_pago', 'pago_em', 'aprovacao', 'aprovado_por', 'aprovado_em', 'motivo', 'origem', 'doc', 'obs', 'chave', 'retencoes', 'valor_retido', 'itens', 'criado_por', 'criado_por_id', 'criado_em'] },
     pagamentos: { tabela: 'pagamentos', colunas: ['id', 'parcela_id', 'data', 'valor', 'juros', 'multa', 'desconto', 'banco', 'empresa', 'cruzamento', 'doc', 'obs', 'forma', 'forma_codigo', 'situacao', 'estornado', 'usuario', 'usuario_id', 'criado_em'] },
     receber: { tabela: 'receber', colunas: ['id', 'numero', 'serie', 'nf_chave', 'codigo_verificacao', 'emissao', 'competencia', 'vencimento', 'centro', 'rateio_centros', 'grupo_faturamento', 'empresa', 'cliente', 'cliente_doc', 'cliente_nome', 'discriminacao', 'origem', 'status', 'valor_bruto', 'valor_retido', 'valor_liquido', 'glosa_prevista', 'glosa_real', 'valor_recebido', 'recebido_em', 'baixas', 'retencoes', 'substitui', 'abatimentos', 'conferir', 'observacao', 'criado_em'] },
-    previsoes: { tabela: 'previsoes', colunas: ['id', 'centro', 'competencia', 'faturamento', 'produtividade', 'status', 'observacao', 'confirmado_por', 'confirmado_em', 'autorizado_em', 'autorizado_por', 'autorizado_por_id', 'autorizacao_protocolo', 'autorizacao_obs', 'autorizado_valor', 'autorizacoes_anteriores', 'liberado_em', 'liberado_por'] },
+    /* UMA COLEÇÃO NA MEMÓRIA, DUAS TABELAS NO BANCO (v170).
+       `st.previsoes` guarda as previsões de FATURAMENTO (por projeto e
+       competência) e as de DESPESA (natureza, valor, vencimento). A
+       tabela `previsoes` é a do faturamento: exige projeto e aceita
+       uma só por projeto e mês. A previsão de despesa ia para ela e o
+       banco recusava ("null value in column centro") — nunca gravou.
+       Agora cada uma vai para a sua tabela, separadas por `filtro`, e
+       `colecao` diz de que lista da memória elas saem e para onde
+       voltam. */
+    previsoes: { tabela: 'previsoes', colunas: ['id', 'centro', 'competencia', 'faturamento', 'produtividade', 'status', 'observacao', 'confirmado_por', 'confirmado_em', 'autorizado_em', 'autorizado_por', 'autorizado_por_id', 'autorizacao_protocolo', 'autorizacao_obs', 'autorizado_valor', 'autorizacoes_anteriores', 'liberado_em', 'liberado_por'],
+      colecao: 'previsoes', filtro: function (p) { return !p || p.tipo !== 'despesa'; } },
+    previsoesDespesa: { tabela: 'previsoes_despesa', colunas: ['id', 'conta', 'centro', 'competencia', 'data', 'valor', 'descricao', 'credor', 'serie', 'parcial', 'status', 'efetivada', 'valor_real', 'atualizado_em', 'criado_por', 'criado_por_id', 'criado_em'],
+      colecao: 'previsoes', filtro: function (p) { return !!p && p.tipo === 'despesa'; } },
     /* O contrato tinha DEZENOVE campos vivendo no `extra` — o
        fornecedor e a natureza da despesa entre eles, que são o que
        o contas a pagar precisa para nascer. Viraram colunas na
@@ -546,7 +558,7 @@ ERP.persistencia = (function () {
        Era o sintoma que a v152 atribuiu ao `extra` não desempacotado;
        a causa do `extra` era real, esta é a outra metade. */
     const { data, error } = await c.from('funcionarios')
-      .upsert(linhas, { onConflict: 'id' }).select('id');
+      .upsert(linhas, { onConflict: 'id', defaultToNull: false }).select('id');
     if (error) return 'funcionarios: ' + error.message;
     const voltaram = (data || []).map(function (x) { return x.id; });
     const faltando = linhas.map(function (l) { return l.id; })
@@ -591,7 +603,8 @@ ERP.persistencia = (function () {
     previsoes: { status: 'estimada', autorizacoes_anteriores: [] },
     receber: { origem: 'avulso', status: 'aberto', baixas: [], retencoes: [],
       valor_recebido: 0, substitui: [] },
-    parcelas: { status: 'aberto' },
+    parcelas: { status: 'aberto', itens: [], rateio: [] },
+    previsoes_despesa: { status: 'estimada' },
     compras: { status: 'rascunho' },
     linhas_extrato: { situacao: 'pendente' },
     ordens_servico: { status: 'aberta' },
@@ -668,6 +681,7 @@ ERP.persistencia = (function () {
     guias_retencao:            { titulo_id: 'nao_confere' },
     receber:                   { centro: 'centros', empresa: 'empresas', cliente: 'clientes' },
     previsoes:                 { centro: 'centros' },
+    previsoes_despesa:         { centro: 'centros' },
     contratos:                 { cliente: 'clientes', fornecedor: 'credores', conta: 'plano' },
     extratos:                  { banco: 'bancos', usuario_id: 'nao_confere' },
     linhas_extrato:            { extrato_id: 'nao_confere', banco: 'bancos' },
@@ -819,7 +833,7 @@ ERP.persistencia = (function () {
     if (!textoGuardado) return false;
     let it;
     try { it = JSON.parse(textoGuardado); } catch (e) { return false; }
-    const lista = ERP.store.st[nome];
+    const lista = ERP.store.st[colecaoDe(nome)];
     if (!Array.isArray(lista) || !it || !it.id) return false;
     if (!lista.some(function (x) { return x && x.id === it.id; })) lista.push(it);
     devolvidosNoCiclo.push(nome + ' ' + it.id);
@@ -901,7 +915,7 @@ ERP.persistencia = (function () {
     const mapa = {
       financeiro: ['titulos', 'parcelas', 'pagamentos', 'retencoes_registradas', 'guias_retencao',
         'extratos', 'linhas_extrato', 'saldos_informados', 'transferencias_banco',
-        'regras_conciliacao'],
+        'regras_conciliacao', 'previsoes_despesa'],
       faturamento: ['receber', 'previsoes', 'lotes_rps'],
       contratos: ['contratos'],
       estoque: ['produtos', 'armazens', 'posicoes_estoque', 'estoque_camadas',
@@ -968,7 +982,7 @@ ERP.persistencia = (function () {
     const campo = (String(mensagem).match(/"\w+?_(\w+?)_fkey"/) || [])[1] || '';
     const nomes = [];
     for (let i = 0; i < linhas.length && nomes.length < 4; i++) {
-      const r = await c.from(tabela).upsert([linhas[i]], { onConflict: 'id', returning: 'minimal' });
+      const r = await c.from(tabela).upsert([linhas[i]], { onConflict: 'id', returning: 'minimal', defaultToNull: false });
       if (!r.error) continue;
       const o = originais[i] || {};
       const rotulo = [o.id, o.codigo, o.descricao || o.nome]
@@ -1003,6 +1017,26 @@ ERP.persistencia = (function () {
      que tem coluna) de casa própria (campo que só existe no extra),
      e ela mora aqui, no MAPA. */
   const colunasDe = nome => (MAPA[nome] && MAPA[nome].colunas) || null;
+
+  /* A lista da memória que corresponde a uma entrada do MAPA. Quase
+     sempre é `st[nome]` inteira; quando duas tabelas dividem a mesma
+     coleção (as previsões), cada uma vê só a sua parte. */
+  const colecaoDe = nome => (MAPA[nome] && MAPA[nome].colecao) || nome;
+  function itensDe(nome) {
+    const lista = ERP.store.st[colecaoDe(nome)];
+    if (!Array.isArray(lista)) return [];
+    const f = MAPA[nome] && MAPA[nome].filtro;
+    return f ? lista.filter(f) : lista;
+  }
+  /* Esvazia SÓ a parte desta entrada, sem tocar na da outra tabela. */
+  function esvaziarDe(nome) {
+    const lista = ERP.store.st[colecaoDe(nome)];
+    if (!Array.isArray(lista)) return null;
+    const f = MAPA[nome] && MAPA[nome].filtro;
+    if (!f) { lista.length = 0; return lista; }
+    for (let i = lista.length - 1; i >= 0; i--) if (f(lista[i])) lista.splice(i, 1);
+    return lista;
+  }
 
   /* Quais campos o banco devolveu e a leitura descartou.
 
@@ -1040,7 +1074,7 @@ ERP.persistencia = (function () {
   function limparMovimentoLocal() {
     const st = ERP.store.st;
     Object.keys(MAPA).forEach(function (nome) {
-      if (Array.isArray(st[nome])) st[nome].length = 0;
+      esvaziarDe(nome);
     });
     [POSICOES, MINIMOS].forEach(function (def) {
       const o = st[def.estado];
@@ -1104,9 +1138,8 @@ ERP.persistencia = (function () {
         degradadas.push({ nome: r.nome, tabela: r.fonte, erro: r.error.message });
         return;
       }
-      const alvo = st[r.nome];
-      if (!Array.isArray(alvo)) return;
-      alvo.length = 0;
+      const alvo = esvaziarDe(r.nome);
+      if (!alvo) return;
       (r.data || []).forEach(function (l) { alvo.push(doBanco(l, r.nome)); });
       const perdidos = camposPerdidos(r.nome, r.data);
       if (perdidos.length) perdaNaLeitura.push(r.nome + ': ' + perdidos.join(', '));
@@ -1247,7 +1280,7 @@ ERP.persistencia = (function () {
       /* Sem lista: retrato completo. Continua servindo à carga
          inicial e a quem desiste de uma coleção inteira. */
       const m = {};
-      (st[nome] || []).forEach(function (it) { if (it && it.id) m[it.id] = JSON.stringify(it); });
+      itensDe(nome).forEach(function (it) { if (it && it.id) m[it.id] = JSON.stringify(it); });
       sombra[nome] = m;
       return;
     }
@@ -1261,7 +1294,7 @@ ERP.persistencia = (function () {
     sombra = {};
     Object.keys(MAPA).forEach(function (nome) {
       const m = {};
-      (st[nome] || []).forEach(function (it) { m[it.id] = JSON.stringify(it); });
+      itensDe(nome).forEach(function (it) { m[it.id] = JSON.stringify(it); });
       sombra[nome] = m;
     });
   }
@@ -1301,7 +1334,7 @@ ERP.persistencia = (function () {
          É ele que entra na sombra quando a gravação der certo — o
          objeto em si é vivo e pode mudar no meio do caminho. */
       const foto = {};
-      (st[nome] || []).forEach(function (it) {
+      itensDe(nome).forEach(function (it) {
         if (!it || !it.id) return;
         const s = JSON.stringify(it);
         agora[it.id] = s;
@@ -1565,7 +1598,7 @@ ERP.persistencia = (function () {
           const linhas = inserir.map(function (it) {
             return completarObrigatorias(paraBanco(it, m.def.colunas, m.def.tabela), m.def.tabela);
           });
-          const { error } = await c.from(m.def.tabela).insert(linhas);
+          const { error } = await c.from(m.def.tabela).insert(linhas, { defaultToNull: false });
           if (error && /duplicate key|23505/i.test(error.message || '')) {
             /* Chave duplicada quer dizer QUE JÁ ESTÁ LÁ. Não é
                erro: é o sistema reenviando o que já gravou. Vira
@@ -1612,8 +1645,15 @@ ERP.persistencia = (function () {
 
            `select('id')` resolve os dois: nada revogado é lido, e o
            número de linhas aparece. Ver `conferirEscrita`. */
+        /* `defaultToNull: false` (v171). Num lote, o banco recebe a
+           UNIÃO dos campos de todas as linhas; a linha que não tem um
+           campo recebia NULO nele — e não o padrão da coluna. Um título
+           previsto (sem `valor_retido`) no mesmo lote de um título
+           conciliado (com `valor_retido`) derrubava o lote inteiro com
+           "null value in column valor_retido", e a conciliação ia
+           junto. Agora o campo que falta recebe o padrão da coluna. */
         const { data, error } = await c.from(m.def.tabela)
-          .upsert(linhas, { onConflict: 'id' }).select('id');
+          .upsert(linhas, { onConflict: 'id', defaultToNull: false }).select('id');
         if (error && /duplicate key|23505/i.test(error.message || '')) {
           /* Idem: já está no banco. Com upsert isto é raro, mas
              acontece quando a tabela tem outra chave única. */

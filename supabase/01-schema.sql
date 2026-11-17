@@ -368,7 +368,7 @@ create table linhas_extrato (
   valor         numeric(14,2) not null,
   memo          text,
   fitid         text,
-  saida         boolean not null,
+  saida         numeric(14,2) not null default 0,   -- valor que saiu da conta (v171: era boolean)
   situacao      text not null default 'pendente',  -- pendente|conciliado|ignorado
   alvo_tipo     text,
   alvo_id       text,
@@ -558,6 +558,30 @@ create table fechamentos_procedimentos (
   criado_por    text, criado_em timestamptz not null default now()
 );
 create index on fechamentos_procedimentos (competencia, cancelado);
+
+-- Previsões de DESPESA (v170): não são as do faturamento, que exigem
+-- projeto e são uma por projeto e mês.
+create table previsoes_despesa (
+  id            text primary key,
+  conta         text,
+  centro        text references centros (id),
+  competencia   char(7) not null,
+  data          date,
+  valor         numeric(14,2) not null default 0,
+  descricao     text,
+  credor        text,
+  serie         text,
+  parcial       boolean not null default false,
+  status        text not null default 'estimada',
+  efetivada     boolean not null default false,
+  valor_real    numeric(14,2),
+  atualizado_em timestamptz,
+  criado_por    text,
+  criado_por_id text,
+  criado_em     timestamptz not null default now(),
+  extra         jsonb not null default '{}'::jsonb
+);
+create index on previsoes_despesa (competencia);
 
 create table lotes_produtividade (
   id            text primary key,

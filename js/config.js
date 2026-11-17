@@ -1,40 +1,40 @@
 /* Liga++++o com o banco.
 
-   A chave `anon` +¾ p++blica por natureza: ela identifica o projeto,
-   n++o a pessoa. Quem decide o que cada um l++ +¾ a matriz de acesso
-   dentro do Postgres ++« por isso ela pode viver aqui, no c++digo que
+   A chave `anon` +¥ p++blica por natureza: ela identifica o projeto,
+   n++o a pessoa. Quem decide o que cada um l++ +¥ a matriz de acesso
+   dentro do Postgres ++½ por isso ela pode viver aqui, no c++digo que
    vai para o navegador.
 
    A outra chave do painel, a `service_role`, NUNCA entra aqui nem
    em lugar nenhum do reposit++rio: ela ignora toda a seguran++a.
 
    Deixando `url` em branco, o sistema roda no modo local de sempre,
-   com o seletor de usu+¼rio e sem guardar nada. ++ assim que a
+   com o seletor de usu++rio e sem guardar nada. ++ assim que a
    bateria de testes continua rodando. */
 window.ERP = window.ERP || {};
 ERP.config = {
   /* Endere++o da fun++++o que cria acesso. O painel do Supabase ++s
-     vezes publica com um nome autom+¼tico (`dynamic-responder` e
-     parecidos) e mostra o nome escolhido s++ como r++tulo ++« o ERP
-     chama pelo endere++o, ent++o +¾ este valor que precisa bater com
+     vezes publica com um nome autom++tico (`dynamic-responder` e
+     parecidos) e mostra o nome escolhido s++ como r++tulo ++½ o ERP
+     chama pelo endere++o, ent++o +¥ este valor que precisa bater com
      o que aparece na coluna URL, depois de `/functions/v1/`. */
-  /* O painel do Supabase publicou a fun++++o com o nome autom+¼tico
-     `dynamic-responder` e mostra "criar-login" s++ como r++tulo ++« o
-     sistema chama pelo ENDERE+¼O. Este valor precisa bater com o
+  /* O painel do Supabase publicou a fun++++o com o nome autom++tico
+     `dynamic-responder` e mostra "criar-login" s++ como r++tulo ++½ o
+     sistema chama pelo ENDERE++O. Este valor precisa bater com o
      trecho depois de /functions/v1/ na coluna URL do painel.
 
-     ATEN+¼++O ao atualizar o sistema: este arquivo vem no pacote e
+     ATEN++++O ao atualizar o sistema: este arquivo vem no pacote e
      sobrescreve o local. Se o acesso parar de ser criado depois de
-     uma atualiza++++o, +¾ esta linha que voltou ao padr++o. */
+     uma atualiza++++o, +¥ esta linha que voltou ao padr++o. */
   funcaoCriarLogin: 'quick-service',
 
-  /* AMBIENTE. 'producao' +¾ o normal; 'teste' pinta o topo de
-     laranja e p+-e um selo no t+¬tulo da aba.
+  /* AMBIENTE. 'producao' +¥ o normal; 'teste' pinta o topo de
+     laranja e p+-e um selo no t+¼tulo da aba.
 
-     A cor existe para uma coisa s++: impedir que algu+¾m lance no
-     lugar errado. Dois sistemas id++nticos em abas vizinhas +¾
-     pedido de confus++o ++« e no financeiro a confus++o s++ aparece no
-     fechamento, quando j+¼ virou retrabalho de dias.
+     A cor existe para uma coisa s++: impedir que algu+¥m lance no
+     lugar errado. Dois sistemas id++nticos em abas vizinhas +¥
+     pedido de confus++o ++½ e no financeiro a confus++o s++ aparece no
+     fechamento, quando j++ virou retrabalho de dias.
 
      O ambiente de teste tem BANCO PR+-PRIO: a `url` acima aponta
      para outro projeto. Mesmo c++digo, dados separados. */
