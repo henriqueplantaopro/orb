@@ -327,6 +327,16 @@ ERP.produtividade = (function () {
       .map(function (id) { return D.centro(id) || { id: id, curto: id }; })
       .sort(function (a, b) { return String(a.curto || a.nome).localeCompare(String(b.curto || b.nome)); });
 
+    /* CANCELADOS E SUBSTITUÍDOS FICAM ESCONDIDOS POR PADRÃO (v173):
+       cada substituição deixa o fechamento anterior na lista, e com
+       o tempo eles eram metade da tela. Continuam no histórico — a
+       caixa "Ocultar" desmarcada mostra todos. */
+    /* Só o que foi CANCELADO (a substituição cancela o anterior).
+       "Sem títulos" não entra: é cabeçalho órfão, uma anomalia que
+       precisa ser vista para ser substituída. */
+    const morto = function (l) { return !!l.cancelado; };
+    const ocultar = !fLote.mostrarCanc;
+    let escondidos = 0;
     const lotes = todos.filter(function (l) {
       if (fLote.comp && l.competencia !== fLote.comp) return false;
       if (fLote.centro && l.centro !== fLote.centro) return false;
@@ -343,6 +353,7 @@ ERP.produtividade = (function () {
         const alvo = ((c.curto || '') + ' ' + (c.nome || '') + ' ' + (l.criado_por || '') + ' ' + l.competencia).toLowerCase();
         if (alvo.indexOf(fLote.busca.toLowerCase()) < 0) return false;
       }
+      if (ocultar && morto(l)) { escondidos++; return false; }
       return true;
     });
     const totalValor = Math.round(lotes.reduce(function (a, l) { return a + l.valor; }, 0) * 100) / 100;
@@ -360,8 +371,12 @@ ERP.produtividade = (function () {
             .map(function (o) { return '<option value="' + o[0] + '"' + (fLote.sit === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select></div>' +
         '<div class="f"><label for="lp-f-busca">Buscar</label><input id="lp-f-busca" placeholder="projeto, quem importou…" value="' + U.esc(fLote.busca || '') + '"></div>' +
         '<button class="btn-sm" id="lp-f-limpar" style="align-self:flex-end">Limpar</button>' +
+        '<label style="font-weight:400;display:flex;gap:6px;align-items:center;align-self:flex-end;margin:0 0 6px">' +
+          '<input type="checkbox" id="lp-f-ocultar" style="width:auto"' + (ocultar ? ' checked' : '') + '> ' +
+          'Ocultar produtividades canceladas ou substituídas</label>' +
       '</div>' +
-      '<div class="ajuda">' + lotes.length + ' de ' + todos.length + ' lançamento(s) · ' + U.brl(totalValor) + '</div>' +
+      '<div class="ajuda">' + lotes.length + ' de ' + todos.length + ' lançamento(s) · ' + U.brl(totalValor) +
+        (escondidos ? ' · ' + escondidos + ' cancelado(s) ou substituído(s) oculto(s)' : '') + '</div>' +
       (lotes.length ? '<table><thead><tr><th>Importado em</th><th>Projeto</th><th>Competência</th>' +
         '<th class="num">Médicos</th><th class="num">Valor</th><th>Situação</th><th></th></tr></thead><tbody>' +
         lotes.map(function (l) {
@@ -391,7 +406,9 @@ ERP.produtividade = (function () {
               (!l.cancelado && !l.confirmado_em && S.pode('confirmar_produtividade')
                 ? '<button class="btn-sm btn-aprovar" data-lp-confirmar="' + l.id + '">' +
                   'Confirmar fechamento</button>' : '') +
-              (!l.cancelado ? '<button class="btn-sm" data-lp-fat="' + l.id + '">Valor a faturar</button>' +
+              (!l.cancelado ? (S.podeCorrigirProdutividade()
+                  ? '<button class="btn-sm" data-lp-editar="' + l.id + '">Editar</button>'
+                  : '<button class="btn-sm" data-lp-fat="' + l.id + '">Valor a faturar</button>') +
                 '<button class="btn-sm btn-cancelar" data-lp-cancelar="' + l.id + '">Cancelar</button>' : '') +
               '</td></tr>' +
             (loteAberto === l.id ? detalheLote(l) : '');
@@ -407,11 +424,24 @@ ERP.produtividade = (function () {
   /* Os itens da parcela dizem de que formato ela veio: plantão (setor ×
      tipo, com horas) ou procedimento (especialidade × procedimento,
      só quantidade). Lançamento antigo, sem a marca, é plantão. */
-  const ehProcedimento = function (p) {
-    const it = (p && p.itens) || [];
-    return it.length > 0 && it.every(function (i) { return i.unidade === 'procedimento'; });
+  /* v174: além de plantão e procedimento, LAUDO (radiologia). Os
+     dois últimos são contados por quantidade, sem horas. */
+  const VOC = {
+    plantao: { sing: 'plantão', plur: 'plantões', Plur: 'Plantões', colA: 'Setor', colB: 'Tipo' },
+    procedimento: { sing: 'procedimento', plur: 'procedimentos', Plur: 'Procedimentos', colA: 'Especialidade', colB: 'Procedimento' },
+    laudo: { sing: 'laudo', plur: 'laudos', Plur: 'Laudos', colA: 'Projeto', colB: 'Prioridade' }
   };
-  const rotuloComposicao = function (p) { return ehProcedimento(p) ? 'Procedimentos' : 'Plantões'; };
+  const UNIDADE_DO_FORMATO = { procedimentos: 'procedimento', laudos: 'laudo' };
+  const vocDoArquivo = function (L) { return VOC[UNIDADE_DO_FORMATO[(L || {}).formato] || 'plantao']; };
+  const unidadeDa = function (p) {
+    const it = (p && p.itens) || [];
+    if (!it.length) return 'plantao';
+    const u = it[0].unidade || 'plantao';
+    return VOC[u] && it.every(function (i) { return (i.unidade || 'plantao') === u; }) ? u : 'plantao';
+  };
+  /* "Sem horas": a composição é por quantidade (procedimento ou laudo). */
+  const ehProcedimento = function (p) { return unidadeDa(p) !== 'plantao'; };
+  const rotuloComposicao = function (p) { return VOC[unidadeDa(p)].Plur; };
 
   function detalheLote(l) {
     const ids = Array.isArray(l.titulo_ids) ? l.titulo_ids : [];
@@ -461,10 +491,11 @@ ERP.produtividade = (function () {
             'Administração › Perfis.</div>') +
         '</div></td></tr>';
     }
-    const loteProc = parcelas.length > 0 && parcelas.every(ehProcedimento);
+    const unidadesLote = parcelas.map(unidadeDa).filter(function (u, i, a) { return a.indexOf(u) === i; });
+    const vocLote = VOC[unidadesLote.length === 1 ? unidadesLote[0] : 'plantao'];
     return '<tr><td colspan="7" style="background:#fafbfc;padding:10px 8px">' +
       '<table style="margin:0"><thead><tr><th>Médico</th>' +
-      '<th class="num">' + (loteProc ? 'Procedimentos' : 'Plantões') + '</th><th class="num">Horas</th><th class="num">Valor</th>' +
+      '<th class="num">' + vocLote.Plur + '</th><th class="num">Horas</th><th class="num">Valor</th>' +
       '<th class="num">Pago</th><th>Situação</th><th>Como recebe</th><th></th></tr></thead><tbody>' +
       parcelas.map(function (p) {
         const itens = p.itens || [];
@@ -541,8 +572,8 @@ ERP.produtividade = (function () {
         '<div class="resumo-linha"><span>Saldo</span><span class="v">' + U.brl(S.saldoDe(p)) + '</span></div>' +
         (ehProcedimento(p)
           /* PROCEDIMENTOS: a quantidade de cada um, sem horas. */
-          ? '<h3 style="font-size:12px;margin:14px 0 4px">Procedimentos deste fechamento</h3>' +
-            '<table class="parcelas"><thead><tr><th>Especialidade</th><th>Procedimento</th>' +
+          ? '<h3 style="font-size:12px;margin:14px 0 4px">' + VOC[unidadeDa(p)].Plur + ' deste fechamento</h3>' +
+            '<table class="parcelas"><thead><tr><th>' + VOC[unidadeDa(p)].colA + '</th><th>' + VOC[unidadeDa(p)].colB + '</th>' +
             '<th class="num">Qtd.</th><th class="num">Valor</th></tr></thead><tbody>' +
             itens.map(function (i) {
               return '<tr><td class="desc">' + U.esc(i.setor || '—') + '</td><td>' + U.esc(i.tipo || '—') + '</td>' +
@@ -729,6 +760,12 @@ ERP.produtividade = (function () {
         if (id === 'lp-f-busca' && U.el('lp-f-busca')) { U.el('lp-f-busca').focus(); }
       });
     });
+    if (U.el('lp-f-ocultar')) U.el('lp-f-ocultar').addEventListener('change', function () {
+      fLote.mostrarCanc = !this.checked; renderLotes();
+    });
+    document.querySelectorAll('[data-lp-editar]').forEach(function (b) {
+      b.addEventListener('click', function () { editarLote(this.dataset.lpEditar); });
+    });
     if (U.el('lp-f-limpar')) U.el('lp-f-limpar').addEventListener('click', function () { fLote = {}; renderLotes(); });
     document.querySelectorAll('[data-lp-fat]').forEach(function (b) {
       b.addEventListener('click', function () {
@@ -747,6 +784,107 @@ ERP.produtividade = (function () {
     });
     document.querySelectorAll('[data-lp-cancelar]').forEach(function (b) {
       b.addEventListener('click', function () { cancelarLote(this.dataset.lpCancelar); });
+    });
+  }
+
+  /* ── EDITAR O LANÇAMENTO (v173) ──────────────────────────
+     Dia do repasse, natureza, valor a faturar (ou "ainda não sei —
+     vale a previsão") e observação, sem cancelar e lançar de novo.
+     Projeto e competência não mudam aqui: trocar um dos dois é outro
+     fechamento — o caminho é substituir. */
+  function editarLote(id) {
+    const l = S.lotesProdutividade().find(function (x) { return x.id === id; });
+    if (!l) return;
+    const c = D.centro(l.centro) || {};
+    const ps = S.todasParcelas().filter(function (p) {
+      return (l.titulo_ids || []).indexOf(p.titulo_id) > -1 && ['cancelado', 'substituido'].indexOf(p.status) < 0;
+    });
+    const abertas = ps.filter(function (p) { return p.status !== 'pago' && S.pagoDe(p.id) <= 0.004; });
+    /* a data que mais aparece entre as que ainda podem mudar */
+    const vencs = {};
+    (abertas.length ? abertas : ps).forEach(function (p) { if (p.venc) vencs[p.venc] = (vencs[p.venc] || 0) + 1; });
+    const vencAtual = Object.keys(vencs).sort(function (a, b) { return vencs[b] - vencs[a]; })[0] || '';
+    const contaAtual = (ps[0] || {}).conta || '3.01';
+    const pv = S.previsaoDe(l.centro, l.competencia);
+    const confirmado = !!pv && pv.status === 'confirmada_prod';
+    const andou = pv && (pv.autorizado_em || pv.liberado_em);
+    const previsto = confirmado
+      ? (pv.faturamento_previsto !== undefined && pv.faturamento_previsto !== null ? pv.faturamento_previsto : (c.prev_faturamento || 0))
+      : (pv ? pv.faturamento : (c.prev_faturamento || 0));
+    const grupo = c.grupo_faturamento || null;
+    ERP.app.modal({
+      titulo: 'Editar lançamento · ' + (c.curto || c.nome || '') + ' · ' + U.fComp(l.competencia),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="ajuda">' + l.medicos + ' médico(s) · ' + U.brl(l.valor) + ' de repasse. Projeto e competência ' +
+          'não mudam aqui — para isso, importe o arquivo de novo e escolha <b>Substituir</b>.</div>' +
+        '<label for="le-venc">Data do repasse</label>' +
+        '<input type="date" id="le-venc" value="' + vencAtual + '">' +
+        '<div class="ajuda">' + (abertas.length === ps.length ? 'Vale para os ' + ps.length + ' lançamento(s).'
+          : 'Muda só os ' + abertas.length + ' que ainda não foram pagos; ' + (ps.length - abertas.length) +
+            ' já pago(s) ficam como estão.') + ' O que estiver em pagamento (na aprovação ou na remessa) também fica.</div>' +
+        '<label for="le-conta">Natureza</label><select id="le-conta">' +
+          D.plano.filter(function (p) { return p.nivel === 2 && (p.pai === '3' || p.pai === '4'); }).map(function (p) {
+            return '<option value="' + p.cod + '"' + (p.cod === contaAtual ? ' selected' : '') + '>' +
+              U.esc(p.cod + ' ' + p.nome) + '</option>';
+          }).join('') + '</select>' +
+        '<fieldset class="le-fat" style="border:1px solid var(--line2);padding:8px 10px;margin:10px 0 0">' +
+          '<legend style="font-size:11.5px;padding:0 4px">Valor a faturar' + (grupo ? ' desta especialidade' : '') + '</legend>' +
+          (andou
+            ? '<div class="ajuda">Este faturamento já foi ' + (pv.liberado_em ? 'liberado' : 'autorizado') + ' (' +
+              U.brl(pv.faturamento) + '). Para mudar o valor, desfaça na Esteira do faturamento.</div>'
+            : '<label style="font-weight:400;display:flex;gap:7px;align-items:center;margin:2px 0">' +
+                '<input type="radio" name="le-modo" value="confirmar" style="width:auto"' + (confirmado ? ' checked' : '') + '> ' +
+                'Valor confirmado:</label>' +
+              '<input class="num" id="le-fat" inputmode="decimal" value="' +
+                U.num(confirmado ? pv.faturamento : (previsto || 0)) + '"' + (confirmado ? '' : ' disabled') + '>' +
+              '<label style="font-weight:400;display:flex;gap:7px;align-items:center;margin:8px 0 2px">' +
+                '<input type="radio" name="le-modo" value="previsao" style="width:auto"' + (confirmado ? '' : ' checked') + '> ' +
+                'Ainda não sei — deixar para depois e usar a previsão da aba Faturamento (' + U.brl(previsto || 0) + ')</label>' +
+              '<div class="ajuda">' + (confirmado
+                ? 'Hoje está confirmado em <b>' + U.brl(pv.faturamento) + '</b>.'
+                : 'Hoje não há valor confirmado: vale a previsão.') + '</div>') +
+        '</fieldset>' +
+        '<label for="le-obs">Observação</label><input id="le-obs" value="' + U.esc(l.observacao || '') + '">',
+      aoAbrir: function () {
+        document.querySelectorAll('[name="le-modo"]').forEach(function (r) {
+          r.addEventListener('change', function () {
+            const campo = U.el('le-fat');
+            if (campo) { campo.disabled = this.value !== 'confirmar'; if (!campo.disabled) campo.focus(); }
+          });
+        });
+      },
+      acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
+        const modoEl = document.querySelector('[name="le-modo"]:checked');
+        const modo = modoEl ? modoEl.value : null;
+        let valorFat = null;
+        if (modo === 'confirmar') {
+          valorFat = U.parseValor(U.val('le-fat'));
+          if (!(valorFat > 0)) return ERP.app.aviso('Informe o valor a faturar, ou escolha "Ainda não sei".', 'erro');
+        }
+        const r = S.editarLoteProdutividade(l.id, {
+          vencimento: U.val('le-venc') || undefined, conta: U.val('le-conta'), observacao: U.val('le-obs')
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
+        const feito = r.mudou.slice();
+        if (modo === 'confirmar' && (!confirmado || Math.abs(valorFat - pv.faturamento) > 0.004)) {
+          const rf = S.confirmarFaturamentoProdutividade({ centro: l.centro, competencia: l.competencia,
+            faturamento: valorFat, produtividade: l.valor, lote: l.id, forcar: true });
+          if (ERP.app.erroDoRetorno(rf)) return;
+          feito.push('valor a faturar ' + U.brl(valorFat));
+        } else if (modo === 'previsao' && confirmado) {
+          const rv = S.voltarFaturamentoParaPrevisao(l.centro, l.competencia);
+          if (ERP.app.erroDoRetorno(rv)) return;
+          feito.push('valor a faturar voltou à previsão (' + U.brl(rv.previsto) + ')');
+        }
+        ERP.app.fecharModal();
+        renderLotes();
+        ERP.contas.render();
+        ERP.app.atualizarContadores();
+        ERP.app.aviso(feito.length ? 'Lançamento atualizado: ' + feito.join(', ') + '.' +
+            (r.venc_mantidos ? ' ' + r.venc_mantidos + ' já pago(s) ou em pagamento mantiveram a data.' : '')
+          : 'Nada foi alterado.', feito.length ? 'ok' : 'erro');
+      } }]
     });
   }
 
@@ -819,6 +957,7 @@ ERP.produtividade = (function () {
         const wb = XLSX.read(new Uint8Array(leitor.result), { type: 'array' });
         lote = ler(wb, arq.name);
         complementar = null;   // arquivo novo: a pergunta do complemento volta a valer
+        zerosAceitos = null;   // e a dos médicos com valor zerado também
         render();
       } catch (err) {
         /* ARQUIVO RECUSADO LIMPA A TELA.
@@ -1263,7 +1402,158 @@ ERP.produtividade = (function () {
     };
   }
 
+  /* ── HONORÁRIOS DE LAUDOS (RADIOLOGIA) — v174 ───────────
+
+     Um médico por linha na aba FINANCEIRO: CRM, dados do PIX, total
+     de laudos, valor e a quantidade por prioridade (Normal, Urgência,
+     Emergência), com a tarifa de cada uma impressa logo acima do
+     cabeçalho. Embaixo, um bloco COORDENAÇÃO com quem recebe por
+     coordenar e o valor, e o TOTAL PRODUTIVIDADE.
+
+     SÓ A ABA FINANCEIRO É LIDA. A outra aba é o relatório analítico
+     do PACS, exame por exame, com o NOME DO PACIENTE em cada linha —
+     não entra no sistema, nem para conferir. */
+  const cabLaudos = function (linha) {
+    const c = (linha || []).map(semAc);
+    return c.indexOf('profissional') > -1 && c.some(function (v) { return v.indexOf('total de laudos') === 0; });
+  };
+  function ehLaudos(wb) {
+    return wb.SheetNames.some(function (n) { return linhasDe(wb, n).slice(0, 15).some(cabLaudos); });
+  }
+  function lerLaudos(wb, arquivo) {
+    const aba = wb.SheetNames.find(function (n) { return linhasDe(wb, n).slice(0, 15).some(cabLaudos); });
+    const l = linhasDe(wb, aba);
+    const iCab = l.findIndex(cabLaudos);
+    const cab = l[iCab].map(semAc);
+    const col = function (nome) { return cab.findIndex(function (v) { return v.indexOf(nome) === 0; }); };
+    const c = { nome: col('profissional'), crm: col('crm'), tipo: col('documento'), cpf: col('cpf'),
+      pix: col('chave pix'), qtd: col('total de laudos'), valor: col('valor') };
+    /* As prioridades são as colunas depois do Valor; a tarifa de cada
+       uma, quando o arquivo traz, está na linha de cima. */
+    const prioridades = [];
+    for (let j = c.valor + 1; j < cab.length; j++) {
+      if (!cab[j]) continue;
+      const tarifa = iCab > 0 ? valorNum((l[iCab - 1] || [])[j]) : 0;
+      prioridades.push({ col: j, nome: txt(l[iCab][j]).trim(), tarifa: tarifa });
+    }
+    /* Topo: projeto e período. */
+    let projeto = '', periodo = '', competencia = '';
+    l.slice(0, iCab).forEach(function (r) {
+      (r || []).forEach(function (v) {
+        const t = txt(v).replace(/\s+/g, ' ').trim();
+        if (!t) return;
+        const p = lerPeriodo(t);
+        if (p) { if (!periodo) { periodo = p.texto; competencia = p.competencia; } return; }
+        if (/^gerado em\b/i.test(t) || /^FINANCEIRO$/i.test(t) || /^\d+([.,]\d+)?$/.test(t)) return;
+        if (!projeto) projeto = t;
+      });
+    });
+    const grupos = {}, medicos = {}, pagto = {}, notas = [];
+    let modo = 'laudos', totalArquivo = 0, qtdImpressa = 0, valorImpresso = 0, qtdLida = 0;
+    const limparNome = function (v) { return txt(v).replace(/^\s*\d+\s*[-.)]?\s+/, '').replace(/\s+/g, ' ').trim(); };
+    const grupo = function (medico, crm, tipo, coord) {
+      const k = medico + '||' + tipo;
+      return grupos[k] = grupos[k] || { medico: medico, crm: crm, setor: projeto || 'Laudos', tipo: tipo,
+        linhas_origem: 0, plantoes: 0, minutos: 0, valor: 0, coordenacao: !!coord, coordenacao_sugerida: false };
+    };
+    for (let i = iCab + 1; i < l.length; i++) {
+      const r = l[i] || [];
+      const cel = r.map(semAc);
+      if (!cel.some(Boolean)) continue;
+      if (cel.indexOf('coordenacao') > -1) { modo = 'coord'; continue; }
+      /* TOTAL PRODUTIVIDADE: o último número da linha. */
+      if (cel.some(function (v) { return v === 'total' || v.indexOf('total produtividade') === 0; }) &&
+          cel.some(function (v) { return v.indexOf('produtividade') > -1; })) {
+        for (let k = r.length - 1; k >= 0; k--) { const n = valorNum(r[k]); if (n) { totalArquivo = n; break; } }
+        modo = 'fim';
+        continue;
+      }
+      if (modo === 'fim') { const t = txt(r.find(function (v) { return txt(v); })); if (t) notas.push(t.trim()); continue; }
+      const medico = limparNome(r[c.nome]);
+      if (!medico) {
+        /* Linha sem nome e com números: o total do bloco de laudos. */
+        if (modo === 'laudos' && c.qtd > -1 && valorNum(r[c.qtd])) {
+          qtdImpressa = valorNum(r[c.qtd]); valorImpresso = valorNum(r[c.valor]);
+        }
+        continue;
+      }
+      const crm = c.crm > -1 ? txt(r[c.crm]).trim() : '';
+      const valor = valorNum(r[c.valor]);
+      const md = medicos[chaveNome(medico)] = medicos[chaveNome(medico)] || { nome: medico, crm: crm, total: 0, plantoes: 0 };
+      if (!md.crm && crm) md.crm = crm;
+      md.total = Math.round((md.total + valor) * 100) / 100;
+      if (modo === 'coord') {
+        const g = grupo(medico, crm, 'Coordenação', true);
+        g.linhas_origem++; g.valor = Math.round((g.valor + valor) * 100) / 100;
+      } else {
+        const total = c.qtd > -1 ? valorNum(r[c.qtd]) : 0;
+        qtdLida += total;
+        /* Por prioridade, com o valor pela tarifa; o que a tarifa não
+           explica vira uma linha de AJUSTE, à vista — não some na soma. */
+        let explicado = 0, somaQtd = 0;
+        const comTarifa = prioridades.length && prioridades.every(function (p) { return p.tarifa > 0; });
+        prioridades.forEach(function (p) {
+          const q = valorNum(r[p.col]);
+          if (!q) return;
+          somaQtd += q;
+          const g = grupo(medico, crm, 'Laudos · ' + p.nome, false);
+          g.linhas_origem += q;
+          const v = comTarifa ? Math.round(q * p.tarifa * 100) / 100 : 0;
+          g.valor = Math.round((g.valor + v) * 100) / 100;
+          explicado += v;
+        });
+        if (!prioridades.length || !comTarifa || somaQtd !== total) {
+          /* Sem tarifa (ou quantidades que não fecham): uma linha só,
+             com o total de laudos e o valor do arquivo. */
+          Object.keys(grupos).forEach(function (k) {
+            if (grupos[k].medico === medico && !grupos[k].coordenacao) delete grupos[k];
+          });
+          const g = grupo(medico, crm, 'Laudos', false);
+          g.linhas_origem += total; g.valor = Math.round((g.valor + valor) * 100) / 100;
+        } else {
+          const dif = Math.round((valor - explicado) * 100) / 100;
+          if (Math.abs(dif) > 0.004) {
+            const g = grupo(medico, crm, 'Ajuste', false);
+            g.valor = Math.round((g.valor + dif) * 100) / 100;
+          }
+        }
+      }
+      /* Pagamento: a coluna "Documento" deste arquivo é o TIPO da
+         chave PIX (CPF, CELULAR, EMAIL); o documento é a coluna CPF. */
+      const ja = pagto[chaveNome(medico)];
+      if (ja) { ja.valor = Math.round((ja.valor + valor) * 100) / 100; continue; }
+      pagto[chaveNome(medico)] = {
+        observacao: '', regime: S.regimeDeTexto(''), razao_social: '', crm: crm,
+        documento: c.cpf > -1 ? txt(r[c.cpf]).trim() : '',
+        tipo_chave: c.tipo > -1 ? txt(r[c.tipo]).trim() : '',
+        pix: c.pix > -1 ? txt(r[c.pix]).trim() : '',
+        valor: valor
+      };
+    }
+    aplicarClasse(grupos, medicos);
+    const linhas = Object.keys(grupos).map(function (k) { return grupos[k]; })
+      .sort(function (a, b) { return a.medico.localeCompare(b.medico) || a.tipo.localeCompare(b.tipo); });
+    const soma = Math.round(linhas.reduce(function (t, x) { return t + x.valor; }, 0) * 100) / 100;
+    const somaFin = Math.round(Object.keys(pagto).reduce(function (t, k) { return t + pagto[k].valor; }, 0) * 100) / 100;
+    const somaLaudos = Math.round(linhas.filter(function (x) { return !x.coordenacao; })
+      .reduce(function (t, x) { return t + x.valor; }, 0) * 100) / 100;
+    const conferencias = [];
+    if (qtdImpressa) conferencias.push({ rotulo: 'Total de laudos impresso', valor: qtdImpressa, dinheiro: false,
+      diverge: qtdImpressa !== qtdLida });
+    if (valorImpresso) conferencias.push({ rotulo: 'Valor dos laudos impresso', valor: valorImpresso, dinheiro: true,
+      diverge: Math.abs(valorImpresso - somaLaudos) > 0.01 });
+    return {
+      formato: 'laudos', arquivo: arquivo, projeto: projeto, especialidade: '', ref_projeto: projeto,
+      unidade: projeto, periodo: periodo, competencia: competencia,
+      linhas: linhas, medicos: medicos, pagto: pagto, abasPlantoes: [aba],
+      periodo_ausente: !competencia,
+      soma: soma, somaFin: somaFin, totalArquivo: totalArquivo,
+      conferencias: conferencias, qtd_procedimentos: qtdLida, fora_do_mes: 0, notas: notas
+    };
+  }
+
   function ler(wb, arquivo) {
+    if (ehLaudos(wb)) return lerLaudos(wb, arquivo);
     if (ehProcedimentos(wb)) return lerProcedimentos(wb, arquivo);
     const abas = acharAbas(wb);
     const prod = abas.plantoes;
@@ -1378,7 +1668,16 @@ ERP.produtividade = (function () {
          do coordenador saiu vazio. */
       const iSetor = cheias.length === 1 ? cheias[0]
         : (cols && cols.setor > -1 ? cols.setor : cheias[0]);
-      const b = txt(linha[iSetor]), c = cols && cols.tipo > -1 ? txt(linha[cols.tipo]) : '';
+      const b = txt(linha[iSetor]);
+      /* SEM COLUNA "TIPO" (v174). A coordenação da anestesia vem só
+         com "Setor | Valor": sem plantão, sem horário, sem tipo. O
+         leitor exigia o tipo e descartava as linhas — o arquivo dava
+         "0 lançamentos". Sem a coluna, o tipo sai do próprio setor:
+         se ele diz coordenação, é coordenação. */
+      const semColTipo = !!cols && cols.tipo < 0;
+      const c = cols && cols.tipo > -1 ? txt(linha[cols.tipo])
+        : (semColTipo && b && cheias.length >= 2 && valorNum(linha[cols.valor]) !== 0
+            ? (/coordena/i.test(semAcento(b)) ? 'Coordenação' : 'Sem tipo') : '');
       const temDuracao = !!(cols && (
         (cols.duracao > -1 && txt(linha[cols.duracao]) !== '') ||
         (cols.entrada > -1 && txt(linha[cols.entrada]) !== '') ||
@@ -1663,7 +1962,7 @@ ERP.produtividade = (function () {
       m.itens.push({ setor: l.setor, tipo: l.tipo, qtd: l.plantoes, minutos: l.minutos, valor: l.valor,
         /* Gravada com o item: depois de lançado, é ela que diz ao
            detalhe do médico que aquilo é procedimento, não plantão. */
-        unidade: L.formato === 'procedimentos' ? 'procedimento' : 'plantao',
+        unidade: UNIDADE_DO_FORMATO[L.formato] || 'plantao',
         coordenacao: !!l.coordenacao, coordenacao_sugerida: !!l.coordenacao_sugerida,
         chave: l.medico + '||' + l.setor + '||' + l.tipo });
       m.plantoes += l.plantoes;
@@ -1841,7 +2140,8 @@ ERP.produtividade = (function () {
     /* Formato de procedimentos: a quantidade é de PROCEDIMENTOS, não de
        plantões, e não há horas. Um rótulo só, decidido aqui, para a
        tela inteira não misturar os dois vocabulários. */
-    const proc = L.formato === 'procedimentos';
+    const proc = !!UNIDADE_DO_FORMATO[L.formato];   // por quantidade, sem horas
+    const voc = vocDoArquivo(L);
     const extras = L.conferencias || [];
     const divergeExtra = extras.some(function (c) { return c.diverge; });
 
@@ -1851,9 +2151,14 @@ ERP.produtividade = (function () {
           U.esc(L.projeto + (L.especialidade ? ' · ' + L.especialidade : '')) + '" disabled></div>' +
         '<div><label for="pr-centro">Centro de custo *</label><select id="pr-centro">' +
           '<option value="">Escolher…</option>' +
-          D.centros.filter(function (c) { return c.ativo; }).map(function (c) {
+          /* EM ORDEM ALFABÉTICA, não de cadastro: os projetos de nota
+             única (GHC - HGB …) ficam juntos, um embaixo do outro. A
+             busca por texto vem por cima (U.selectComBusca). */
+          D.centros.filter(function (c) { return c.ativo; }).slice().sort(function (a, b) {
+            return String(a.nome || '').localeCompare(String(b.nome || ''), 'pt', { sensitivity: 'base', numeric: true });
+          }).map(function (c) {
             return '<option value="' + c.id + '"' + (c.id === centro ? ' selected' : '') + '>' +
-              U.esc(c.codigo + ' · ' + c.nome) + '</option>';
+              U.esc(c.nome + ' · ' + c.codigo) + '</option>';
           }).join('') + '</select></div>' +
         '<div><label>Período</label><input value="' + U.esc(L.periodo) + '" disabled></div>' +
         '<div><label for="pr-comp">Competência' + (L.periodo_ausente ? ' *' : '') +
@@ -1871,7 +2176,7 @@ ERP.produtividade = (function () {
       '</div>' +
 
       '<div class="pr-confere">' +
-        '<span>Soma dos ' + (proc ? 'procedimentos' : 'plantões') + ' <b>' + U.brl(L.soma) + '</b></span>' +
+        '<span>Soma dos ' + voc.plur + ' <b>' + U.brl(L.soma) + '</b></span>' +
         '<span>Aba FINANCEIRO <b class="' + (divergeFin ? 'erro' : '') + '">' + U.brl(L.somaFin) + '</b></span>' +
         '<span>Total impresso no arquivo <b class="' + (divergeArquivo ? 'erro' : '') + '">' +
           (temTotalImpresso ? U.brl(L.totalArquivo) : '<span class="sub">não vem no arquivo</span>') + '</b></span>' +
@@ -1880,9 +2185,27 @@ ERP.produtividade = (function () {
             (c.dinheiro ? U.brl(c.valor) : c.valor) + '</b></span>';
         }).join('') +
         '<span>' + medicos.length + ' lançamento(s) · ' +
-          (proc ? L.qtd_procedimentos + ' procedimento(s) de ' + L.linhas.length + ' tipo(s)'
+          (proc ? L.qtd_procedimentos + ' ' + voc.sing + '(s) de ' + L.linhas.length + ' tipo(s)'
                 : L.linhas.length + ' linha(s) de setor/tipo') + '</span>' +
       '</div>' +
+      (function () {
+        const rep = docsRepetidos(L);
+        const ds = Object.keys(rep);
+        if (!ds.length) return '';
+        return '<div class="aviso" style="margin:10px 0;border-left-color:var(--red)" id="pr-doc-repetido">' +
+          '<b>O mesmo CPF/CNPJ aparece para médicos diferentes:</b> ' + ds.map(function (d) {
+            return U.esc(L.pagto[rep[d][0]].documento) + ' — ' + rep[d].map(function (k) {
+              return U.esc((L.medicos[k] || {}).nome || k); }).join(' e ');
+          }).join('; ') + '. Um deles está errado no arquivo. Ao lançar, esse CPF <b>não é usado</b> para ' +
+          'identificar nem é gravado no cadastro de nenhum dos dois — cada um vai pelo nome. Confira com ' +
+          'quem fechou e corrija o cadastro depois.</div>';
+      })() +
+      /* As observações escritas no pé do arquivo (tarifas, ajustes):
+         é por elas que se entende uma linha de AJUSTE. */
+      ((L.notas || []).length
+        ? '<div class="ajuda" style="margin:8px 0" id="pr-notas"><b>Observações do arquivo:</b> ' +
+          L.notas.map(function (n) { return U.esc(n); }).join(' · ') + '</div>'
+        : '') +
       (proc && L.fora_do_mes
         ? '<div class="aviso" style="margin:10px 0"><b>' + L.fora_do_mes + ' procedimento(s) com data fora de ' +
           U.fComp(L.competencia) + '.</b> Eles entram neste fechamento como vieram — confira com quem fechou ' +
@@ -1896,7 +2219,7 @@ ERP.produtividade = (function () {
         : '') +
       (divergeArquivo || divergeFin || divergeExtra
         ? '<div class="aviso" style="margin:10px 0">Os totais do arquivo não fecham entre si. ' +
-          'O sistema vai lançar a soma dos ' + (proc ? 'procedimentos' : 'plantões') + ' (' + U.brl(L.soma) +
+          'O sistema vai lançar a soma dos ' + voc.plur + ' (' + U.brl(L.soma) +
           '); confira com quem fechou antes de aprovar.</div>'
         : '') +
       /* O PALPITE FICA À VISTA. Linha sem horário é quase sempre
@@ -1918,7 +2241,7 @@ ERP.produtividade = (function () {
       })() +
 
       '<div class="tabela-rolagem" style="margin:10px -14px 0">' +
-      '<table><thead><tr><th>Médico</th><th>CRM</th><th class="num">' + (proc ? 'Procedimentos' : 'Plantões') + '</th>' +
+      '<table><thead><tr><th>Médico</th><th>CRM</th><th class="num">' + voc.Plur + '</th>' +
       '<th class="num">Horas</th><th class="num">Valor</th><th>Bloqueio de PG</th>' +
       '<th>Credor</th></tr></thead><tbody>' +
       medicos.map(function (m) {
@@ -2020,7 +2343,7 @@ ERP.produtividade = (function () {
 
       '<div class="form-acoes" style="margin:14px -14px -14px">' +
         '<span class="ajuda" style="margin-right:auto">Um título por médico, com a composição ' +
-        (proc ? 'por procedimento ' : 'por setor e tipo ') +
+        (proc ? 'por ' + voc.sing + ' ' : 'por setor e tipo ') +
         'no detalhe do lançamento. Tudo aguardando aprovação; reimportar o mesmo arquivo não duplica.</span>' +
         '<button class="btn-primary" id="pr-gerar" style="width:auto;margin:0">Gerar ' + medicos.length + ' lançamentos</button>' +
       '</div>';
@@ -2086,6 +2409,7 @@ ERP.produtividade = (function () {
       });
     });
     // trocar o projeto ou a competência recalcula o vencimento
+    U.selectComBusca(U.el('pr-centro'), { placeholder: 'Digite parte do nome ou o código…' });
     ['pr-centro', 'pr-comp'].forEach(function (id) {
       U.el(id).addEventListener('change', function () {
         const cc = U.val('pr-centro');
@@ -2204,6 +2528,90 @@ ERP.produtividade = (function () {
   const bancariosPre = {};
 
   let complementar = null;   // null = ainda não perguntado nesta importação; 'substituir' | true | false
+  /* Resposta à pergunta dos médicos com valor ZERADO: null = ainda não
+     perguntado nesta geração; true = lançar os outros e deixar esses
+     de fora. Vale para UMA geração, como `complementar`. */
+  let zerosAceitos = null;
+  const valorZerado = function (m) { return !(m.valor > 0.004); };
+
+  /* ── MÉDICO COM VALOR ZERADO: PERGUNTA ANTES, NO MEIO DA TELA ──
+
+     Antes o título zerado era recusado um por um, e o único sinal era
+     o aviso vermelho do canto, que some em segundos; a prévia ficava
+     inteira na tela e parecia que nada tinha sido lançado. Valor zero
+     no arquivo quase sempre é erro do arquivo — então a pergunta vem
+     antes de gravar qualquer coisa: lançar os outros, ou voltar e
+     corrigir o arquivo. */
+  function perguntarZerados(zerados, total) {
+    const todos = zerados.length === total;
+    ERP.app.modal({
+      titulo: zerados.length === 1 ? '1 médico está com valor zerado'
+        : zerados.length + ' médicos estão com valor zerado',
+      fecharTxt: 'Cancelar e corrigir o arquivo',
+      corpo:
+        '<div class="aviso" style="border-left-color:var(--red)">' +
+          (todos ? '<b>Nenhum médico deste arquivo tem valor a receber.</b> Não há o que lançar — confira o arquivo.'
+                 : 'Estes médicos vieram <b>sem valor</b> no arquivo. Se lançar agora, eles <b>ficam de fora</b> ' +
+                   'deste fechamento; ' + (total - zerados.length === 1 ? 'o outro é lançado'
+                   : 'os outros ' + (total - zerados.length) + ' são lançados') + ' normalmente.') +
+        '</div>' +
+        '<table id="pr-zerados"><thead><tr><th>Médico</th><th class="num">' +
+          vocDoArquivo(lote).Plur + '</th><th class="num">Valor</th></tr></thead><tbody>' +
+          zerados.map(function (m) {
+            return '<tr><td class="desc">' + U.esc(m.medico) + (m.classe === 'coordenacao' ? ' <span class="sub">coordenação</span>' : '') +
+              '</td><td class="num">' + (m.plantoes || 0) + '</td><td class="num erro">' + U.brl(m.valor || 0) + '</td></tr>';
+          }).join('') + '</tbody></table>' +
+        '<div class="ajuda">Para incluir esses médicos depois, corrija o arquivo e importe de novo como ' +
+          '<b>complemento</b>.</div>',
+      acoes: todos ? [] : [{ txt: 'Lançar sem esses médicos', cls: 'btn-aprovar', fn: function () {
+        zerosAceitos = true;
+        ERP.app.fecharModal();
+        gerar();
+      } }]
+    });
+  }
+
+  /* O RESULTADO FICA NO MEIO DA TELA, deu certo ou não. Com algo
+     lançado, a prévia sai (não há o que lançar duas vezes); com nada
+     lançado, ela fica para corrigir. */
+  function mostrarResultado(r) {
+    const algum = r.feitos > 0;
+    ERP.app.modal({
+      titulo: !algum ? 'Nada foi lançado' : r.erros.length ? 'Lançamento realizado — com pendências' : 'Lançamento realizado',
+      fecharTxt: r.fila.length ? 'Continuar' : 'OK',
+      aoFechar: r.seguir,
+      corpo:
+        '<div class="lancamento-ok" id="pr-lancado">' +
+        '<div class="resumo-linha"><span>Projeto</span><span class="v">' + U.esc(r.projeto) + '</span></div>' +
+        '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(r.comp) + '</span></div>' +
+        '<div class="resumo-linha"><span>Lançamentos</span><span class="v">' + r.feitos + '</span></div>' +
+        '<div class="resumo-linha"><span>Valor do repasse</span><span class="v">' + U.brl(r.valor) + '</span></div>' +
+        (r.bloqueados ? '<div class="resumo-linha"><span>Com pagamento bloqueado</span><span class="v erro">' +
+          r.bloqueados + '</span></div>' : '') +
+        (r.zerados.length ? '<div class="resumo-linha"><span>Ficaram de fora (valor zerado)</span><span class="v erro">' +
+          r.zerados.length + '</span></div><div class="ajuda">' +
+          r.zerados.map(function (m) { return U.esc(m.medico); }).join(' · ') + '</div>' : '') +
+        (r.erros.length
+          ? '<div class="aviso" style="border-left-color:var(--red);margin-top:8px"><b>' +
+            (r.erros.length === 1 ? '1 problema' : r.erros.length + ' problemas') + ':</b>' +
+            '<ul class="pr-erros">' + r.erros.slice(0, 15).map(function (e) { return '<li>' + U.esc(e) + '</li>'; }).join('') +
+            (r.erros.length > 15 ? '<li>e mais ' + (r.erros.length - 15) + '</li>' : '') + '</ul>' +
+            (algum ? 'O que foi lançado está na aba de lançamentos. Para lançar o que faltou, corrija e importe ' +
+                     'o arquivo de novo — os já lançados são reconhecidos e ficam de fora.'
+                   : 'A prévia continua na tela para corrigir e lançar de novo.') + '</div>'
+          : '') +
+        (r.complementares ? '<div class="ajuda">' + r.complementares + ' como complemento de fechamento já lançado.</div>' : '') +
+        (r.repetidos ? '<div class="ajuda">' + r.repetidos + ' já existiam e foram ignorados.</div>' : '') +
+        (r.novos || r.atualizados ? '<div class="ajuda">' +
+          (r.novos ? r.novos + ' médico(s) cadastrado(s)' : '') + (r.novos && r.atualizados ? ' e ' : '') +
+          (r.atualizados ? r.atualizados + ' atualizado(s) com dados bancários' : '') + '.</div>' : '') +
+        (algum ? '<div class="ajuda">Os lançamentos estão em Financeiro › Contas a pagar' +
+          (r.fila.length ? '. Em seguida: ' + (r.loteFeito ? 'o valor a faturar' : '') +
+            (r.loteFeito && r.divergencias ? ' e ' : '') +
+            (r.divergencias ? 'as divergências de cadastro' : '') : '') + '.</div>' : '') +
+        '</div>'
+    });
+  }
 
   function gerar() {
     const L = lote;
@@ -2224,6 +2632,8 @@ ERP.produtividade = (function () {
     if (!S.podeMover('produtividade') && !S.pode('lancar')) {
       return ERP.app.aviso('Seu perfil não fecha a produtividade do mês.', 'erro');
     }
+    const zerados = porMedico(L).filter(valorZerado);
+    if (zerados.length && zerosAceitos !== true) return perguntarZerados(zerados, porMedico(L).length);
     /* A CHAVE AQUI TEM DE SER A MESMA QUE É GRAVADA.
 
        A v162 pôs a classe na referência do título (plantão e
@@ -2314,7 +2724,11 @@ ERP.produtividade = (function () {
     let valorLote = 0;
     let complementares = 0;
     novos = 0; atualizados = 0; divergencias = []; errosBancarios = [];
+    docsRepetidosNoArquivo = docsRepetidos(L);
+    loteEmGeracao = L;
     porMedico(L).forEach(function (m) {
+      /* Zerado e aceito como "fica de fora": nem cadastro, nem título. */
+      if (valorZerado(m)) return;
       const pg = L.pagto[chaveNome(m.medico)] || {};
       const credor = garantirCredor(m, pg);
       /* Fechamento COMPLEMENTAR do mesmo médico/projeto/competência é
@@ -2341,9 +2755,9 @@ ERP.produtividade = (function () {
         _interno: true,
         descricao: m.classe === 'coordenacao'
           ? 'Coordenação médica ' + U.fComp(comp)
-          : L.formato === 'procedimentos'
-            ? 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
-              (m.plantoes > 1 ? ' procedimentos' : ' procedimento') +
+          : UNIDADE_DO_FORMATO[L.formato]
+            ? 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes + ' ' +
+              (m.plantoes > 1 ? vocDoArquivo(L).plur : vocDoArquivo(L).sing) +
               (L.especialidade ? ' · ' + L.especialidade : '')
             : 'Produtividade médica ' + U.fComp(comp) + ' — ' + m.plantoes +
               (m.plantoes > 1 ? ' plantões · ' : ' plantão · ') + hhmm(m.minutos),
@@ -2432,21 +2846,21 @@ ERP.produtividade = (function () {
     if (divergencias.length) fila.push(function (seguir) { avisarDivergencias(seguir); });
     const seguir = function () { const f = fila.shift(); if (f) f(seguir); };
 
-    /* ── "LANÇAMENTO REALIZADO", NO MEIO DA TELA, E A TELA LIMPA ──
+    /* ── O RESULTADO NO MEIO DA TELA, E A TELA LIMPA ──────────
 
        O único sinal de que tinha dado certo era o aviso do canto,
        que some em segundos — e a prévia continuava ali, inteira, com
        o botão de gerar. Quem não viu o aviso ficava na dúvida e
        clicava de novo. Agora o resultado fica no centro até ser
-       fechado, e a prévia sai: não há mais o que lançar duas vezes.
-
-       Só com o lançamento INTEIRO. Se algum médico falhou, a prévia
-       fica, para corrigir e gerar o que faltou. */
-    if (!erros.length && feitos > 0) {
-      const resumo = { projeto: L.projeto + (L.especialidade ? ' · ' + L.especialidade : ''),
-        comp: comp, feitos: feitos, valor: valorLote, bloqueados: bloqueadosFeitos,
-        complementares: complementares, repetidos: repetidos, novos: novos, atualizados: atualizados,
-        formato: L.formato };
+       fechado — inclusive quando algo deu errado, que era justamente
+       o caso em que só o aviso vermelho do canto aparecia —, e a
+       prévia sai sempre que algo foi lançado. */
+    const resumo = { projeto: L.projeto + (L.especialidade ? ' · ' + L.especialidade : ''),
+      comp: comp, feitos: feitos, valor: valorLote, bloqueados: bloqueadosFeitos,
+      complementares: complementares, repetidos: repetidos, novos: novos, atualizados: atualizados,
+      zerados: zerados, erros: erros, fila: fila, seguir: seguir, loteFeito: !!loteFeito,
+      divergencias: divergencias.length };
+    if (feitos > 0) {
       lote = null;
       Object.keys(bloqueiosPre).forEach(function (k) { delete bloqueiosPre[k]; });
       Object.keys(motivosPre).forEach(function (k) { delete motivosPre[k]; });
@@ -2455,47 +2869,17 @@ ERP.produtividade = (function () {
       if (saida) {
         saida.innerHTML = '<div class="ajuda" style="margin:10px 0" id="pr-ultimo">Último lançamento: <b>' +
           U.esc(resumo.projeto) + ' · ' + U.fComp(comp) + '</b> — ' + feitos + ' lançamento(s), ' +
-          U.brl(valorLote) + '. Está na aba de lançamentos. Para lançar outro, escolha o arquivo acima.</div>';
+          U.brl(valorLote) + (erros.length ? ', com ' + erros.length + ' pendência(s)' : '') +
+          '. Está na aba de lançamentos. Para lançar outro, escolha o arquivo acima.</div>';
       }
-      ERP.app.modal({
-        titulo: 'Lançamento realizado',
-        fecharTxt: fila.length ? 'Continuar' : 'OK',
-        aoFechar: seguir,
-        corpo:
-          '<div class="lancamento-ok" id="pr-lancado">' +
-          '<div class="resumo-linha"><span>Projeto</span><span class="v">' + U.esc(resumo.projeto) + '</span></div>' +
-          '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(comp) + '</span></div>' +
-          '<div class="resumo-linha"><span>Lançamentos</span><span class="v">' + feitos + '</span></div>' +
-          '<div class="resumo-linha"><span>Valor do repasse</span><span class="v">' + U.brl(valorLote) + '</span></div>' +
-          (bloqueadosFeitos ? '<div class="resumo-linha"><span>Com pagamento bloqueado</span><span class="v erro">' +
-            bloqueadosFeitos + '</span></div>' : '') +
-          (complementares ? '<div class="ajuda">' + complementares + ' como complemento de fechamento já lançado.</div>' : '') +
-          (repetidos ? '<div class="ajuda">' + repetidos + ' já existiam e foram ignorados.</div>' : '') +
-          (novos || atualizados ? '<div class="ajuda">' +
-            (novos ? novos + ' médico(s) cadastrado(s)' : '') + (novos && atualizados ? ' e ' : '') +
-            (atualizados ? atualizados + ' atualizado(s) com dados bancários' : '') + '.</div>' : '') +
-          '<div class="ajuda">Os lançamentos estão em Financeiro › Contas a pagar' +
-            (fila.length ? '. Em seguida: ' + (loteFeito ? 'o valor a faturar' : '') +
-              (loteFeito && divergencias.length ? ' e ' : '') +
-              (divergencias.length ? 'as divergências de cadastro' : '') : '') + '.</div>' +
-          '</div>'
-      });
-      complementar = null;
-      const campoArqOk = U.el('pr-arquivo');
-      if (campoArqOk) campoArqOk.value = '';
-      return;
     }
-
-    if (erros.length) ERP.app.aviso(erros[0], 'erro');
-    else ERP.app.aviso(feitos + ' lançamento(s) gerado(s)' +
-      (complementares ? ', ' + complementares + ' como complemento de fechamento já lançado' : '') +
-      (repetidos ? ', ' + repetidos + ' já existiam e foram ignorados' : '') +
-      '. ' + (novos ? novos + ' médico(s) cadastrado(s)' : '') +
-      (novos && atualizados ? ' e ' : '') +
-      (atualizados ? atualizados + ' atualizado(s) com dados bancários' : '') +
-      (novos || atualizados ? '. ' : '') +
-      'Os lançamentos estão em Financeiro › Contas a pagar.', 'ok');
-    seguir();
+    if (feitos > 0 || erros.length) mostrarResultado(resumo);
+    else {
+      ERP.app.aviso(repetidos ? repetidos + ' já existiam e foram ignorados — nada novo para lançar.'
+        : 'Nada para lançar.', 'erro');
+      seguir();
+    }
+    zerosAceitos = null;
 
     /* ── A RESPOSTA VALE PARA UMA GERAÇÃO, NÃO PARA A TELA ────
 
@@ -2594,6 +2978,55 @@ ERP.produtividade = (function () {
      `garantirCredor`; o `gerar` a junta às outras no fim. */
   let errosBancarios = [];
 
+  /* ── O CPF SÓ IDENTIFICA SE FOR DA MESMA PESSOA (v174) ──
+
+     O cadastro do médico era achado PRIMEIRO pelo CPF/CNPJ. No
+     arquivo de radiologia de agosto, Alexandre e Elton vêm com o
+     MESMO CPF: o primeiro criava o cadastro com ele, e o repasse do
+     segundo caía no cadastro do primeiro — R$ 12.870,00 indo para o
+     PIX de outro médico, sem aviso.
+
+     Agora: CPF repetido entre nomes diferentes NO MESMO ARQUIVO não
+     identifica ninguém (cada um vai pelo nome, e o CPF não é gravado
+     em nenhum dos dois); e CPF que no cadastro é de OUTRA pessoa
+     também não. "Outra pessoa" é primeiro e último nome diferentes —
+     abreviação do meio ("Fabio Diniz B Fernandes") continua sendo a
+     mesma pessoa. */
+  let docsRepetidosNoArquivo = {};
+  let loteEmGeracao = null;
+  const L0 = function () { return loteEmGeracao; };
+  function docsRepetidos(L) {
+    const porDoc = {};
+    Object.keys((L && L.pagto) || {}).forEach(function (k) {
+      const d = String(L.pagto[k].documento || '').replace(/\D/g, '');
+      if (d.length !== 11) return;   // CPF; CNPJ repetido pode ser a mesma empresa
+      (porDoc[d] = porDoc[d] || []).push(k);
+    });
+    const r = {};
+    Object.keys(porDoc).forEach(function (d) {
+      const nomes = porDoc[d];
+      const distintos = nomes.filter(function (n, i) {
+        return !nomes.slice(0, i).some(function (o) { return mesmaPessoa(o, n); });
+      });
+      if (distintos.length > 1) r[d] = nomes;
+    });
+    return r;
+  }
+  /* Mesma pessoa = mesmo PRIMEIRO NOME, sem título ("Dr.", "Dra.").
+     Sobrenome abreviado, "Junior", nome do meio que falta: tudo isso
+     continua sendo a mesma pessoa. O que se quer pegar é o CPF de um
+     médico colado na linha de OUTRO — e aí os nomes não têm nada em
+     comum. */
+  function mesmaPessoa(a, b) {
+    const primeiro = function (n) {
+      return semAcento(chaveNome(n)).replace(/[^a-z ]/g, ' ').split(/\s+/).filter(function (t) {
+        return t && ['dr', 'dra', 'doutor', 'doutora'].indexOf(t) < 0;
+      })[0] || '';
+    };
+    const pa = primeiro(a), pb = primeiro(b);
+    return !!pa && pa === pb;
+  }
+
   function garantirCredor(l, pg) {
     /* O que foi digitado na prévia manda sobre cadastro e arquivo:
        quem digitou agora sabe mais do que os dois. Aplicado pela
@@ -2606,9 +3039,24 @@ ERP.produtividade = (function () {
       if (r && r.erro) errosBancarios.push(l.medico + ': ' + r.erro);
       return id;
     };
-    const doc = String(pg.documento || '').replace(/\D/g, '');
+    let doc = String(pg.documento || '').replace(/\D/g, '');
+    if (doc && docsRepetidosNoArquivo[doc]) {
+      divergencias.push({ medico: l.medico, campo: 'CPF/CNPJ repetido no arquivo',
+        cadastro: 'não usado', arquivo: pg.documento + ' — também em ' + docsRepetidosNoArquivo[doc]
+          .filter(function (n) { return n !== chaveNome(l.medico); }).map(function (n) {
+            return (L0() && L0().medicos[n] ? L0().medicos[n].nome : n); }).join(', ') });
+      pg = Object.assign({}, pg, { documento: '' });
+      doc = '';
+    }
     let c = doc ? D.credores.find(function (x) {
       return String(x.documento || '').replace(/\D/g, '') === doc; }) : null;
+    /* Só CPF: CNPJ pode ser da empresa do médico, com outro nome. */
+    if (c && doc.length === 11 && !mesmaPessoa(c.nome, l.medico) && !mesmaPessoa(c.razao_social, l.medico)) {
+      divergencias.push({ medico: l.medico, campo: 'CPF/CNPJ de outro médico',
+        cadastro: 'pertence a ' + c.nome, arquivo: pg.documento });
+      pg = Object.assign({}, pg, { documento: '' });
+      c = null;
+    }
     if (!c) c = D.credores.find(function (x) { return chaveNome(x.nome) === chaveNome(l.medico); });
 
     if (c) {

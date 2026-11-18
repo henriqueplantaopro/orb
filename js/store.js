@@ -9421,6 +9421,117 @@ ERP.store = (function () {
   const podeCorrigirProdutividade = () =>
     podeMover('produtividade') || pode('lancar') || pode('cancelar');
 
+  /* ── EDITAR UM FECHAMENTO JÁ LANÇADO (v173) ─────────────
+
+     Trocar o dia do repasse ou a natureza obrigava a cancelar e
+     lançar de novo — e cancelar desfaz confirmação, bloqueios e o
+     valor a faturar junto. Aqui muda só o que foi pedido.
+
+     O vencimento muda só no que ainda não começou a ser pago:
+     parcela paga (no todo ou em parte) ou em pagamento (aguardando
+     aprovação, autorizada, na remessa) fica como está, e a resposta
+     diz quantas. Mudar a data de algo que já está no banco seria
+     mentir sobre quando ele sai. */
+  function editarLoteProdutividade(id, d) {
+    if (!podeCorrigirProdutividade()) return { erro: 'Seu perfil não lança nem corrige produtividade.' };
+    d = d || {};
+    const l = st.lotesProdutividade.find(function (x) { return x.id === id; });
+    if (!l) return { erro: 'Lançamento de produtividade não encontrado.' };
+    if (l.cancelado) return { erro: 'Este lançamento foi cancelado — não é editável.' };
+    if (d.vencimento !== undefined && d.vencimento !== null &&
+        !/^\d{4}-\d{2}-\d{2}$/.test(String(d.vencimento))) {
+      return { erro: 'Informe a data do repasse.' };
+    }
+    if (d.conta && !D.plano.some(function (p) { return p.cod === d.conta; })) {
+      return { erro: 'Natureza não encontrada no plano de contas.' };
+    }
+    const ids = l.titulo_ids || [];
+    const ps = st.parcelas.filter(function (p) {
+      return ids.indexOf(p.titulo_id) > -1 && ['cancelado', 'substituido'].indexOf(p.status) < 0;
+    });
+    const r = { ok: true, venc_alterados: 0, venc_mantidos: 0, conta_alterados: 0, mudou: [] };
+    if (d.vencimento) {
+      ps.forEach(function (p) {
+        if (p.venc === d.vencimento) return;
+        if (p.status === 'pago' || pagoDe(p.id) > 0.004 || emCursoDe(p.id).length) { r.venc_mantidos++; return; }
+        p.venc = d.vencimento; r.venc_alterados++;
+      });
+      if (r.venc_alterados) r.mudou.push('repasse para ' + U.fData(d.vencimento) + ' (' + r.venc_alterados + ')');
+    }
+    if (d.conta) {
+      st.titulos.forEach(function (t) {
+        if (ids.indexOf(t.id) < 0 || t.status === 'cancelado' || t.conta === d.conta) return;
+        t.conta = d.conta; r.conta_alterados++;
+      });
+      ps.forEach(function (p) { if (p.conta !== d.conta) p.conta = d.conta; });
+      if (r.conta_alterados) r.mudou.push('natureza ' + d.conta);
+    }
+    if (d.observacao !== undefined && String(d.observacao || '') !== String(l.observacao || '')) {
+      l.observacao = String(d.observacao || '').trim();
+      r.mudou.push('observação');
+    }
+    if (r.mudou.length) {
+      l.editado_por = usuario().nome; l.editado_em = new Date();
+      logar('produtividade', l.id, 'editou o lançamento',
+        ((D.centro(l.centro) || {}).curto || '') + ' · ' + U.fComp(l.competencia) + ' · ' + r.mudou.join(', ') +
+        (r.venc_mantidos ? ' · ' + r.venc_mantidos + ' já pago(s) ou em pagamento mantido(s)' : ''));
+    }
+    return r;
+  }
+
+  /* ── "AINDA NÃO SEI O VALOR": VOLTA A VALER A PREVISÃO ────
+
+     O valor a faturar confirmado no fechamento SOBRESCREVE a
+     previsão do mês. Quando ele foi digitado errado e o certo ainda
+     não se sabe, o caminho é desconfirmar: o mês volta a valer o
+     valor PREVISTO (o da aba Faturamento › Previsões), que é
+     guardado na confirmação justamente para isto. Confirmação antiga,
+     sem esse registro, volta para a previsão do cadastro do projeto.
+
+     Não desfaz o que já andou: autorizado, liberado ou faturado é
+     desfeito na esteira, por quem tem esse poder. */
+  function voltarFaturamentoParaPrevisao(centro, competencia) {
+    if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
+      return { erro: 'Seu perfil não altera o valor a faturar.' };
+    }
+    const pv = previsaoDe(centro, competencia);
+    if (!pv || pv.status !== 'confirmada_prod') {
+      return { erro: 'O valor a faturar deste mês não está confirmado — já vale a previsão.' };
+    }
+    if (pv.autorizado_em || pv.liberado_em) {
+      return { erro: 'Este faturamento já foi ' + (pv.liberado_em ? 'liberado' : 'autorizado') +
+        '. Desfaça na Esteira do faturamento antes.' };
+    }
+    const faturado = st.receber.some(function (r) {
+      return ['nota', 'fatura'].indexOf(r.origem) > -1 && r.centro === centro &&
+        r.competencia === competencia && ['cancelado', 'substituido'].indexOf(r.status) < 0;
+    });
+    if (faturado) return { erro: 'Este mês já foi faturado — o valor da nota é que vale.' };
+    const c = D.centro(centro) || {};
+    const antes = pv.faturamento;
+    const previsto = (pv.faturamento_previsto !== undefined && pv.faturamento_previsto !== null)
+      ? Number(pv.faturamento_previsto) || 0 : (c.prev_faturamento || 0);
+    pv.status = 'estimada';
+    pv.faturamento = Math.round(previsto * 100) / 100;
+    delete pv.confirmado_por; delete pv.confirmado_por_id; delete pv.confirmado_em;
+    pv.observacao = 'Valor confirmado na produtividade desfeito — volta a valer a previsão';
+    const rec = st.receber.find(function (r) {
+      return r.origem === 'previsao' && r.status === 'previsto' && r.centro === centro && r.competencia === competencia;
+    });
+    if (rec) {
+      /* criarReceberPrevisto reescreve o valor e tira o "confirmado"
+         (o status da previsão já não é confirmada_prod) */
+      if (pv.faturamento > 0) criarReceberPrevisto(pv);
+      else {
+        rec.status = 'cancelado'; rec.valor_confirmado_produtividade = false;
+        rec.observacao = 'Valor confirmado desfeito e o mês não tem previsão';
+      }
+    }
+    logar('previsao', pv.id, 'desfez o valor confirmado na produtividade',
+      (c.curto || '') + ' · ' + U.fComp(competencia) + ' · ' + U.brl(antes) + ' → previsão ' + U.brl(pv.faturamento));
+    return { ok: true, previsao: pv, antes: antes, previsto: pv.faturamento };
+  }
+
   function substituirFechamento(centro, competencia, motivo, forcar) {
     /* Quem lança produtividade substitui o próprio fechamento enquanto
        ninguém recebeu — é correção de lançamento, não cancelamento de
@@ -16058,6 +16169,12 @@ ERP.store = (function () {
     if (!d.competencia) return { erro: 'Informe a competência.' };
     if (!(d.faturamento > 0)) return { erro: 'Informe o valor a faturar confirmado no fechamento.' };
     const anterior = previsaoDe(d.centro, d.competencia);
+    /* O valor PREVISTO de antes, para "ainda não sei" poder voltar a
+       ele (`voltarFaturamentoParaPrevisao`). Reconfirmar não apaga: o
+       previsto é o da última vez que o mês esteve em previsão. */
+    const previstoAntes = anterior
+      ? (anterior.status === 'confirmada_prod' ? anterior.faturamento_previsto : anterior.faturamento)
+      : (c.prev_faturamento || 0);
     const r = salvarPrevisao({
       centro: d.centro, competencia: d.competencia,
       faturamento: d.faturamento,
@@ -16078,6 +16195,7 @@ ERP.store = (function () {
     r.previsao.confirmado_por_id = (usuario() || {}).id || null;
     r.previsao.confirmado_em = new Date();
     r.previsao.lote_produtividade = d.lote || null;
+    if (previstoAntes !== undefined && previstoAntes !== null) r.previsao.faturamento_previsto = previstoAntes;
     const rec = criarReceberPrevisto(r.previsao);
     if (rec) {
       rec.valor_confirmado_produtividade = true;
@@ -21009,7 +21127,7 @@ ERP.store = (function () {
     aprovarRequisicao, registrarCotacao, totalCotado, aprovarCompra, emailDoPedido,
     registrarLoteProdutividade, lotesProdutividade, cancelarLoteProdutividade,
     confirmarLoteProdutividade, bloquearPagamentoMedico, liberarPagamentoMedico, situacaoLoteProdutividade,
-    substituirFechamento, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
+    substituirFechamento, editarLoteProdutividade, voltarFaturamentoParaPrevisao, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,
@@ -21056,7 +21174,7 @@ ERP.store = (function () {
     custoFuncionarios, provisaoMensalPessoal, calcular13, decimos, fechar13, cancelar13,
     retencoesPendentes, resumoRetencoesPendentes, guiasRetencao, fecharGuiaRetencao, cancelarGuiaRetencao,
     listar, parcela, saldoDe, valorNoCentro, aguardandoDe,
-    formaDoCredor, impedimentos, travaDaProdutividade, classificarProjeto, editarParcela, CAMPOS_EDITAVEIS,
+    formaDoCredor, impedimentos, travaDaProdutividade, classificarProjeto, podeCorrigirProdutividade, editarParcela, CAMPOS_EDITAVEIS,
     informarDadosBancarios, validarDadosBancarios,
     pagamentosAguardando, pagamento, autorizarPagamento, recusarPagamento,
     autorizadosDe, enviadosDe, emCursoDe, pagoDe, caixaDe, pagamentosDe, pagamentosTodos, eventosDe,

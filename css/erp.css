@@ -1295,3 +1295,15 @@ table.tab-apr td.desc{
   max-width:170px; white-space:normal; word-break:break-word;
   overflow:visible; text-overflow:clip;
 }
+
+/* ── lista de escolha com busca (U.selectComBusca) ─────── */
+.sel-busca{position:relative;}
+.sel-busca .sel-busca-oculto{display:none;}
+.sel-busca-txt{width:100%;}
+.sel-busca-lista{position:absolute;z-index:60;left:0;right:0;top:100%;margin:2px 0 0;padding:2px 0;list-style:none;
+  max-height:300px;overflow-y:auto;background:var(--surface);border:1px solid var(--line);border-radius:3px;
+  box-shadow:0 6px 18px rgba(0,0,0,.12);min-width:260px;}
+.sel-busca-lista li{padding:6px 9px;font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sel-busca-lista li.sel{font-weight:650;}
+.sel-busca-lista li.ativo,.sel-busca-lista li[data-i]:hover{background:var(--brand-soft);}
+.sel-busca-lista li.vazio{color:var(--ink3);cursor:default;}
