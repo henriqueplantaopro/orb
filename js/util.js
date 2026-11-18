@@ -628,7 +628,93 @@ ERP.util = (function () {
     return o;
   }
 
+  /* ── LISTA DE ESCOLHA COM BUSCA (v173) ──────────────────
+
+     Um <select> de 60 projetos obriga a rolar e procurar no olho.
+     Aqui o select continua existindo (escondido) — quem lê o valor e
+     quem escuta o `change` não muda nada — e na frente dele fica uma
+     caixa de texto: digitar filtra as opções por qualquer pedaço do
+     texto, em qualquer ordem, sem acento nem maiúscula ("hgb anest"
+     acha "GHC - HGB — Anestesia"). Setas e Enter escolhem; Esc
+     desiste e volta ao que estava. */
+  function selectComBusca(sel, opcoes) {
+    if (!sel || sel.dataset.comBusca) return null;
+    opcoes = opcoes || {};
+    sel.dataset.comBusca = '1';
+    const norm = function (t) {
+      return String(t || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    };
+    const caixa = document.createElement('div');
+    caixa.className = 'sel-busca';
+    sel.parentNode.insertBefore(caixa, sel);
+    const inp = document.createElement('input');
+    inp.type = 'text'; inp.autocomplete = 'off'; inp.className = 'sel-busca-txt';
+    inp.id = sel.id ? sel.id + '-busca' : '';
+    inp.placeholder = opcoes.placeholder || 'Digite para buscar…';
+    inp.setAttribute('role', 'combobox'); inp.setAttribute('aria-expanded', 'false');
+    const lista = document.createElement('ul');
+    lista.className = 'sel-busca-lista'; lista.setAttribute('role', 'listbox'); lista.hidden = true;
+    caixa.appendChild(inp); caixa.appendChild(sel); caixa.appendChild(lista);
+    sel.classList.add('sel-busca-oculto'); sel.tabIndex = -1;
+    /* o rótulo que apontava para o select passa a abrir a busca */
+    if (sel.id && inp.id) {
+      document.querySelectorAll('label[for="' + sel.id + '"]').forEach(function (lb) { lb.htmlFor = inp.id; });
+    }
+    const opcoesValidas = function () { return Array.from(sel.options).filter(function (o) { return o.value !== ''; }); };
+    const rotuloAtual = function () { const o = sel.options[sel.selectedIndex]; return o && o.value ? o.text : ''; };
+    inp.value = rotuloAtual();
+    let vis = [], marcado = -1, tudo = true;
+    function desenhar() {
+      const palavras = norm(inp.value).trim().split(/\s+/).filter(Boolean);
+      vis = opcoesValidas().filter(function (o) {
+        if (tudo) return true;
+        const t = norm(o.text);
+        return palavras.every(function (p) { return t.indexOf(p) > -1; });
+      });
+      lista.innerHTML = vis.length
+        ? vis.map(function (o, i) {
+            return '<li role="option" data-i="' + i + '" class="' + (o.value === sel.value ? 'sel ' : '') +
+              (i === marcado ? 'ativo' : '') + '">' + esc(o.text) + '</li>';
+          }).join('')
+        : '<li class="vazio">Nada encontrado com "' + esc(inp.value.trim()) + '"</li>';
+      lista.hidden = false; inp.setAttribute('aria-expanded', 'true');
+      const at = lista.querySelector('li.ativo');
+      if (at && at.scrollIntoView) at.scrollIntoView({ block: 'nearest' });
+    }
+    function fechar() { lista.hidden = true; marcado = -1; inp.setAttribute('aria-expanded', 'false'); }
+    function escolher(o) {
+      if (!o) return;
+      const mudou = sel.value !== o.value;
+      sel.value = o.value; inp.value = o.text; fechar();
+      if (mudou) sel.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    inp.addEventListener('focus', function () { tudo = true; marcado = -1; desenhar(); inp.select(); });
+    inp.addEventListener('input', function () { tudo = false; marcado = 0; desenhar(); });
+    inp.addEventListener('keydown', function (e) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (lista.hidden) { desenhar(); return; }
+        marcado = Math.max(0, Math.min(vis.length - 1, marcado + (e.key === 'ArrowDown' ? 1 : -1)));
+        desenhar();
+      } else if (e.key === 'Enter') {
+        if (!lista.hidden && vis.length) { e.preventDefault(); escolher(vis[marcado >= 0 ? marcado : 0]); }
+      } else if (e.key === 'Escape') {
+        if (!lista.hidden) { e.preventDefault(); e.stopPropagation(); inp.value = rotuloAtual(); fechar(); }
+      }
+    });
+    /* mousedown, não click: o click chegaria depois do blur fechar a lista */
+    lista.addEventListener('mousedown', function (e) {
+      const li = e.target.closest ? e.target.closest('li[data-i]') : null;
+      e.preventDefault();
+      if (li) escolher(vis[+li.dataset.i]);
+    });
+    inp.addEventListener('blur', function () { inp.value = rotuloAtual(); fechar(); });
+    sel.addEventListener('change', function () { if (document.activeElement !== inp) inp.value = rotuloAtual(); });
+    return inp;
+  }
+
   return {
+    selectComBusca: selectComBusca,
     doBanco: doBanco,
     ligarData: ligarData,
     ajustarColunas: ajustarColunas,

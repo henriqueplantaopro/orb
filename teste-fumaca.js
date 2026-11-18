@@ -890,6 +890,47 @@ console.log('20/12/2026 é dia da semana (0=dom,6=sáb):', d.getUTCDay());
   S.setUsuario('u8');
 })();
 
+// ── v173: editar o lançamento de produtividade ──
+(function () {
+  S.setUsuario('u5');
+  const cred = (D.credores.find(function (c) { return c.ativo !== false; }) || {}).id;
+  const t1 = S.criarTitulo({ _interno: true, descricao: 'Produtividade QA v173', documento: '', sem_nf: true,
+    tipo_titulo: 'medicao', credor: cred, conta: '3.01', centro: 'pj02', emissao: sandbox.window.ERP.util.hoje(),
+    origem: 'produtividade', origem_ref: 'QA-v173|1' }, [{ num: 1, venc: '2043-11-10', comp: '2043-10', valor: 100 }]);
+  const lr = S.registrarLoteProdutividade({ centro: 'pj02', competencia: '2043-10', arquivo: 'qa.xlsx', periodo: '',
+    titulo_ids: [t1.titulo.id], medicos: 1, valor: 100 });
+  const l = lr.lote || lr;
+  verificar('v173 — o lançamento de teste nasceu', t1.ok && !!(l && l.id), JSON.stringify(t1.erro || ''));
+  S.setUsuario('u4');
+  const r1 = S.editarLoteProdutividade(l.id, { vencimento: '2027-02-10' });
+  verificar('v173 — quem não mexe em produtividade não edita o lançamento',
+    !!r1.erro && /não lança nem corrige produtividade/.test(r1.erro), JSON.stringify(r1));
+  S.setUsuario('u11');
+  const r2 = S.editarLoteProdutividade(l.id, { vencimento: '10/02/2027' });
+  verificar('v173 — data fora do formato é recusada', !!r2.erro, JSON.stringify(r2));
+  const r3 = S.editarLoteProdutividade(l.id, { conta: '9.99.99' });
+  verificar('v173 — natureza fora do plano de contas é recusada', !!r3.erro && /plano de contas/.test(r3.erro), JSON.stringify(r3));
+  const canc = Object.assign({}, l, { id: 'lpQA173', cancelado: true });
+  S.st.lotesProdutividade.push(canc);
+  const r4 = S.editarLoteProdutividade('lpQA173', { vencimento: '2027-02-10' });
+  verificar('v173 — lançamento cancelado não se edita', !!r4.erro && /cancelado/.test(r4.erro), JSON.stringify(r4));
+  S.st.lotesProdutividade.pop();
+  /* "ainda não sei" não passa por cima do que já andou na esteira */
+  const conf = S.confirmarFaturamentoProdutividade({ centro: l.centro, competencia: l.competencia,
+    faturamento: 4321, produtividade: l.valor, lote: l.id, forcar: true });
+  const pv = S.previsaoDe(l.centro, l.competencia);
+  pv.autorizado_em = new Date().toISOString();
+  const r5 = S.voltarFaturamentoParaPrevisao(l.centro, l.competencia);
+  verificar('v173 — "ainda não sei" recusa faturamento já autorizado, e manda para a esteira',
+    conf.ok && !!r5.erro && /Esteira/.test(r5.erro) && pv.status === 'confirmada_prod', JSON.stringify(r5));
+  pv.autorizado_em = null;
+  const r6 = S.voltarFaturamentoParaPrevisao(l.centro, l.competencia);
+  const r7 = S.voltarFaturamentoParaPrevisao(l.centro, l.competencia);
+  verificar('v173 — e desconfirmado uma vez, não há o que desconfirmar de novo',
+    r6.ok && pv.status === 'estimada' && !!r7.erro, JSON.stringify([r6.ok, pv.status, r7]));
+  S.setUsuario('u5');
+})();
+
 // ── v170: a despesa prevista grava no banco ──
 (function () {
   S.setUsuario('u5');
