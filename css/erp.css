@@ -222,6 +222,9 @@ table.tab-folha button.btn-sm{padding:2px 5px;font-size:10.5px;}
 /* ── filtros e tabela ───────────────────────────────────── */
 .filtros{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;}
 .filtros .f{min-width:126px;}
+/* Busca da esteira: ocupa o que sobra da linha, sem empurrar para fora. */
+.filtros .f-busca{flex:1 1 220px;max-width:420px;}
+.filtros .f-busca input{width:100%;}
 .filtros label{margin-top:0;}
 .filtros .btn-sm{padding:6px 10px;}
 .barra-lote{display:flex;align-items:center;gap:10px;background:var(--brand-soft);

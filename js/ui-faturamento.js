@@ -847,7 +847,45 @@ ERP.faturamento = (function () {
      da mesa é outubro. Abrindo no mês corrente, a tela abria quase
      vazia e a primeira ação de todo dia era trocar a competência. */
   let fEst = { competencia: '', etapa: '',
-    sem_doc: false, anteriores: false, falta_enviar: false };
+    sem_doc: false, anteriores: false, falta_enviar: false, busca: '' };
+
+  /* BUSCA NA ESTEIRA (v172). Com muitos projetos, achar o que vai ser
+     faturado era rolar a tela e procurar no olho. Casa com qualquer
+     pedaço do nome do projeto (curto ou completo), do grupo e das
+     especialidades dele, do cliente (nome, nome curto, razão social)
+     e do CNPJ do cliente — acento e maiúscula não importam, e no CNPJ
+     a pontuação também não ("58600", "05.029.600" e "0502960000"
+     acham o mesmo). */
+  const semAcentoBusca = t => String(t || '').normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  function textoDaBusca(l) {
+    const partes = [];
+    const doCentro = function (id) {
+      const c = D.centro(id) || {};
+      partes.push(c.nome, c.curto, c.grupo_faturamento);
+      const cl = D.clienteDoCentro(id) || {};
+      /* o nome do cliente já vem na linha; daqui sai o CNPJ */
+      partes.push(cl.razao_social, cl.documento, cl.cnpj);
+    };
+    if (l.projeto) partes.push(l.projeto.nome, l.projeto.curto, l.projeto.rotulo_grupo);
+    partes.push(l.grupo, l.cliente_nome, l.cliente_curto);
+    if (l.centro) doCentro(l.centro);
+    (l.especialidades || []).forEach(function (e) { if (e && e.centro) doCentro(e.centro); });
+    const txt = semAcentoBusca(partes.filter(Boolean).join(' '));
+    return { txt: txt, dig: txt.replace(/\D/g, '') };
+  }
+  function casaBusca(l) {
+    const q = semAcentoBusca(fEst.busca).trim();
+    if (!q) return true;
+    const t = textoDaBusca(l);
+    /* Cada palavra tem de aparecer (em qualquer ordem): "spdm mogi". */
+    return q.split(/\s+/).every(function (p) {
+      if (t.txt.indexOf(p) > -1) return true;
+      /* Pedaço de CNPJ: só números e pontuação, com 3+ dígitos. */
+      const d = p.replace(/\D/g, '');
+      return /^[\d.\/-]+$/.test(p) && d.length >= 3 && t.dig.indexOf(d) > -1;
+    });
+  }
   /* Quantas competências para trás contam como ATRASADO. Dia 01/11,
      com 2, é setembro para trás. */
   const COMPETENCIAS_DE_ATRASO = 2;
@@ -897,7 +935,10 @@ ERP.faturamento = (function () {
       : (fEst.falta_enviar
           ? S.esteiraFaturamento({ falta_enviar: true, incluir_inativos: incl, sem_documento: fEst.sem_doc })
           : S.esteiraFaturamento({ competencia: fEst.competencia,
-              incluir_inativos: incl, sem_documento: fEst.sem_doc }))).filter(noSub);
+              incluir_inativos: incl, sem_documento: fEst.sem_doc }))).filter(noSub)
+      /* A busca entra ANTES das contagens: os números das etapas
+         falam do que está na tela. */
+      .filter(casaBusca);
     const conta = {};
     ORDEM_ETAPAS.concat(['sem_faturamento']).forEach(function (e) {
       conta[e] = base.filter(function (l) { return l.etapa === e; }).length;
@@ -944,6 +985,9 @@ ERP.faturamento = (function () {
               return '<option value="' + c + '"' + (fEst.competencia === c ? ' selected' : '') + '>' +
                 U.fComp(c) + '</option>';
             }).join('') + '</select></div>' +
+        '<div class="f f-busca"><label for="es-busca">Buscar projeto</label>' +
+          '<input id="es-busca" type="search" autocomplete="off" ' +
+          'placeholder="nome do projeto, do cliente ou CNPJ" value="' + U.esc(fEst.busca) + '"></div>' +
       '</div>' +
       /* AS ETAPAS LADO A LADO, e não num menu suspenso. Elas são
          seis: cabem numa linha, e escolher entre seis coisas
@@ -1001,6 +1045,16 @@ ERP.faturamento = (function () {
               (ocultos.nomes.length > 6 ? ' e mais ' + (ocultos.nomes.length - 6) : '') + '. '
             : 'Nenhum deles tem pendência. ') +
           'O botão <b>Inativos</b> acima mostra todos.</div>'
+        : '') +
+      (fEst.busca.trim()
+        ? '<div class="ajuda' + (base.length ? '' : ' erro') + '">' +
+          (base.length
+            ? 'Mostrando só o que casa com <b>' + U.esc(fEst.busca.trim()) + '</b>: ' + base.length +
+              (base.length === 1 ? ' linha' : ' linhas') + '. '
+            : 'Nada casa com <b>' + U.esc(fEst.busca.trim()) + '</b> ' +
+              (fEst.anteriores || fEst.falta_enviar ? 'nesta visão' : 'em ' + U.fComp(fEst.competencia)) +
+              '. Confira a competência, o submódulo ou os filtros acima. ') +
+          '<button class="btn-ghost" data-es-limpa-busca>Limpar busca</button></div>'
         : '') +
       (fEst.inativos
         ? '<div class="ajuda">Mostrando também os <b>inativos</b>, marcados na lista. ' +
@@ -2749,6 +2803,25 @@ ERP.faturamento = (function () {
       b.addEventListener('click', function () { confirmarEAutorizar(this.dataset.estConf); });
     });
     U.el('es-comp').addEventListener('change', function () { fEst.competencia = this.value; renderEsteira(); });
+    /* A tela é redesenhada inteira; sem devolver o foco, cada letra
+       digitada tiraria o cursor da caixa. */
+    const busca = U.el('es-busca');
+    if (busca) {
+      let espera = null;
+      busca.addEventListener('input', function () {
+        const v = this.value;
+        clearTimeout(espera);
+        espera = setTimeout(function () {
+          fEst.busca = v;
+          renderEsteira();
+          const b = U.el('es-busca');
+          if (b) { b.focus(); try { b.setSelectionRange(b.value.length, b.value.length); } catch (e) {} }
+        }, 180);
+      });
+    }
+    box.querySelectorAll('[data-es-limpa-busca]').forEach(function (b) {
+      b.addEventListener('click', function () { fEst.busca = ''; renderEsteira(); });
+    });
 
     box.querySelectorAll('[data-est-aut]').forEach(function (b) {
       b.addEventListener('click', function () {
