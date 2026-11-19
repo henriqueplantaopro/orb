@@ -322,8 +322,13 @@ ERP.faturamento = (function () {
        a pergunta de quem abre esta tela. */
     const porCliente = {};
     lista.forEach(function (l) {
-      const cid = D.clienteDoCentro(l.projeto.id) || '';
-      const cli = (D.clientes || []).find(function (x) { return x.id === cid; });
+      /* `clienteDoCentro` devolve o CLIENTE, não o id. Comparar o
+         objeto com `x.id` nunca batia, e todo projeto caía em "Sem
+         cliente vinculado" (v175). */
+      /* A linha já diz de quem é (`cliente`) — e a linha de GRUPO
+         (nota única, ex.: GHC) não tem projeto com id para procurar. */
+      const cli = (l.cliente && (D.clientes || []).find(function (x) { return x.id === l.cliente; })) ||
+        (l.projeto && l.projeto.id ? D.clienteDoCentro(l.projeto.id) : null);
       const chave = cli ? cli.nome : 'Sem cliente vinculado';
       (porCliente[chave] = porCliente[chave] || []).push(l);
     });
