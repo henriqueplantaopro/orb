@@ -114,7 +114,7 @@ ERP.conciliacao = (function () {
         '<span>Pendentes <b class="' + (res.pendentes ? 'erro' : '') + '">' + res.pendentes + '</b></span>' +
         '<span>A explicar — entradas <b>' + U.brl(res.pendenteEntrada) + '</b></span>' +
         '<span>saídas <b>' + U.brl(res.pendenteSaida) + '</b></span>' +
-      '</div>' +
+      '</div>' + blocoConferencia(banco) +
       (aba === 'concretos'     ? telaConcretos(g.concretos) :
        aba === 'possiveis'     ? telaPossiveis(g.possiveis) :
        aba === 'sem'           ? telaSem(g.sem) :
@@ -122,6 +122,83 @@ ERP.conciliacao = (function () {
        aba === 'regras'        ? telaRegras() : telaFeitos(banco));
     ligar();
     ligarDesfazer();
+  }
+
+  /* ── conferência: o que ficou torto na conciliação ──────
+     Aparece só quando há algo: duas linhas do extrato no MESMO
+     pagamento (as duas faturas iguais da Claro — a segunda ficou com
+     o título aberto) e linha conciliada com valor diferente do
+     pagamento (boleto com juros baixado pelo valor da nota). */
+  function blocoConferencia(banco) {
+    const c = S.conferenciaConciliacao(banco);
+    if (!c.dobradas.length && !c.diferencas.length) return '';
+    return '<div class="card" style="border-left:3px solid var(--erro, #b42318);margin:10px 0;padding:10px 14px">' +
+      '<b>Conferência da conciliação</b>' +
+      c.dobradas.map(function (d) {
+        return d.sobra.map(function (l) {
+          return '<div class="resumo-linha"><span>' + U.esc(d.credor) + ': as linhas de ' +
+            d.linhas.map(function (x) { return U.fData(x.data) + ' (' + U.brl(Math.abs(x.valor)) + ')'; }).join(' e ') +
+            ' estão no MESMO pagamento — uma saída do banco ficou sem título.</span>' +
+            '<span class="v"><button class="btn-sm btn-aprovar" data-cf-desfaz="' + l.id + '">Liberar a linha de ' +
+            U.fData(l.data) + '</button></span></div>';
+        }).join('');
+      }).join('') +
+      c.diferencas.map(function (d) {
+        return '<div class="resumo-linha"><span>' + U.esc(d.credor) + ' · ' + U.fData(d.linha.data) + ': extrato ' +
+          U.brl(d.extrato) + ', pagamento ' + U.brl(d.pago) + ' — diferença de ' + U.brl(d.diferenca) + '.</span>' +
+          '<span class="v">' + (d.diferenca > 0
+            ? '<button class="btn-sm btn-aprovar" data-cf-juros="' + d.linha.id + '" data-dif="' + d.diferenca +
+              '" data-pago="' + d.pago + '">Lançar como juros/multa</button>'
+            : '<span class="sub">extrato menor: estorne e baixe pelo valor certo</span>') + '</span></div>';
+      }).join('') +
+      '</div>';
+  }
+
+  /* Transferência entre as empresas do grupo: nem receita nem despesa.
+     A conta da outra empresa diz quem mandou e quem recebeu. */
+  function mutuo(id) {
+    const l = S.linhasExtrato({}).find(function (x) { return x.id === id; });
+    if (!l) return;
+    const minha = S.empresaDaConta(l.banco);
+    const contas = D.bancos.filter(function (b) { return b.ativo !== false && b.empresa && b.empresa !== minha; });
+    if (!contas.length) {
+      return ERP.app.aviso('Não há conta de outra empresa do grupo cadastrada em Bancos.', 'erro');
+    }
+    const entrada = l.valor > 0 || l.entrada > 0;
+    const nomeEmp = e => (D.empresaPor(e) || {}).apelido || e;
+    ERP.app.modal({
+      titulo: 'Mútuo entre empresas · ' + U.brl(Math.abs(l.valor)),
+      corpo: '<div class="ajuda">' + (entrada
+          ? 'Dinheiro que <b>entrou</b> na ' + U.esc(nomeEmp(minha)) + ' vindo de outra empresa do grupo. ' +
+            'Não é receita: a ' + U.esc(nomeEmp(minha)) + ' passa a <b>dever</b> à empresa que mandou.'
+          : 'Dinheiro que <b>saiu</b> da ' + U.esc(nomeEmp(minha)) + ' para outra empresa do grupo. ' +
+            'Não é despesa: a empresa que recebeu passa a <b>dever</b> à ' + U.esc(nomeEmp(minha)) + '.') + '</div>' +
+        '<label for="mt-conta">' + (entrada ? 'Veio da conta' : 'Foi para a conta') + '</label>' +
+        '<select id="mt-conta">' + (contas.length > 1 ? '<option value="">escolha…</option>' : '') +
+          contas.map(function (b) {
+            return '<option value="' + b.id + '">' + U.esc(nomeEmp(b.empresa)) + ' — ' + U.esc(b.apelido || b.nome) + '</option>';
+          }).join('') + '</select>' +
+        '<div class="ajuda" id="mt-efeito"></div>' +
+        '<label for="mt-obs">Observação (opcional)</label><input id="mt-obs">',
+      acoes: [{ txt: 'Conciliar como mútuo', cls: 'btn-pagar', fn: function () {
+        const r = S.conciliarMutuo(id, { conta: U.val('mt-conta'), obs: U.val('mt-obs') });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal(); abertaLinha = null; render();
+        ERP.app.aviso((r.outro_lado ? 'Outro lado do mútuo amarrado' : 'Mútuo registrado') + ': ' +
+          r.transferencia.mutuo.devedora_nome + ' deve ' + U.brl(r.transferencia.valor) + ' à ' +
+          r.transferencia.mutuo.credora_nome + '.', 'ok');
+      } }],
+      aoAbrir: function () {
+        const efeito = function () {
+          const b = D.banco(U.val('mt-conta'));
+          U.el('mt-efeito').textContent = !b ? '' : entrada
+            ? nomeEmp(minha) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(b.empresa) + '.'
+            : nomeEmp(b.empresa) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(minha) + '.';
+        };
+        U.el('mt-conta').addEventListener('change', efeito);
+        efeito();
+      }
+    });
   }
 
   /* Entradas e saídas embaralhadas na mesma lista confundem na hora de
@@ -308,6 +385,7 @@ ERP.conciliacao = (function () {
             (l.saida > 0
               ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar</button>'
               : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
+            '<button class="btn-sm" data-cn-mutuo="' + l.id + '" title="Transferência entre empresas do grupo">Mútuo</button>' +
             '<button class="btn-sm" data-cn-buscar="' + l.id + '">Buscar título</button>' +
             '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
           '</td></tr>';
@@ -616,6 +694,7 @@ ERP.conciliacao = (function () {
         (l.saida > 0
           ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar como despesa</button>'
           : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
+        '<button class="btn-sm" data-cn-mutuo="' + l.id + '">Mútuo entre empresas</button>' +
         '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
       '</div></td></tr>';
   }
@@ -1178,6 +1257,29 @@ ERP.conciliacao = (function () {
     });
     box.querySelectorAll('[data-cn-lanc]').forEach(function (b) {
       b.addEventListener('click', function () { lancar(this.dataset.cnLanc); });
+    });
+    box.querySelectorAll('[data-cn-mutuo]').forEach(function (b) {
+      b.addEventListener('click', function (e) { e.stopPropagation(); mutuo(this.dataset.cnMutuo); });
+    });
+    box.querySelectorAll('[data-cf-desfaz]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const r = S.desconciliar(this.dataset.cfDesfaz, 'mesmo pagamento conciliado com duas linhas do extrato');
+        if (ERP.app.erroDoRetorno(r)) return;
+        aba = 'sem'; render();
+        ERP.app.aviso('Linha liberada — agora vincule-a ao título certo (Buscar título).', 'ok');
+      });
+    });
+    box.querySelectorAll('[data-cf-juros]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.cfJuros;
+        const dif = Number(this.dataset.dif), pago = Number(this.dataset.pago);
+        perguntarEncargos({ diferenca: dif, saldo: pago, total: Math.round((pago + dif) * 100) / 100 }, function (e) {
+          const r = S.encargosDaConciliacao(id, e);
+          if (ERP.app.erroDoRetorno(r)) return;
+          render();
+          ERP.app.aviso('Juros/multa lançados no pagamento — o relatório passa a bater com o extrato.', 'ok');
+        });
+      });
     });
     box.querySelectorAll('[data-cn-buscar]').forEach(function (b) {
       b.addEventListener('click', function () { buscar(this.dataset.cnBuscar); });

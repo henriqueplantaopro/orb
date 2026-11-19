@@ -14,6 +14,7 @@ ERP.relatorios = (function () {
       if (!dados || !dados.linhas.length) return ERP.app.aviso('Nada para exportar neste relatório.', 'erro');
       if (atual === 'faturamento') return exportarFaturamento();
       if (atual === 'aPagarReceber' || atual === 'pagasRecebidas') return exportarPeriodo();
+      if (atual === 'mutuos') return exportarMutuos();
       /* LEGENDA EM TODO RELATÓRIO: nome, empresa e período. Os dois
          relatórios de contas já tinham; os outros saíam como uma
          tabela solta, e quem recebia não sabia de que empresa nem de
@@ -50,6 +51,8 @@ ERP.relatorios = (function () {
       atual === 'fluxoDiario' ? timbrado('os próximos dias, com o saldo andando dia a dia') + fluxoDiario() :
       atual === 'aPagarReceber' ? timbrado('o que vence no período, com saldo corrido') + aPagarReceber() :
       atual === 'pagasRecebidas' ? timbrado('o que foi baixado no período') + pagasRecebidas() :
+      atual === 'mutuos' ? timbrado('quanto uma empresa do grupo deve à outra, e o que mudou no período') +
+        filtrosPeriodo() + mutuos() :
       atual === 'faturamento' ? timbrado('quais projetos foram faturados, quais não, e quanto deu') +
         filtrosFaturamento() + faturamentoPorProjeto() :
       atual === 'fatEmissao' ? timbrado('as notas emitidas no período, por dia de emissão') +
@@ -123,7 +126,7 @@ ERP.relatorios = (function () {
      relatório começava direto na tabela, e o arquivo impresso não dizia
      de que empresa nem de que período era. */
   const NOMES = {
-    aPagarReceber: 'Contas a pagar e a receber', pagasRecebidas: 'Contas pagas e recebidas',
+    aPagarReceber: 'Contas a pagar e a receber', pagasRecebidas: 'Contas pagas e recebidas', mutuos: 'Mútuo entre empresas',
     fluxoDiario: 'Fluxo de caixa diário',
     gerencial: 'DRE gerencial',
     dre: 'DRE por competência', empresas: 'Resultado por empresa', centro: 'Total por centro de custo',
@@ -744,7 +747,9 @@ ERP.relatorios = (function () {
     { titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => l.emissao ? U.fData(l.emissao) : '' },
     { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => U.fData(l.vencimento) },
     { titulo: 'Parcela', largura: 9, valor: l => l.parcela },
-    { titulo: 'Valor da parcela', largura: 16, tipo: 'numero', valor: l => l.valor },
+    { titulo: 'Valor do título', largura: 16, tipo: 'numero', valor: l => l.principal },
+    { titulo: 'Juros/multa', largura: 16, tipo: 'numero', valor: l => l.juros || 0 },
+    { titulo: 'Valor pago', largura: 16, tipo: 'numero', valor: l => l.valor },
     { titulo: 'Saldo', largura: 16, tipo: 'numero', valor: l => l.saldo }
   ];
 
@@ -938,6 +943,24 @@ ERP.relatorios = (function () {
       'vão mexer no caixa; a coluna Situação diz qual é qual.</div>';
   }
 
+  /* Na tela, as colunas que cabem sem rolar para o lado; o Excel
+     leva todas (COLS_REALIZADO). Os três valores ficam lado a lado —
+     título, juros/multa e pago — que é o que bate com o extrato. */
+  const COLS_TELA_REALIZADO = [
+    { t: 'Tipo', h: l => '<td>' + l.tipo + '</td>' },
+    { t: 'Documento', h: l => '<td class="mono">' + U.esc(l.documento || '—') + '</td>' },
+    { t: 'Fornecedor', h: l => '<td class="desc">' + U.esc(l.contraparte) +
+      '<div class="sub">' + U.esc(l.descricao || '') + '</div></td>' },
+    { t: 'Vencimento', h: l => '<td class="mono">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' },
+    { t: 'Data baixa', h: l => '<td class="mono">' + U.fData(l.baixa) + '</td>' },
+    { t: 'Parcela', h: l => '<td class="sub">' + l.parcela + '</td>' },
+    { t: 'Valor do título', num: true, h: l => '<td class="num">' + U.num(l.principal) + '</td>' },
+    { t: 'Juros/multa', num: true, h: l => '<td class="num' + (l.juros > 0 ? '' : ' sub') + '">' +
+      (l.juros > 0 ? U.num(l.juros) : '—') + '</td>' },
+    { t: 'Valor pago', num: true, h: l => '<td class="num">' + U.num(l.valor) + '</td>' },
+    { t: 'Banco', h: l => '<td class="sub">' + U.esc(l.banco || '') + '</td>' }
+  ];
+
   function pagasRecebidas() {
     const r = S.contasPagasERecebidas(per.de, per.ate, { banco: relBanco });
     return filtrosPeriodo(filtroBancoRel() +
@@ -947,28 +970,87 @@ ERP.relatorios = (function () {
       '<div class="pr-confere">' +
         '<span>Recebido <b>' + U.brl(r.total_recebido) + '</b></span>' +
         '<span>Pago <b>' + U.brl(r.total_pago) + '</b></span>' +
+        '<span>dos quais juros/multa <b>' + U.brl(r.total_juros) + '</b></span>' +
         '<span>Resultado do caixa <b class="' + (r.resultado < 0 ? 'erro' : '') + '">' + U.brl(r.resultado) + '</b></span>' +
       '</div>' +
-      '<div class="tabela-rolagem" style="margin:0 -14px"><table><thead><tr>' +
-        COLS_REALIZADO.map(function (c) {
-          return '<th' + (c.tipo === 'numero' ? ' class="num"' : '') + '>' + c.titulo + '</th>';
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel"><thead><tr>' +
+        COLS_TELA_REALIZADO.map(function (c) {
+          return '<th' + (c.num ? ' class="num"' : '') + '>' + c.t + '</th>';
         }).join('') + '</tr></thead><tbody>' +
         (r.linhas.length ? r.linhas.map(function (l) {
-          return '<tr><td>' + l.tipo + '</td>' +
-            '<td class="mono">' + U.esc(l.documento || '—') + '</td>' +
-            '<td class="sub">' + U.esc(l.forma) + '</td>' +
-            '<td class="desc">' + U.esc(l.contraparte) + '</td>' +
-            '<td class="desc">' + U.esc(l.descricao) +
-              (l.juros > 0 ? '<div class="sub">inclui ' + U.brl(l.juros) + ' de juros/multa</div>' : '') + '</td>' +
-            '<td class="mono sub">' + U.esc(l.competencia) + '</td>' +
-            '<td class="mono">' + (l.emissao ? U.fData(l.emissao) : '—') + '</td>' +
-            '<td class="mono">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' +
-            '<td class="mono">' + U.fData(l.baixa) + '</td>' +
-            '<td class="sub">' + l.parcela + '</td>' +
-            '<td class="num">' + U.brl(l.valor) + '</td></tr>';
+          return '<tr>' + COLS_TELA_REALIZADO.map(function (c) { return c.h(l); }).join('') + '</tr>';
         }).join('')
-          : '<tr><td colspan="11" class="vazio"><strong>Nenhuma baixa neste período.</strong></td></tr>') +
+          : '<tr><td colspan="' + COLS_TELA_REALIZADO.length + '" class="vazio"><strong>Nenhuma baixa neste período.</strong></td></tr>') +
       '</tbody></table></div>';
+  }
+
+  /* ── mútuo entre as empresas do grupo ───────────────────
+     Saldo ACUMULADO por par de empresas: o anterior ao período, o que
+     aumentou e diminuiu a dívida dentro dele, e o saldo final — já
+     compensado (o que a contabilidade lança é a diferença). Embaixo,
+     cada operação: transferência entre as contas, mútuo conciliado
+     pelo extrato e nota de uma empresa paga pela conta da outra. */
+  const ORIGEM_MUTUO = l => l.origem_registro === 'extrato' ? 'conciliação'
+    : l.tipo === 'transferencia' ? 'transferência' : 'baixa manual';
+  function mutuos() {
+    const r = S.relatorioMutuos(per.de, per.ate);
+    const total = r.saldos.reduce(function (a, x) { return a + x.saldo; }, 0);
+    return '<div class="pr-confere"><span>Saldo em aberto em ' + U.fData(per.ate) + ' <b>' + U.brl(total) + '</b></span>' +
+        '<span>Operações no período <b>' + r.linhas.length + '</b></span></div>' +
+      '<table class="rel"><thead><tr><th>Quem deve</th><th>A quem</th>' +
+        '<th class="num">Saldo anterior</th><th class="num">Aumentou</th><th class="num">Diminuiu</th>' +
+        '<th class="num">Saldo final</th></tr></thead><tbody>' +
+        (r.saldos.length ? r.saldos.map(function (x) {
+          return '<tr><td class="desc">' + U.esc(x.devedora_nome) + '</td><td>' + U.esc(x.credora_nome) + '</td>' +
+            '<td class="num">' + U.num(x.anterior) + '</td><td class="num">' + U.num(x.aumentou) + '</td>' +
+            '<td class="num">' + U.num(x.diminuiu) + '</td><td class="num"><b>' + U.num(x.saldo) + '</b></td></tr>';
+        }).join('') : '<tr><td colspan="6" class="vazio"><strong>Nenhum mútuo entre as empresas até ' +
+          U.fData(per.ate) + '.</strong></td></tr>') +
+      '</tbody></table>' +
+      (r.linhas.length
+        ? '<h3 style="font-size:13px;margin:18px 0 6px">Operações do período</h3>' +
+          '<table class="rel"><thead><tr><th>Data</th><th>Deve</th><th>A quem</th><th>Operação</th>' +
+          '<th>Origem</th><th class="num">Valor</th></tr></thead><tbody>' +
+          r.linhas.map(function (l) {
+            return '<tr><td class="mono">' + U.fData(l.data) + '</td><td>' + U.esc(l.devedora_nome) + '</td>' +
+              '<td>' + U.esc(l.credora_nome) + '</td><td class="desc">' + U.esc(l.descricao) + '</td>' +
+              '<td class="sub">' + ORIGEM_MUTUO(l) + '</td><td class="num">' + U.num(l.valor) + '</td></tr>';
+          }).join('') + '</tbody></table>'
+        : '') +
+      '<div class="ajuda">O mútuo nasce de três jeitos: transferência entre contas de empresas diferentes ' +
+        '(Saldo bancário), linha do extrato classificada como "Mútuo" na conciliação, e nota de uma empresa ' +
+        'paga pela conta da outra. Quem manda o dinheiro vira credora.</div>';
+  }
+
+  function exportarMutuos() {
+    const r = S.relatorioMutuos(per.de, per.ate);
+    if (!r.saldos.length && !r.linhas.length) return ERP.app.aviso('Nenhum mútuo para exportar.', 'erro');
+    const periodo = 'Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate);
+    const linhas = r.saldos.map(function (x) {
+      return { tipo: 'Saldo', data: '', deve: x.devedora_nome, credora: x.credora_nome,
+        descricao: 'Anterior ' + U.num(x.anterior) + ' · aumentou ' + U.num(x.aumentou) +
+          ' · diminuiu ' + U.num(x.diminuiu), origem: '', valor: x.saldo };
+    }).concat(r.linhas.map(function (l) {
+      return { tipo: 'Operação', data: l.data, deve: l.devedora_nome, credora: l.credora_nome,
+        descricao: l.descricao, origem: ORIGEM_MUTUO(l), valor: l.valor };
+    }));
+    ERP.exportar.abrir({
+      nome: 'mutuo-entre-empresas-' + per.de + '-a-' + per.ate,
+      titulo: 'Mútuo entre empresas',
+      colunas: [
+        { titulo: 'Tipo', largura: 10, valor: l => l.tipo },
+        { titulo: 'Data', largura: 12, tipo: 'data', valor: l => l.data ? U.fData(l.data) : '' },
+        { titulo: 'Quem deve', largura: 22, valor: l => l.deve },
+        { titulo: 'A quem', largura: 22, valor: l => l.credora },
+        { titulo: 'Descrição', largura: 50, valor: l => l.descricao },
+        { titulo: 'Origem', largura: 14, valor: l => l.origem },
+        { titulo: 'Valor', largura: 16, tipo: 'numero', valor: l => l.valor }
+      ],
+      linhas: linhas,
+      cabecalho: [['Relatório de mútuo entre empresas do grupo'], [periodo]],
+      rodape: [[], ['Saldo em aberto em ' + U.fData(per.ate),
+        Math.round(r.saldos.reduce(function (a, x) { return a + x.saldo; }, 0) * 100) / 100]]
+    });
   }
 
   /* Cada relatório sai NUM ARQUIVO, com uma aba só — foi o pedido. */
@@ -1002,7 +1084,8 @@ ERP.relatorios = (function () {
       colunas: COLS_REALIZADO, linhas: r.linhas,
       cabecalho: [['Relatório contas pagas e recebidas' + (conta ? ' — ' + conta.apelido : '')],
         conta ? [periodo, '', 'Empresa', (emp.apelido || '') + ' · ' + (emp.cnpj || '')] : [periodo]],
-      rodape: [[], ['Recebido', r.total_recebido], ['Pago', r.total_pago], ['Resultado do caixa', r.resultado]]
+      rodape: [[], ['Recebido', r.total_recebido], ['Pago', r.total_pago], ['dos quais juros/multa', r.total_juros],
+        ['Resultado do caixa', r.resultado]]
     });
   }
 
