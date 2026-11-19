@@ -1,7 +1,8 @@
 /* ERP · nfe.js — leitura do XML da nota fiscal de entrada.
 
-   Cobre três formatos, porque nota de compra chega nos três:
+   Cobre quatro formatos, porque nota de compra chega nos quatro:
      · NF-e modelo 55 (produto) — padrão nacional, layout 4.00
+     · NFCom modelo 62 (telefone/internet) — padrão nacional, v1.00
      · NFS-e padrão nacional (ADN / infNFSe) — serviço, desde 2023
      · NFS-e ABRASF (CompNfse) — o layout municipal mais difundido
 
@@ -33,12 +34,23 @@ ERP.nfe = (function () {
      própria nota declara e é isso que se paga. */
   const n4 = v => Math.round((parseFloat(String(v || '0').replace(',', '.')) || 0) * 10000) / 10000;
 
+  /* PELO NOME LOCAL, COM OU SEM PREFIXO (v178).
+     `getElementsByTagName('CompNfse')` procura o nome QUALIFICADO:
+     acha <CompNfse>, não acha <ns2:CompNfse>. Muita prefeitura
+     ABRASF (GINFES e outros) e alguns emissores da NFS-e nacional
+     escrevem as tags com prefixo de namespace — e uma nota válida
+     dava "XML não reconhecido". Buscando pelo nome local, o prefixo
+     deixa de importar. */
+  const todos = function (ctx, tag) {
+    if (!ctx) return [];
+    return ctx.getElementsByTagNameNS ? ctx.getElementsByTagNameNS('*', tag) : ctx.getElementsByTagName(tag);
+  };
   function texto(ctx, tag) {
     if (!ctx) return '';
-    const e = ctx.getElementsByTagName(tag)[0];
+    const e = todos(ctx, tag)[0];
     return e ? String(e.textContent || '').trim() : '';
   }
-  const el = (ctx, tag) => (ctx ? ctx.getElementsByTagName(tag)[0] : null);
+  const el = (ctx, tag) => (ctx ? todos(ctx, tag)[0] || null : null);
   const dataISO = s => String(s || '').slice(0, 10);
 
   /* Nomes de campo variam entre o padrão nacional "canônico" e o que
@@ -128,6 +140,71 @@ ERP.nfe = (function () {
     return lista;
   }
 
+  /* ── NFCom modelo 62 (v178) ─────────────────────────────
+     Nota Fiscal Fatura de Serviço de Comunicação: a conta de
+     telefone e internet (Claro, Vivo, TIM, Oi…), padrão nacional
+     desde 2025, com namespace próprio (portalfiscal.inf.br/nfcom).
+     A estrutura é parecida com a da NF-e — ide, emit, dest, det,
+     total —, com duas diferenças que importam aqui:
+       · não há duplicatas: o vencimento é UM, em gFat/dVencFat, e
+         vale pelo total da nota;
+       · a fatura traz o código de barras (e às vezes o PIX), que é
+         o que se usa para pagar. */
+  function lerNFCom(doc) {
+    const inf = el(doc, 'infNFCom');
+    const ide = el(doc, 'ide');
+    const emit = el(doc, 'emit');
+    const dest = el(doc, 'dest');
+    const tot = el(doc, 'total');
+    const fat = el(doc, 'gFat');
+    const ender = el(emit, 'enderEmit');
+    const itens = Array.prototype.slice.call(todos(doc, 'det')).map(function (d) {
+      const p = el(d, 'prod');
+      const qtd = parseFloat(texto(p, 'qFaturada') || '0') || 0;
+      return {
+        codigo: texto(p, 'cProd'), descricao: texto(p, 'xProd'),
+        ncm: '', cfop: texto(p, 'CFOP'), ean: '', cest: '',
+        unidade: '', qtd: qtd,
+        valorUnit: n4(texto(p, 'vItem')), valor: n2(texto(p, 'vProd'))
+      };
+    });
+    const valor = n2(texto(tot, 'vNF')) || n2(texto(tot, 'vTotDFe'));
+    const venc = dataISO(texto(fat, 'dVencFat'));
+    const barras = so(texto(fat, 'codBarras'));
+    const compFat = so(texto(fat, 'CompetFat'));
+    const ret = retencoesDe(el(doc, 'vRetTribTot') || el(tot, 'vRetTribTot'),
+      ['vRetPIS', 'vRetCofins', 'vRetCOFINS', 'vRetCSLL', 'vIRRF', 'vRetIRRF']);
+    const cpl = Array.prototype.slice.call(todos(el(doc, 'infAdic'), 'infCpl'))
+      .map(function (e) { return String(e.textContent || '').trim(); }).filter(Boolean);
+    return {
+      tipo: 'nfcom', rotulo: 'NFCom — fatura de serviço de comunicação (modelo 62)',
+      numero: texto(ide, 'nNF'), serie: texto(ide, 'serie'),
+      chave: (texto(doc, 'chNFCom') || (inf && inf.getAttribute('Id')) || '').replace(/\D/g, ''),
+      emissao: dataISO(texto(ide, 'dhEmi')),
+      natureza: 'Serviço de comunicação' + (itens[0] ? ' — ' + itens[0].descricao : ''),
+      emitente: {
+        nome: texto(emit, 'xNome'), fantasia: texto(emit, 'xFant'),
+        documento: so(texto(emit, 'CNPJ') || texto(emit, 'CPF')),
+        ie: texto(emit, 'IE'),
+        municipio: texto(ender, 'xMun'), uf: texto(ender, 'UF'),
+        cep: so(texto(ender, 'CEP')),
+        logradouro: texto(ender, 'xLgr'), numero_end: texto(ender, 'nro'),
+        bairro: texto(ender, 'xBairro'),
+        fone: so(texto(ender, 'fone')), email: texto(emit, 'email')
+      },
+      destinatario: { nome: texto(dest, 'xNome'), documento: so(texto(dest, 'CNPJ') || texto(dest, 'CPF')) },
+      valor: valor,
+      /* o vencimento da fatura vira a duplicata única */
+      itens: itens,
+      duplicatas: venc && valor > 0 ? [{ numero: texto(ide, 'nNF'), venc: venc, valor: valor }] : [],
+      retencoes: ret,
+      codigo_barras: barras,
+      competencia: compFat.length === 6 ? compFat.slice(0, 4) + '-' + compFat.slice(4) : '',
+      periodo_uso: texto(fat, 'dPerUsoIni') ? dataISO(texto(fat, 'dPerUsoIni')) + ' a ' + dataISO(texto(fat, 'dPerUsoFim')) : '',
+      complemento: (barras ? 'Código de barras: ' + barras + '. ' : '') + cpl.join(' ')
+    };
+  }
+
   /* ── NF-e modelo 55 ─────────────────────────────────────*/
   function lerNFe(doc) {
     const inf = el(doc, 'infNFe');
@@ -137,7 +214,7 @@ ERP.nfe = (function () {
     const tot = el(doc, 'ICMSTot');
     const ender = el(emit, 'enderEmit');
 
-    const itens = Array.prototype.slice.call(doc.getElementsByTagName('det')).map(function (d) {
+    const itens = Array.prototype.slice.call(todos(doc, 'det')).map(function (d) {
       const p = el(d, 'prod');
       return {
         codigo: texto(p, 'cProd'), descricao: texto(p, 'xProd'),
@@ -152,7 +229,7 @@ ERP.nfe = (function () {
       };
     });
 
-    const dups = Array.prototype.slice.call(doc.getElementsByTagName('dup')).map(function (d) {
+    const dups = Array.prototype.slice.call(todos(doc, 'dup')).map(function (d) {
       return { numero: texto(d, 'nDup'), venc: dataISO(texto(d, 'dVenc')), valor: n2(texto(d, 'vDup')) };
     }).filter(function (d) { return d.venc && d.valor > 0; });
 
@@ -358,18 +435,27 @@ ERP.util.brl(        vLiqA) + ' — pode haver desconto condicionado/incondicion
     } catch (e) {
       return { erro: 'Não consegui interpretar o arquivo como XML.' };
     }
-    if (!doc || doc.getElementsByTagName('parsererror').length) {
+    if (!doc || todos(doc, 'parsererror').length) {
       return { erro: 'XML mal formado.' };
     }
 
     let nf;
-    if (el(doc, 'infNFe')) nf = lerNFe(doc);
+    if (el(doc, 'infNFCom')) nf = lerNFCom(doc);
+    else if (el(doc, 'infNFe')) nf = lerNFe(doc);
     else if (el(doc, 'infNFSe') || el(doc, 'NFSe')) nf = lerNFSeNacional(doc);
     else if (el(doc, 'InfNfse') || el(doc, 'CompNfse') || el(doc, 'Nfse')) nf = lerNFSeAbrasf(doc);
-    else return {
-      erro: 'Este XML não é NF-e nem NFS-e nos padrões que eu leio (NF-e 55, ' +
-            'NFS-e nacional ou ABRASF). Se for de prefeitura com layout próprio, me mande o arquivo.'
-    };
+    else {
+      /* Diz O QUE veio — a raiz do arquivo e o namespace —, para quem
+         recebeu o erro saber de que prefeitura/sistema é o layout. */
+      const raiz = doc.documentElement || {};
+      return {
+        erro: 'Este XML não é nota nos padrões que eu leio (NF-e 55, NFCom 62, ' +
+              'NFS-e nacional ou ABRASF). O arquivo começa com <' + (raiz.localName || raiz.nodeName || '?') + '>' +
+              (raiz.namespaceURI ? ' (' + raiz.namespaceURI + ')' : '') +
+              '. Se for de prefeitura com layout próprio, me mande o arquivo.',
+        raiz: raiz.localName || raiz.nodeName || '', namespace: raiz.namespaceURI || ''
+      };
+    }
 
     if (!nf.numero && !nf.chave) return { erro: 'O XML não traz número nem chave da nota.' };
 
