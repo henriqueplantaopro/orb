@@ -537,6 +537,42 @@ ERP.conciliacao = (function () {
     });
   }
 
+  /* Boleto pago com atraso: o extrato veio MAIOR que o título. A
+     diferença entra como juros (e multa, se houver) no pagamento — o
+     título continua com o valor da nota. O campo já vem com a
+     diferença inteira em juros; quem concilia separa a multa se o
+     boleto mostrar. */
+  function perguntarEncargos(r, aoInformar) {
+    const dif = r.diferenca || 0;
+    ERP.app.modal({
+      titulo: 'Pago a maior que o título',
+      corpo: '<div class="ajuda">O extrato saiu por <b>' + U.brl(r.total || 0) + '</b>' +
+        (r.saldo !== undefined ? ' e o título é de <b>' + U.brl(r.saldo) + '</b>' : '') +
+        ' — diferença de <b>' + U.brl(dif) + '</b>. Se foi pago com atraso, informe os encargos: ' +
+        'o título fica com o valor da nota e a diferença vai como juros/multa no pagamento.</div>' +
+        '<div class="row2"><div><label for="cj-juros">Juros</label>' +
+          '<input id="cj-juros" inputmode="decimal" value="' + U.num(dif) + '"></div>' +
+        '<div><label for="cj-multa">Multa</label><input id="cj-multa" inputmode="decimal" value="0,00"></div></div>' +
+        '<div class="ajuda" id="cj-soma"></div>',
+      acoes: [{ txt: 'Vincular com juros/multa', cls: 'btn-pagar', fn: function () {
+        const vj = U.val('cj-juros'), vm = U.val('cj-multa');
+        if (!U.valorValido(vj) || !U.valorValido(vm)) return ERP.app.aviso('Juros e multa: use 00.000,00.', 'erro');
+        const j = U.parseValor(vj) || 0, m = U.parseValor(vm) || 0;
+        ERP.app.fecharModal();
+        aoInformar({ juros: j, multa: m });
+      } }],
+      aoAbrir: function () {
+        const soma = function () {
+          const t = Math.round(((U.parseValor(U.val('cj-juros')) || 0) + (U.parseValor(U.val('cj-multa')) || 0)) * 100) / 100;
+          U.el('cj-soma').textContent = 'Juros + multa: ' + U.brl(t) +
+            (Math.abs(t - dif) > 0.005 ? ' — a diferença é ' + U.brl(dif) + '.' : ' — fecha com a diferença.');
+        };
+        ['cj-juros', 'cj-multa'].forEach(function (id) { U.el(id).addEventListener('input', soma); });
+        soma();
+      }
+    });
+  }
+
   function perguntarResiduo(r, aoDecidir) {
     ERP.app.modal({
       titulo: 'Recebimento abaixo do esperado',
@@ -815,10 +851,12 @@ ERP.conciliacao = (function () {
              sozinho — pode ser glosa/multa (quita) ou só faltou completar
              (segue aberto). Quem concilia decide, e a chamada se repete
              já com a decisão. */
-          const tentar = function (decisao) {
-            const r = S.conciliar(id, { tipo: tipo, id: alvo, decisao: decisao });
+          const tentar = function (decisao, enc) {
+            const r = S.conciliar(id, { tipo: tipo, id: alvo, decisao: decisao,
+              juros: enc ? enc.juros : undefined, multa: enc ? enc.multa : undefined });
+            if (r.pago_a_maior && !enc) return perguntarEncargos(r, function (e) { tentar(decisao, e); });
             if (ERP.app.erroDoRetorno(r)) return;
-            if (r.decidir) return perguntarResiduo(r, tentar);
+            if (r.decidir) return perguntarResiduo(r, function (dd) { tentar(dd, enc); });
             ERP.app.fecharModal();
             abertaLinha = null;
             render();
@@ -1118,10 +1156,12 @@ ERP.conciliacao = (function () {
     box.querySelectorAll('[data-cn-ok]').forEach(function (b) {
       b.addEventListener('click', function () {
         const linha = this.dataset.cnOk, tipo = this.dataset.tipo, alvo = this.dataset.alvo;
-        const tentar = function (decisao) {
-          const r = S.conciliar(linha, { tipo: tipo, id: alvo, decisao: decisao });
+        const tentar = function (decisao, enc) {
+          const r = S.conciliar(linha, { tipo: tipo, id: alvo, decisao: decisao,
+            juros: enc ? enc.juros : undefined, multa: enc ? enc.multa : undefined });
+          if (r.pago_a_maior && !enc) return perguntarEncargos(r, function (e) { tentar(decisao, e); });
           if (ERP.app.erroDoRetorno(r)) return;
-          if (r.decidir) return perguntarResiduo(r, tentar);
+          if (r.decidir) return perguntarResiduo(r, function (dd) { tentar(dd, enc); });
           abertaLinha = null;
           render();
           ERP.app.aviso('Conciliado com a data do extrato.', 'ok');

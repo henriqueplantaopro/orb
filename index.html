@@ -617,15 +617,13 @@
   <div data-painel="baixarnf" style="display:none">
     <div class="card">
       <h3 style="margin-top:0">Baixar NFs anexadas</h3>
-      <div class="ajuda">Junta num .zip os arquivos (XML e PDF) exatamente como foram anexados aos títulos, com uma planilha-índice.</div>
+      <div class="ajuda">Junta num .zip os arquivos (XML e PDF) dos pagamentos realizados, exatamente como foram anexados, com uma planilha-índice. Médico só entra se o cadastro dele for PJ (emite nota) — os de SCP ficam de fora.</div>
       <div class="filtros">
         <div class="f"><label for="bn-campo">Período por</label><select id="bn-campo">
-          <option value="emissao">Emissão</option><option value="venc">Vencimento</option><option value="pago_em">Pagamento</option></select></div>
+          <option value="pago_em">Pagamento</option><option value="emissao">Emissão</option><option value="venc">Vencimento</option></select></div>
         <div class="f"><label for="bn-de">De</label><input type="date" id="bn-de"></div>
         <div class="f"><label for="bn-ate">até</label><input type="date" id="bn-ate"></div>
         <div class="f"><label for="bn-empresa">Empresa</label><select id="bn-empresa"><option value="">todas</option></select></div>
-        <div class="f"><label for="bn-situacao">Situação</label><select id="bn-situacao">
-          <option value="">todas</option><option value="apagar">a pagar</option><option value="pagas">pagas</option></select></div>
         <div class="f"><label for="bn-tipo">Arquivos</label><select id="bn-tipo">
           <option value="todos">XML e PDF</option><option value="xml">só XML</option><option value="pdf">só PDF</option></select></div>
         <div class="f"><label for="bn-fornecedor">Fornecedor, CNPJ ou NF</label><input id="bn-fornecedor" placeholder="digite para filtrar"></div>

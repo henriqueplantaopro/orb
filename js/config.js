@@ -1,8 +1,8 @@
 /* Liga++++o com o banco.
 
-   A chave `anon` +í p++blica por natureza: ela identifica o projeto,
-   n++o a pessoa. Quem decide o que cada um l++ +í a matriz de acesso
-   dentro do Postgres ++Ð por isso ela pode viver aqui, no c++digo que
+   A chave `anon` +Ý p++blica por natureza: ela identifica o projeto,
+   n++o a pessoa. Quem decide o que cada um l++ +Ý a matriz de acesso
+   dentro do Postgres ++ð por isso ela pode viver aqui, no c++digo que
    vai para o navegador.
 
    A outra chave do painel, a `service_role`, NUNCA entra aqui nem
@@ -15,25 +15,25 @@ window.ERP = window.ERP || {};
 ERP.config = {
   /* Endere++o da fun++++o que cria acesso. O painel do Supabase ++s
      vezes publica com um nome autom++tico (`dynamic-responder` e
-     parecidos) e mostra o nome escolhido s++ como r++tulo ++Ð o ERP
-     chama pelo endere++o, ent++o +í este valor que precisa bater com
+     parecidos) e mostra o nome escolhido s++ como r++tulo ++ð o ERP
+     chama pelo endere++o, ent++o +Ý este valor que precisa bater com
      o que aparece na coluna URL, depois de `/functions/v1/`. */
   /* O painel do Supabase publicou a fun++++o com o nome autom++tico
-     `dynamic-responder` e mostra "criar-login" s++ como r++tulo ++Ð o
+     `dynamic-responder` e mostra "criar-login" s++ como r++tulo ++ð o
      sistema chama pelo ENDERE++O. Este valor precisa bater com o
      trecho depois de /functions/v1/ na coluna URL do painel.
 
      ATEN++++O ao atualizar o sistema: este arquivo vem no pacote e
      sobrescreve o local. Se o acesso parar de ser criado depois de
-     uma atualiza++++o, +í esta linha que voltou ao padr++o. */
+     uma atualiza++++o, +Ý esta linha que voltou ao padr++o. */
   funcaoCriarLogin: 'quick-service',
 
-  /* AMBIENTE. 'producao' +í o normal; 'teste' pinta o topo de
+  /* AMBIENTE. 'producao' +Ý o normal; 'teste' pinta o topo de
      laranja e p+-e um selo no t++tulo da aba.
 
-     A cor existe para uma coisa s++: impedir que algu+ím lance no
-     lugar errado. Dois sistemas id++nticos em abas vizinhas +í
-     pedido de confus++o ++Ð e no financeiro a confus++o s++ aparece no
+     A cor existe para uma coisa s++: impedir que algu+Ým lance no
+     lugar errado. Dois sistemas id++nticos em abas vizinhas +Ý
+     pedido de confus++o ++ð e no financeiro a confus++o s++ aparece no
      fechamento, quando j++ virou retrabalho de dias.
 
      O ambiente de teste tem BANCO PR+-PRIO: a `url` acima aponta
