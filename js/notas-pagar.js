@@ -141,19 +141,24 @@ ERP.notasPagar = (function () {
      parcelado em três vira UMA nota, e entra se qualquer parcela
      cair no período. */
   function procurar(f) {
-    const campo = CAMPO_DATA[f.campo] ? f.campo : 'emissao';
+    const campo = CAMPO_DATA[f.campo] ? f.campo : 'pago_em';
     const busca = String(f.fornecedor || '').trim().toLowerCase();
     const porTitulo = {};
-    let sigilosos = 0;
+    let sigilosos = 0, medicosFora = 0;
     S.todasParcelas().forEach(function (p) {
       if (p.status === 'cancelado' || p.status === 'substituido' || p.status === 'previsto') return;
       const dt = String(p[campo] || '').slice(0, 10);
       if (!dt || (f.de && dt < f.de) || (f.ate && dt > f.ate)) return;
-      if (f.situacao === 'pagas' && p.status !== 'pago') return;
-      if (f.situacao === 'apagar' && p.status === 'pago') return;
+      /* Só o que já foi PAGO: o .zip é o lastro do que saiu do caixa
+         (é o que o contador pede); conta em aberto ainda pode mudar. */
+      if (p.status !== 'pago') return;
       if (f.empresa && S.empresaDaParcela(p) !== f.empresa) return;
       if (S.tituloSigiloso(p)) { sigilosos++; return; }
       const cred = D.credor(p.credor) || {};
+      /* Médico só entra se o cadastro diz PJ (emite nota). O de SCP
+         recebe distribuição de resultado, não tem nota — e são
+         centenas por mês: listá-los afogaria as poucas notas reais. */
+      if (cred.tipo === 'medico' && cred.regime !== 'pj') { medicosFora++; return; }
       const nomeCred = ERP.lancamento.nomeCredor(p.credor) || '';
       if (busca) {
         const doc = String(cred.documento || '').replace(/\D/g, '');
@@ -188,7 +193,7 @@ ERP.notasPagar = (function () {
       campo: campo, linhas: linhas, comArquivo: comArquivo,
       soNome: linhas.filter(function (l) { return l.anexo && l.anexo.so_nome; }),
       semArquivo: linhas.filter(function (l) { return !l.anexo; }),
-      sigilosos: sigilosos,
+      sigilosos: sigilosos, medicosFora: medicosFora,
       xml: comArquivo.filter(function (l) { return tipoDoArquivo(l.anexo.nome) === 'xml'; }).length,
       pdf: comArquivo.filter(function (l) { return tipoDoArquivo(l.anexo.nome) === 'pdf'; }).length
     };
@@ -196,7 +201,7 @@ ERP.notasPagar = (function () {
 
   function filtrosDaTela() {
     return { campo: U.val('bn-campo'), de: U.val('bn-de'), ate: U.val('bn-ate'),
-      empresa: U.val('bn-empresa'), situacao: U.val('bn-situacao'),
+      empresa: U.val('bn-empresa'),
       tipo: U.val('bn-tipo'), fornecedor: U.val('bn-fornecedor') };
   }
 
@@ -220,7 +225,7 @@ ERP.notasPagar = (function () {
       '<div class="resumo-linha" id="bn-resumo"><span><b>' + r.comArquivo.length + '</b> arquivo(s) para baixar' +
         (r.comArquivo.length ? ' (' + r.xml + ' XML · ' + r.pdf + ' PDF' +
           (r.comArquivo.length - r.xml - r.pdf ? ' · ' + (r.comArquivo.length - r.xml - r.pdf) + ' outro(s)' : '') + ')' : '') +
-        ' · ' + r.linhas.length + ' título(s) com ' + rotCampo + ' no período</span>' +
+        ' · ' + r.linhas.length + ' pagamento(s) com ' + rotCampo + ' no período</span>' +
         '<span class="v"><button class="btn-aprovar" id="bn-baixar"' + (r.comArquivo.length ? '' : ' disabled') +
         '>Baixar .zip</button></span></div>' +
       (r.semArquivo.length ? '<div class="ajuda">' + r.semArquivo.length +
@@ -256,7 +261,7 @@ ERP.notasPagar = (function () {
       const p = x.l.p;
       return [x.nome, x.l.credor, x.l.documento, p.doc || '', p.emissao ? U.fData(p.emissao) : '',
         p.venc ? U.fData(p.venc) : '', p.pago_em ? U.fData(p.pago_em) : '', U.num(x.l.valor),
-        p.status === 'pago' ? 'pago' : 'a pagar'].map(q).join(';');
+        'pago'].map(q).join(';');
     })).join('\r\n');
   }
 
@@ -305,7 +310,7 @@ ERP.notasPagar = (function () {
   }
 
   function montar() {
-    ['bn-campo', 'bn-de', 'bn-ate', 'bn-empresa', 'bn-situacao', 'bn-tipo'].forEach(function (id) {
+    ['bn-campo', 'bn-de', 'bn-ate', 'bn-empresa', 'bn-tipo'].forEach(function (id) {
       if (U.el(id)) U.el(id).addEventListener('change', render);
     });
     if (U.el('bn-fornecedor')) U.el('bn-fornecedor').addEventListener('input', render);

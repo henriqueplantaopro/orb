@@ -4049,6 +4049,13 @@ ERP.store = (function () {
        multa — que é o caminho normal do retorno CNAB e da conciliação,
        justamente os que mandam o total — e deixava passar o pagamento
        a mais quando havia desconto. */
+    /* Juros e multa informados na conciliação (boleto pago com
+       atraso): o principal é o total do extrato MENOS os encargos. */
+    const encargosInformados = !!d && d.valor !== undefined && d.valor !== null && d.valor !== '' &&
+      ((d.juros !== undefined && d.juros !== null) || (d.multa !== undefined && d.multa !== null));
+    const jurosInf = encargosInformados ? Math.round((Number(d.juros) || 0) * 100) / 100 : 0;
+    const multaInf = encargosInformados ? Math.round((Number(d.multa) || 0) * 100) / 100 : 0;
+    if (jurosInf < 0 || multaInf < 0) return { erro: 'Juros e multa não podem ser negativos.' };
     const parc = parcela(pg.parcela_id);
     if (parc) {
       const jaPago = pagamentosDe(parc.id)
@@ -4060,15 +4067,26 @@ ERP.store = (function () {
          aparecia como excesso — a correção anterior consertou o lado
          dos juros e criou um bloqueio total do outro. */
       const totalPrevisto = Math.round((pg.valor + pg.juros + pg.multa) * 100) / 100;
-      const principalDeste = (d && d.valor !== undefined && d.valor !== null && d.valor !== '')
-        ? Math.round((pg.valor + (Math.round(Number(d.valor) * 100) / 100 - totalPrevisto)) * 100) / 100
-        : pg.valor;
+      const principalDeste = encargosInformados
+        ? Math.round((Number(d.valor) - jurosInf - multaInf) * 100) / 100
+        : (d && d.valor !== undefined && d.valor !== null && d.valor !== '')
+          ? Math.round((pg.valor + (Math.round(Number(d.valor) * 100) / 100 - totalPrevisto)) * 100) / 100
+          : pg.valor;
+      if (encargosInformados && principalDeste <= 0) {
+        return { erro: 'Juros e multa (' + U.brl(jurosInf + multaInf) + ') não podem ser o valor pago inteiro.' };
+      }
       const excesso = Math.round(
         (jaPago + principalDeste + (pg.desconto || 0) - parc.valor) * 100) / 100;
       if (excesso > 0.02) {
+        /* `pago_a_maior` diz à conciliação que a diferença PODE ser
+           juros/multa do boleto pago com atraso — a tela pergunta, em
+           vez de mandar mexer no valor do título. */
         return { erro: 'Esta parcela já tem ' + U.brl(jaPago) + ' liquidado de ' +
           U.brl(parc.valor) + '. Confirmar mais ' + U.brl(principalDeste) + ' de principal pagaria ' +
-          U.brl(excesso) + ' a mais — cancele a solicitação em aberto ou ajuste o valor.' };
+          U.brl(excesso) + ' a mais — se a diferença for juros ou multa, informe-os; senão, ' +
+          'cancele a solicitação em aberto ou ajuste o valor.',
+          pago_a_maior: true, diferenca: excesso,
+          total: d && d.valor !== undefined ? Math.round(Number(d.valor) * 100) / 100 : null };
       }
     }
     pg.situacao = 'liquidado';
@@ -4081,7 +4099,11 @@ ERP.store = (function () {
        Em vez disso, a diferença contra o que já estava previsto entra
        toda no principal; juros, multa e desconto continuam os que já
        tinham sido calculados na autorização. */
-    if (d && d.valor !== undefined) {
+    if (encargosInformados) {
+      pg.juros = jurosInf;
+      pg.multa = multaInf;
+      pg.valor = Math.round((Number(d.valor) - jurosInf - multaInf) * 100) / 100;
+    } else if (d && d.valor !== undefined) {
       /* O desconto NÃO sai do banco (abate a dívida), então não entra
          no total previsto — subtraí-lo aqui jogava o desconto dentro
          do principal e a parcela fechava com saldo negativo. */
@@ -13784,17 +13806,48 @@ ERP.store = (function () {
           ((D.banco(l.banco) || {}).apelido || l.banco) + '.' };
       }
       if (pg.situacao !== 'liquidado') {
-        const r = liquidar(alvo.id, { data: l.data, valor: Math.abs(l.valor) });
+        const r = liquidar(alvo.id, { data: l.data, valor: Math.abs(l.valor),
+          juros: alvo.juros, multa: alvo.multa });
         if (r.erro) return r;
       }
     } else if (alvo.tipo === 'parcela') {
       const p = parcela(alvo.id);
       if (!p) return { erro: 'Título não encontrado.' };
+      /* ── PAGO A MAIOR: juros e multa ──────────────────────
+         Boleto pago com atraso sai do banco maior que o título
+         (R$ 221,00 virou R$ 225,52). A diferença não é erro do
+         título — é encargo. Sem juros informados, a conciliação NÃO
+         baixa: devolve `pago_a_maior` e a tela pergunta quanto é
+         juros/multa. Com eles, o principal é o total menos os
+         encargos, e os encargos vão para o pagamento (DRE: despesa
+         financeira), não para o valor do título. */
+      const total = Math.round(Math.abs(l.valor) * 100) / 100;
+      const comEncargos = (alvo.juros !== undefined && alvo.juros !== null) ||
+        (alvo.multa !== undefined && alvo.multa !== null);
+      const juros = Math.round((Number(alvo.juros) || 0) * 100) / 100;
+      const multa = Math.round((Number(alvo.multa) || 0) * 100) / 100;
+      if (juros < 0 || multa < 0 || !isFinite(juros) || !isFinite(multa)) {
+        return { erro: 'Juros e multa têm de ser valores positivos.' };
+      }
+      const principal = Math.round((total - juros - multa) * 100) / 100;
+      if (principal <= 0) return { erro: 'Juros e multa (' + U.brl(juros + multa) + ') não podem ser o valor pago inteiro.' };
+      if (p.status !== 'previsto') {
+        const saldo = Math.round(saldoDe(p) * 100) / 100;
+        if (principal > saldo + 0.004) {
+          const dif = Math.round((principal - saldo) * 100) / 100;
+          return { erro: comEncargos
+              ? 'Com juros de ' + U.brl(juros) + ' e multa de ' + U.brl(multa) + ', o principal (' + U.brl(principal) +
+                ') ainda passa do saldo do título (' + U.brl(saldo) + ') em ' + U.brl(dif) + '.'
+              : 'O extrato (' + U.brl(total) + ') é maior que o saldo do título (' + U.brl(saldo) + ') em ' +
+                U.brl(dif) + '. Se a diferença for juros ou multa, informe-os.',
+            pago_a_maior: true, diferenca: Math.round((total - saldo) * 100) / 100, saldo: saldo, total: total };
+        }
+      }
       if (p.status === 'previsto') {
         // previsto some e vira o título real, pago pelo extrato
         p.status = 'aberto';
         p.origem = 'previsao_efetivada';
-        p.valor = Math.abs(l.valor);
+        p.valor = principal;
         p.obs = 'Efetivado pela conciliação de ' + U.fData(l.data);
         const pv = st.previsoes.find(function (x) { return x.id === p.previsao_id; });
         if (pv) pv.efetivada = true;
@@ -13804,7 +13857,7 @@ ERP.store = (function () {
          origem, para o relatório distinguir o que foi confirmado na
          baixa manual do que foi constatado no extrato. */
       const r = registrarPagamento(alvo.id, {
-        data: l.data, valor: Math.abs(l.valor), banco: l.banco,
+        data: l.data, valor: principal, juros: juros, multa: multa, banco: l.banco,
         situacao: 'liquidado', forma: l.meio || 'Identificado no extrato',
         doc: l.documento, obs: 'Conciliação bancária · ' + l.memo,
         confirmar_cruzamento: true, origem_cruzamento: 'extrato'
