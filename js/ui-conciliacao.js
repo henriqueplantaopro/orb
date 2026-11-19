@@ -396,73 +396,91 @@ ERP.conciliacao = (function () {
 
   /* ── produtividade: o fechamento sai picado ─────────────*/
   const BADGE_PROD = {
-    nao_pago:     '<span class="badge b-reprovado">não pago</span>',
-    identificado: '<span class="badge b-aguardando">saiu no extrato</span>',
-    pago:         '<span class="badge b-pago">pago</span>'
+    nao_pago:      '<span class="badge b-reprovado">não pago</span>',
+    identificado:  '<span class="badge b-aguardando">saiu no extrato</span>',
+    pago:          '<span class="badge b-pago">pago</span>',
+    sem_pagamento: '<span class="badge b-cancelado">sem pagamento</span>'
   };
+  /* Fechamentos abertos na tela. Começa tudo recolhido: a primeira
+     coisa que se quer é a visão de cada produtividade, não 316 nomes. */
+  const prodAbertos = new Set();
 
   function telaProdutividade(grupos) {
     const geral = grupos.reduce(function (a, f) {
-      a.medicos += f.total; a.naoPagos += f.naoPagos; a.pagos += f.pagos;
+      a.medicos += f.total; a.naoPagos += f.naoPagos; a.pagos += f.pagos; a.sem += f.semPagamento;
       a.aberto += f.valorAberto; a.pago += f.valorPago; return a;
-    }, { medicos: 0, naoPagos: 0, pagos: 0, aberto: 0, pago: 0 });
+    }, { medicos: 0, naoPagos: 0, pagos: 0, sem: 0, aberto: 0, pago: 0 });
+
+    const detalhe = function (f) {
+      const falta = f.faltando.length;
+      return '<tr class="prod-det"><td colspan="8" style="background:var(--fundo-2, #f7f7f5);padding:10px 12px">' +
+        '<div class="ap-acoes" style="margin:0 0 8px">' +
+          (f.identificados
+            ? '<button class="btn-linha" data-cn-prod="' + U.esc(f.chave) + '">Conciliar os ' + f.identificados +
+              ' identificados</button>' : '') +
+          '<button class="btn-sm" data-cn-prod-csv="' + U.esc(f.chave) + '">Exportar este fechamento</button>' +
+        '</div>' +
+        '<table class="rel" data-prod-tab="' + U.esc(f.chave) + '"><thead><tr><th>Médico</th>' +
+        '<th class="num">Valor do fechamento</th><th>Situação</th><th>No extrato</th>' +
+        '<th class="num">Valor pago</th><th>Pago em</th><th></th></tr></thead><tbody>' +
+        f.itens.map(function (i) {
+          return '<tr><td class="desc">' + U.esc(i.medico) +
+              (i.sem_pagamento ? '<div class="sub">' + U.esc(i.sem_pagamento.motivo) + ' · ' +
+                U.esc(i.sem_pagamento.por || '') + '</div>' : '') + '</td>' +
+            '<td class="num">' + U.num(i.valor) + '</td>' +
+            '<td>' + (BADGE_PROD[i.situacao] || '') + '</td>' +
+            '<td class="sub">' + (i.linha
+              ? U.fData(i.linha.data) + ' · ' + U.esc(S.nomeDaLinha(i.linha).slice(0, 26)) : '—') + '</td>' +
+            '<td class="num">' + (i.pago ? U.num(i.valor) : (i.linha ? U.num(Math.abs(i.linha.valor)) : '—')) + '</td>' +
+            '<td class="mono sub">' + (i.pago_em ? U.fData(i.pago_em) : '—') + '</td>' +
+            '<td class="acoes">' + (i.situacao === 'nao_pago'
+              ? '<button class="btn-sm" data-prod-sempg="' + i.parcela.id + '">Não vai ter pagamento</button>'
+              : i.situacao === 'sem_pagamento'
+                ? '<button class="btn-sm" data-prod-desfaz="' + i.parcela.id + '">Desfazer</button>' : '') + '</td></tr>';
+        }).join('') + '</tbody></table>' +
+        (falta ? '<div class="ajuda erro">Ainda não pagos: ' +
+          f.faltando.slice(0, 6).map(function (i) { return U.esc(i.medico); }).join(', ') +
+          (falta > 6 ? ' e mais ' + (falta - 6) : '') + '. Se algum não vai receber, use "Não vai ter pagamento".</div>' : '') +
+        '</td></tr>';
+    };
 
     return '<div class="ajuda" style="margin:10px 0">A produtividade é paga de uma vez, mas cai no ' +
-      'extrato como um PIX por médico. Só aparecem aqui os fechamentos que encostaram neste extrato — ' +
-      'com linha identificada, sugerida ou já conciliada. Dentro de cada um, os não pagos vêm primeiro.</div>' +
+      'extrato como um PIX por médico. Cada linha abaixo é UMA produtividade importada (o projeto e o arquivo) ' +
+      'que encostou neste extrato. Clique para abrir os médicos.</div>' +
       (grupos.length
         ? '<div class="pr-confere" style="margin:0 0 10px">' +
-            '<span>Fechamentos <b>' + grupos.length + '</b></span>' +
+            '<span>Produtividades <b>' + grupos.length + '</b></span>' +
             '<span>Médicos <b>' + geral.medicos + '</b></span>' +
             '<span>Não pagos <b class="' + (geral.naoPagos ? 'erro' : '') + '">' + geral.naoPagos + '</b></span>' +
             '<span>Pagos <b>' + geral.pagos + '</b></span>' +
+            (geral.sem ? '<span>Sem pagamento <b>' + geral.sem + '</b></span>' : '') +
             '<span>Em aberto <b>' + U.brl(geral.aberto) + '</b></span>' +
             '<span>Já pago <b>' + U.brl(geral.pago) + '</b></span>' +
           '</div>' +
-          '<div class="ap-acoes"><button class="btn-sm" id="cn-prod-csv">Exportar todos os ' +
-            grupos.length + '</button></div>'
-        : '') +
-      (grupos.length ? grupos.map(function (f) {
-        const falta = f.faltando.length;
-        return '<div class="card" style="margin:0 0 12px">' +
-          '<h2 style="font-size:13px;margin:0 0 6px">' + U.esc(f.doc || 'Fechamento') +
-            ' <span class="sub">· competência ' + U.fComp(f.comp) + '</span></h2>' +
-          '<div class="pr-confere" style="margin:0 0 8px">' +
-            '<span>Médicos <b>' + f.total + '</b></span>' +
-            '<span>Não pagos <b class="' + (f.naoPagos ? 'erro' : '') + '">' + f.naoPagos + '</b></span>' +
-            '<span>Pagos <b>' + f.pagos + '</b></span>' +
-            '<span>Identificados no extrato <b>' + f.identificados + '</b></span>' +
-            '<span>Em aberto <b>' + U.brl(f.valorAberto) + '</b></span>' +
-            '<span>Total do fechamento <b>' + U.brl(f.valorTotal) + '</b></span>' +
-          '</div>' +
-          '<div class="ap-acoes">' +
-            (f.identificados
-              ? '<button class="btn-linha" data-cn-prod="' + U.esc(f.chave) + '">' +
-                'Conciliar os ' + f.identificados + ' identificados</button>'
-              : '') +
-            '<button class="btn-sm" data-cn-prod-csv="' + U.esc(f.chave) + '">' +
-              'Exportar este fechamento</button>' +
-          '</div>' +
-          '<table data-prod-tab="' + U.esc(f.chave) + '"><thead><tr><th>Médico</th>' +
-          '<th class="num">Valor do fechamento</th><th>Situação</th><th>No extrato</th>' +
-          '<th class="num">Valor pago</th><th>Pago em</th></tr></thead><tbody>' +
-          f.itens.map(function (i) {
-            return '<tr><td class="desc">' + U.esc(i.medico) + '</td>' +
-              '<td class="num">' + U.brl(i.valor) + '</td>' +
-              '<td>' + (BADGE_PROD[i.situacao] || '') + '</td>' +
-              '<td class="sub">' + (i.linha
-                ? U.fData(i.linha.data) + ' · ' + U.esc(S.nomeDaLinha(i.linha).slice(0, 26))
-                : '—') + '</td>' +
-              '<td class="num">' + (i.pago ? U.brl(i.valor)
-                : (i.linha ? U.brl(Math.abs(i.linha.valor)) : '—')) + '</td>' +
-              '<td class="mono sub">' + (i.pago_em ? U.fData(i.pago_em) : '—') + '</td></tr>';
-          }).join('') + '</tbody></table>' +
-          (falta ? '<div class="ajuda erro">Ainda não pagos: ' +
-            f.faltando.slice(0, 6).map(function (i) { return U.esc(i.medico); }).join(', ') +
-            (falta > 6 ? ' e mais ' + (falta - 6) : '') + '.</div>' : '') +
-          '</div>';
-      }).join('')
-        : '<div class="vazio"><strong>Nenhum fechamento de produtividade lançado.</strong>' +
+          '<div class="ap-acoes"><button class="btn-sm" id="cn-prod-abrir">Expandir todas</button>' +
+            '<button class="btn-sm" id="cn-prod-fechar">Recolher todas</button>' +
+            '<button class="btn-sm" id="cn-prod-csv">Exportar todas</button></div>' +
+          '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel"><thead><tr>' +
+            '<th>Produtividade</th><th>Competência</th><th class="num">Médicos</th><th class="num">Pagos</th>' +
+            '<th class="num">Não pagos</th><th class="num">Em aberto</th><th class="num">Pago</th>' +
+            '<th class="num">Total</th></tr></thead><tbody>' +
+          grupos.map(function (f) {
+            const aberto = prodAbertos.has(f.chave);
+            return '<tr data-prod-toggle="' + U.esc(f.chave) + '" style="cursor:pointer">' +
+                '<td class="desc"><b>' + (aberto ? '▾ ' : '▸ ') + U.esc(f.titulo) + '</b>' +
+                  (f.arquivo || f.periodo ? '<div class="sub">' + U.esc([f.arquivo, f.periodo].filter(Boolean).join(' · ')) +
+                    '</div>' : '') + '</td>' +
+                '<td class="mono">' + U.fComp(f.comp) + '</td>' +
+                '<td class="num">' + f.total + '</td>' +
+                '<td class="num">' + f.pagos + '</td>' +
+                '<td class="num' + (f.naoPagos ? ' erro' : '') + '">' + f.naoPagos +
+                  (f.semPagamento ? '<div class="sub">+' + f.semPagamento + ' sem pagamento</div>' : '') + '</td>' +
+                '<td class="num">' + U.num(f.valorAberto) + '</td>' +
+                '<td class="num">' + U.num(f.valorPago) + '</td>' +
+                '<td class="num">' + U.num(f.valorTotal) + '</td></tr>' +
+              (aberto ? detalhe(f) : '');
+          }).join('') + '</tbody></table></div>'
+        : '<div class="vazio"><strong>Nenhum fechamento de produtividade encostou neste extrato.</strong>' +
           'Importe a produtividade e gere os títulos: os fechamentos aparecem aqui, pagos e não pagos.</div>');
   }
 
@@ -475,12 +493,12 @@ ERP.conciliacao = (function () {
     const asp = v => '"' + String(v == null ? '' : v).replace(/"/g, '""') + '"';
     const linhas = [['Situação', 'Fechamento', 'Competência', 'Médico', 'Valor do fechamento',
                      'Data no extrato', 'Valor pago', 'Pago em'].map(asp).join(';')];
-    const rotulo = { nao_pago: 'Não pago', identificado: 'Saiu no extrato', pago: 'Pago' };
+    const rotulo = { nao_pago: 'Não pago', identificado: 'Saiu no extrato', pago: 'Pago', sem_pagamento: 'Sem pagamento' };
 
-    ['nao_pago', 'identificado', 'pago'].forEach(function (sit) {
+    ['nao_pago', 'identificado', 'pago', 'sem_pagamento'].forEach(function (sit) {
       grupos.forEach(function (f) {
         f.itens.filter(function (i) { return i.situacao === sit; }).forEach(function (i) {
-          linhas.push([rotulo[sit], f.doc || 'Fechamento', U.fComp(f.comp), i.medico,
+          linhas.push([rotulo[sit], f.titulo || f.doc || 'Fechamento', U.fComp(f.comp), i.medico,
             U.num(i.valor), i.linha ? U.fData(i.linha.data) : '',
             i.pago ? U.num(i.valor) : (i.linha ? U.num(Math.abs(i.linha.valor)) : ''),
             i.pago_em ? U.fData(i.pago_em) : ''].map(asp).join(';'));
@@ -489,7 +507,7 @@ ERP.conciliacao = (function () {
     });
 
     const nome = chave
-      ? 'produtividade-' + String(grupos[0].doc || 'fechamento')
+      ? 'produtividade-' + String(grupos[0].titulo || grupos[0].doc || 'fechamento')
           .replace(/[^A-Za-z0-9-]+/g, '-').toLowerCase() + '.csv'
       : 'produtividade-pagamentos.csv';
     U.baixar(nome, linhas.join('\n'));
@@ -1215,6 +1233,46 @@ ERP.conciliacao = (function () {
     if (U.el('cn-prod-csv')) {
       U.el('cn-prod-csv').addEventListener('click', function () { exportarProdutividade(); });
     }
+    box.querySelectorAll('[data-prod-toggle]').forEach(function (tr) {
+      tr.addEventListener('click', function () {
+        const k = this.dataset.prodToggle;
+        if (prodAbertos.has(k)) prodAbertos.delete(k); else prodAbertos.add(k);
+        render();
+      });
+    });
+    if (U.el('cn-prod-abrir')) {
+      U.el('cn-prod-abrir').addEventListener('click', function () {
+        S.gruposProdutividade(U.val('cn-banco')).forEach(function (f) { prodAbertos.add(f.chave); }); render();
+      });
+      U.el('cn-prod-fechar').addEventListener('click', function () { prodAbertos.clear(); render(); });
+    }
+    box.querySelectorAll('[data-prod-sempg]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.prodSempg;
+        const p = S.parcela(id) || {};
+        ERP.app.modal({
+          titulo: 'Médico não vai ter pagamento',
+          corpo: '<div class="ajuda"><b>' + U.esc(ERP.lancamento.nomeCredor(p.credor) || '') + '</b> · ' + U.brl(p.valor || 0) +
+            '. O título dele é cancelado com o motivo — não haverá saída do banco — e o fechamento deixa de ' +
+            'mostrá-lo como pendente. Dá para desfazer.</div>' +
+            '<label for="sp-motivo">Por quê?</label><input id="sp-motivo" placeholder="ex.: recebeu por fora, valor indevido, desligado">',
+          acoes: [{ txt: 'Confirmar: sem pagamento', cls: 'btn-cancelar', fn: function () {
+            const r = S.medicoSemPagamento(id, U.val('sp-motivo'));
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal(); render();
+            ERP.app.aviso('Médico marcado como sem pagamento — saiu dos pendentes.', 'ok');
+          } }]
+        });
+      });
+    });
+    box.querySelectorAll('[data-prod-desfaz]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const r = S.desfazerSemPagamento(this.dataset.prodDesfaz);
+        if (ERP.app.erroDoRetorno(r)) return;
+        render();
+        ERP.app.aviso('Desfeito — o médico voltou para "não pago".', 'ok');
+      });
+    });
     box.querySelectorAll('[data-cn-prod-csv]').forEach(function (b) {
       b.addEventListener('click', function () { exportarProdutividade(this.dataset.cnProdCsv); });
     });

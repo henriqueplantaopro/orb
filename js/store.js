@@ -13786,7 +13786,40 @@ ERP.store = (function () {
   /* ── produtividade: o fechamento sai picado no extrato ──
      Um PIX por médico. Agrupa as linhas por fechamento e mostra quem
      já foi identificado e quem falta. */
-  const ORDEM_PROD = { nao_pago: 0, identificado: 1, pago: 2 };
+  const ORDEM_PROD = { nao_pago: 0, identificado: 1, pago: 2, sem_pagamento: 3 };
+
+  /* ── MÉDICO QUE NÃO VAI SER PAGO ───────────────────────
+     Médico do fechamento que não vai receber (desligou, recebeu por
+     fora, valor indevido): sem uma saída, ele ficava "não pago" na
+     conciliação para sempre. Marcar cancela o título dele com o motivo
+     — é o que de fato aconteceu: não haverá desembolso — e pode ser
+     desfeito. Só vale para título de produtividade sem pagamento. */
+  function medicoSemPagamento(parcelaId, motivo) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    if (!motivo || !String(motivo).trim()) return { erro: 'Diga por que este médico não vai ser pago.' };
+    const p = parcela(parcelaId);
+    if (!p) return { erro: 'Título não encontrado.' };
+    if (p.origem !== 'produtividade') return { erro: 'Só vale para título de produtividade.' };
+    const r = cancelar(parcelaId, 'Médico sem pagamento: ' + String(motivo).trim(), true);
+    if (r.erro) return r;
+    p.sem_pagamento = { motivo: String(motivo).trim(), em: U.hoje(), por: usuario().nome };
+    logar('produtividade', parcelaId, 'médico sem pagamento', String(motivo).trim());
+    return { ok: true };
+  }
+  function desfazerSemPagamento(parcelaId) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const p = parcela(parcelaId);
+    if (!p || !p.sem_pagamento || p.status !== 'cancelado') return { erro: 'Este médico não está marcado como sem pagamento.' };
+    p.status = 'aberto';
+    /* null, não delete: na gravação em lote a chave ausente não é
+       atualizada, e o motivo do cancelamento ficaria no banco. */
+    p.motivo_cancelamento = null; p.cancelado_em = null; p.cancelado_por = null; p.cancelado_por_id = null;
+    p.sem_pagamento = null;
+    recalcular(parcelaId);
+    recalcularTotalTitulo(p.titulo_id);
+    logar('produtividade', parcelaId, 'desfez "médico sem pagamento"', '');
+    return { ok: true };
+  }
 
   function gruposProdutividade(bancoId) {
     const doBanco = linhasExtrato({ banco: bancoId });
@@ -13810,20 +13843,41 @@ ERP.store = (function () {
 
     const fechamentos = {};
 
+    /* UM FECHAMENTO = UMA IMPORTAÇÃO (lote). Agrupar por documento e
+       competência juntava tudo do mês num bloco só — o GHC, que vem
+       em arquivos separados por setor, virava um fechamento de 316
+       médicos sem nome. O lote diz o projeto, o arquivo e o período;
+       título sem lote (lançamento antigo) cai no agrupamento por
+       projeto e competência. */
+    const loteDoTitulo = {};
+    st.lotesProdutividade.forEach(function (lt) {
+      if (lt.cancelado) return;
+      (lt.titulo_ids || []).forEach(function (tid) { loteDoTitulo[tid] = lt; });
+    });
+    const nomeCentro = id => { const c = D.centro(id) || {}; return c.nome || c.curto || id || ''; };
+
     /* Todo status entra — inclusive pago. O recorte da tela não é por
        status, é por RELAÇÃO COM ESTE EXTRATO: fechamento que não
-       encostou no extrato importado não aparece aqui (filtro no fim). */
+       encostou no extrato importado não aparece aqui (filtro no fim).
+       O médico marcado "sem pagamento" (cancelado de propósito) entra
+       também, resolvido, para o fechamento continuar fechando a conta. */
     st.parcelas.filter(function (p) {
       return p.origem === 'produtividade' &&
-             ['cancelado', 'substituido', 'previsto'].indexOf(p.status) < 0;
+             (['cancelado', 'substituido', 'previsto'].indexOf(p.status) < 0 ||
+              (p.status === 'cancelado' && p.sem_pagamento));
     }).forEach(function (p) {
-      const k = (p.doc || 'fechamento') + '|' + p.comp;
-      fechamentos[k] = fechamentos[k] || { chave: k, doc: p.doc, comp: p.comp, itens: [] };
+      const lt = loteDoTitulo[p.titulo_id];
+      const centro = lt ? lt.centro : ((p.rateio || [])[0] || {}).centro || '';
+      const k = lt ? 'lote|' + lt.id : 'sem-lote|' + centro + '|' + (p.comp || '');
+      fechamentos[k] = fechamentos[k] || { chave: k, doc: p.doc, comp: lt ? (lt.competencia || p.comp) : p.comp,
+        titulo: nomeCentro(centro) || p.doc || 'Fechamento sem projeto',
+        arquivo: lt ? (lt.arquivo || '') : '', periodo: lt ? (lt.periodo || '') : '', lote_id: lt ? lt.id : null, itens: [] };
       const nome = (D.credor(p.credor) || {}).nome || '';
       const feita = jaConciliada[p.id] || null;
       const pago = p.status === 'pago';
-      const saldo = saldoDe(p);
-      const achou = (pago || feita) ? null : pend.find(function (l) {
+      const semPg = p.status === 'cancelado' && !!p.sem_pagamento;
+      const saldo = semPg ? 0 : saldoDe(p);
+      const achou = (pago || feita || semPg) ? null : pend.find(function (l) {
         const dif = Math.abs(Math.abs(l.valor) - (saldo || p.valor));
         const sim = Math.max(parecido(nome, l.contraparte), parecido(nome, l.memo));
         return !l.usada && (dif <= 0.05 || (sim >= 0.6 && dif / (p.valor || 1) < 0.02)) && sim >= 0.4;
@@ -13837,7 +13891,8 @@ ERP.store = (function () {
         conciliada: !!feita,
         /* três estados, nesta ordem de urgência: não pago, saiu no
            extrato mas ainda não conciliado, e pago. */
-        situacao: pago ? 'pago' : (achou ? 'identificado' : 'nao_pago')
+        sem_pagamento: semPg ? p.sem_pagamento : null,
+        situacao: semPg ? 'sem_pagamento' : pago ? 'pago' : (achou ? 'identificado' : 'nao_pago')
       });
     });
     pend.forEach(function (l) { delete l.usada; });
@@ -13846,7 +13901,8 @@ ERP.store = (function () {
       const f = fechamentos[k];
       const achados = f.itens.filter(function (i) { return i.linha && !i.conciliada; });
       const pagos = f.itens.filter(function (i) { return i.pago; });
-      const naoPagos = f.itens.filter(function (i) { return !i.pago; });
+      const semPagamento = f.itens.filter(function (i) { return i.situacao === 'sem_pagamento'; });
+      const naoPagos = f.itens.filter(function (i) { return !i.pago && i.situacao !== 'sem_pagamento'; });
       // não pago primeiro, depois o que saiu no extrato, e o pago no fim
       f.itens.sort(function (a, b) {
         return (ORDEM_PROD[a.situacao] || 0) - (ORDEM_PROD[b.situacao] || 0) ||
@@ -13854,14 +13910,16 @@ ERP.store = (function () {
       });
       const soma = arr => Math.round(arr.reduce(function (s2, i) { return s2 + i.valor; }, 0) * 100) / 100;
       return {
-        chave: k, doc: f.doc, comp: f.comp,
+        chave: k, doc: f.doc, comp: f.comp, titulo: f.titulo, arquivo: f.arquivo, periodo: f.periodo,
+        lote_id: f.lote_id,
         total: f.itens.length, identificados: achados.length,
-        pagos: pagos.length, naoPagos: naoPagos.length,
+        pagos: pagos.length, naoPagos: naoPagos.length, semPagamento: semPagamento.length,
         noExtrato: f.itens.filter(function (i) { return i.linha; }).length,
-        faltando: f.itens.filter(function (i) { return !i.pago && !i.linha; }),
+        faltando: naoPagos.filter(function (i) { return !i.linha; }),
         itens: f.itens,
         valorPago: soma(pagos),
         valorAberto: soma(naoPagos),
+        valorSemPagamento: soma(semPagamento),
         valorIdentificado: Math.round(achados.reduce(function (s2, i) {
           return s2 + Math.abs(i.linha.valor); }, 0) * 100) / 100,
         valorTotal: soma(f.itens)
@@ -13872,9 +13930,10 @@ ERP.store = (function () {
          fechamentos; listar todos transformaria a tela num arquivo. */
       return f.noExtrato > 0;
     }).sort(function (a, b) {
-      // fechamento com pendência primeiro; entre iguais, competência mais nova
+      // fechamento com pendência primeiro; entre iguais, competência mais nova, depois o nome
       return (b.naoPagos > 0) - (a.naoPagos > 0) ||
-             String(b.comp || '').localeCompare(String(a.comp || ''));
+             String(b.comp || '').localeCompare(String(a.comp || '')) ||
+             String(a.titulo || '').localeCompare(String(b.titulo || ''), 'pt-BR');
     });
   }
 
@@ -21674,6 +21733,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
+    medicoSemPagamento, desfazerSemPagamento,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
