@@ -9,6 +9,12 @@ ERP.lancamento = (function () {
   let linhas = [];          // parcelas geradas
   let rateio = [];          // [{ centro, pct }]
   let nfAtual = null;
+  /* O ARQUIVO da nota escolhida. Até a v178 o lançamento guardava só
+     o NOME do arquivo — o XML ou PDF lido para preencher a tela era
+     jogado fora, e o título ficava "com anexo" sem anexo nenhum. Agora
+     ele sobe para o balde no momento de lançar. */
+  let arquivoEscolhido = null;   // File
+  let anexoGuardado = null;      // { nome, path } depois de subir (reaproveitado se o lançamento recomeçar)
 
   const nomeCredor = v => (D.credor(v) || {}).nome || v || '';
 
@@ -198,6 +204,7 @@ ERP.lancamento = (function () {
     if (U.el('l-sem-nf')) U.el('l-sem-nf').checked = false;
     U.setVal('l-qtd', 1);
     nfAtual = null;
+    arquivoEscolhido = null; anexoGuardado = null;
     barrasLido = null;
     U.setVal('l-barras', '');
     U.el('l-barras-info').innerHTML = '';
@@ -426,6 +433,7 @@ ERP.lancamento = (function () {
   function importarArquivo(e) {
     const arq = e.target.files && e.target.files[0];
     if (!arq) return;
+    arquivoEscolhido = arq; anexoGuardado = null;
     if (/\.pdf$/i.test(arq.name)) {
       nfAtual = { arquivo: arq.name };
       U.setVal('l-origem', 'nota_fiscal');
@@ -725,6 +733,18 @@ ERP.lancamento = (function () {
       return;
     }
 
+    /* O arquivo sobe ANTES de o título nascer: título apontando para
+       um arquivo que não chegou ao servidor é anexo fantasma. Se não
+       subir, nada é lançado e o recado diz por quê. */
+    if (nfAtual && arquivoEscolhido && arquivoEscolhido.name === nfAtual.arquivo && !anexoGuardado) {
+      ERP.notasPagar.guardar(arquivoEscolhido).then(function (g) {
+        if (g.erro) return ERP.app.aviso(g.erro + ' Nada foi lançado — tente de novo.', 'erro');
+        anexoGuardado = g.anexo;
+        salvar();
+      });
+      return;
+    }
+
     const credorTxt = U.val('l-credor');
     const doXml = nfAtual && nfAtual.emitente ? nfAtual.emitente.documento : '';
     const achado = idCredorPorNome(credorTxt) || (credorPorDoc(doXml) || {}).id;
@@ -774,7 +794,7 @@ ERP.lancamento = (function () {
       municipio_iss: nfAtual ? (nfAtual.municipio_iss || '') : '',
       codigo_barras: barrasLido ? barrasLido.codigoBarras : null,
       linha_digitavel: barrasLido ? (barrasLido.linhaDigitavel || '') : null,
-      arquivo: nfAtual ? nfAtual.arquivo : null,
+      arquivo: anexoGuardado || (nfAtual ? nfAtual.arquivo : null),
       obs: U.val('l-obs')
     };
     const r = S.criarTitulo(dadosTitulo, linhas);

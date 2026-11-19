@@ -891,6 +891,7 @@ ERP.contas = (function () {
       fr.readAsText(arq);
     };
 
+    const anexo = S.anexoDaParcela(p);
     ERP.app.modal({
       titulo: 'Nota fiscal · ' + U.esc(S.descricaoVisivel(p)),
       fecharTxt: 'Fechar',
@@ -905,11 +906,15 @@ ERP.contas = (function () {
         '<label style="font-weight:400;margin-top:6px"><input type="checkbox" id="nf-sem" style="width:auto"' +
           (p.sem_nf ? ' checked' : '') + '> Sem NF (some do alerta só quando o número for informado)</label>' +
         '<label style="margin-top:10px">Arquivo da nota (PDF ou XML)</label>' +
-        (p.arquivo
-          ? '<div class="resumo-linha"><span>' + U.esc(p.arquivo.nome) + '</span>' +
+        (anexo && !anexo.so_nome
+          ? '<div class="resumo-linha"><span>' + U.esc(anexo.nome) + '</span>' +
             '<span class="v"><button class="btn-sm btn-aprovar" id="nf-abrir">Abrir</button> ' +
+            '<button class="btn-sm" id="nf-baixar" title="Baixa o arquivo exatamente como foi anexado">Baixar</button> ' +
             '<button class="btn-sm btn-cancelar" id="nf-remover">Remover</button></span></div>'
-          : '<div class="ajuda">Nenhum arquivo anexado.</div>') +
+          : anexo
+            ? '<div class="ajuda erro">' + U.esc(anexo.nome) + ' — lançado antes da v179, quando o lançamento ' +
+              'guardava só o nome do arquivo. Anexe o arquivo de novo abaixo.</div>'
+            : '<div class="ajuda">Nenhum arquivo anexado.</div>') +
         '<input type="file" id="nf-arq" accept=".pdf,.xml,.jpg,.jpeg,.png" style="border:none;padding:0;margin-top:6px">' +
         '<div id="nf-ret-box"></div>',
       acoes: [{ txt: 'Salvar', cls: 'btn-aprovar', fn: function () {
@@ -941,12 +946,14 @@ ERP.contas = (function () {
         };
         const arq = U.el('nf-arq').files && U.el('nf-arq').files[0];
         if (!arq) return salvar();
-        const fr = new FileReader();
-        fr.onload = function () { arquivoNovo = { nome: arq.name, dados: fr.result }; salvar(); };
-        fr.readAsDataURL(arq);
+        ERP.notasPagar.guardar(arq).then(function (g) {
+          if (g.erro) return ERP.app.aviso(g.erro + ' Nada foi salvo — tente de novo.', 'erro');
+          arquivoNovo = g.anexo; salvar();
+        });
       } }],
       aoAbrir: function () {
         if (U.el('nf-abrir')) U.el('nf-abrir').addEventListener('click', function () { verNota(p); });
+        if (U.el('nf-baixar')) U.el('nf-baixar').addEventListener('click', function () { ERP.notasPagar.baixarOriginal(p); });
         if (U.el('nf-remover')) U.el('nf-remover').addEventListener('click', function () {
           arquivoNovo = null;
           retSugeridas = null;
@@ -969,21 +976,25 @@ ERP.contas = (function () {
      visualização — ninguém consegue conferir uma nota lendo XML cru, e
      o arquivo fica claramente marcado como leitura do XML, não como a
      DANFE/nota oficial. */
-  function verNota(p) {
-    if (!p.arquivo || !p.arquivo.dados) return ERP.app.aviso('Sem arquivo anexado.', 'erro');
-    const ehXml = /\.xml$/i.test(p.arquivo.nome) || /application\/xml|text\/xml/.test(p.arquivo.dados.slice(0, 40));
+  async function verNota(p) {
+    const an = S.anexoDaParcela(p);
+    if (!an) return ERP.app.aviso('Sem arquivo anexado.', 'erro');
+    const ehXml = /\.xml$/i.test(an.nome) || /application\/xml|text\/xml/.test(String(an.dados || '').slice(0, 40));
+    /* A janela abre ANTES de buscar o arquivo: aberta depois de uma
+       espera, o navegador a trata como pop-up e bloqueia. */
+    const w = ehXml ? null : window.open('', '_blank');
+    if (!ehXml && !w) return ERP.app.aviso('O navegador bloqueou a abertura. Libere pop-ups pra este arquivo.', 'erro');
+    const c = await ERP.notasPagar.conteudo(an);
+    if (c.erro) { if (w) w.close(); return ERP.app.aviso(c.erro, 'erro'); }
     if (!ehXml) {
-      const w = window.open();
-      if (!w) return ERP.app.aviso('O navegador bloqueou a abertura. Libere pop-ups pra este arquivo.', 'erro');
-      w.document.write('<iframe src="' + p.arquivo.dados + '" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>');
-      w.document.title = p.arquivo.nome;
+      const url = URL.createObjectURL(c.blob);
+      w.document.write('<iframe src="' + url + '" style="border:0;position:fixed;inset:0;width:100%;height:100%"></iframe>');
+      w.document.title = an.nome;
       return;
     }
     let texto = '';
-    try {
-      const base64 = p.arquivo.dados.split(',')[1] || '';
-      texto = decodeURIComponent(escape(atob(base64)));
-    } catch (e) { return ERP.app.aviso('Não consegui ler o XML anexado.', 'erro'); }
+    try { texto = await c.blob.text(); }
+    catch (e) { return ERP.app.aviso('Não consegui ler o XML anexado.', 'erro'); }
     const nf = ERP.nfe.ler(texto, { cnpjEmpresa: (D.empresa || {}).cnpj });
     if (nf.erro) return ERP.app.aviso('XML não reconhecido: ' + nf.erro, 'erro');
     pdfDoXml(nf, p);
@@ -1336,7 +1347,8 @@ ERP.contas = (function () {
       return ERP.app.aviso('Título de pessoal (folha, férias, 13º, rescisão, pensão ou guia de um funcionário) — ' +
         'só quem tem acesso a dados pessoais edita. Peça ao DP, à diretoria ou ao sócio.', 'erro');
     }
-    let arquivoNovo;   // undefined = sem mudança; null = removido; {dados, nome} = novo arquivo
+    let arquivoNovo;   // undefined = sem mudança; null = removido; {file, nome} = novo arquivo, sobe ao salvar
+    const anexoEd = S.anexoDaParcela(p);
     const grupos = D.plano.filter(function (g) { return g.nivel === 1 && g.tipo !== 'receita'; });
     const opConta = grupos.map(function (g) {
       return '<optgroup label="' + U.esc(g.cod + ' · ' + g.nome) + '">' +
@@ -1394,11 +1406,13 @@ ERP.contas = (function () {
           '<label>Arquivo da NF (PDF ou XML)</label>' +
           '<input type="file" id="ed-nf-arquivo" accept=".pdf,.xml">' +
           '<div class="ajuda" id="ed-nf-arquivo-info">' +
-            (p.arquivo_dados
-              ? 'Anexado: <a href="' + p.arquivo_dados + '" download="' + U.esc(p.arquivo || 'nf') +
-                '" target="_blank">' + U.esc(p.arquivo || 'arquivo') + '</a> — escolher outro substitui. ' +
+            (anexoEd && !anexoEd.so_nome
+              ? 'Anexado: ' + U.esc(anexoEd.nome) + ' <button type="button" class="btn-ghost" id="ed-nf-baixar" ' +
+                'style="padding:0">baixar</button> — escolher outro substitui. ' +
                 '<button type="button" class="btn-ghost" id="ed-nf-remover" style="padding:0">remover</button>'
-              : 'Até 5 MB. Fica só nesta sessão até a migração para o Supabase — some se a página recarregar.') +
+              : anexoEd
+                ? U.esc(anexoEd.nome) + ' — só o nome ficou guardado (lançado antes da v179). Anexe de novo. Até 5 MB.'
+                : 'Até 5 MB.') +
           '</div>' +
         '</div>' +
         /* ── RETENÇÃO DE IMPOSTO (v136) ──────────────────
@@ -1505,13 +1519,12 @@ ERP.contas = (function () {
               e.target.value = '';
               return;
             }
-            const fr = new FileReader();
-            fr.onload = function () {
-              arquivoNovo = { dados: fr.result, nome: arq.name };
-              U.el('ed-nf-arquivo-info').textContent = 'Vai anexar "' + arq.name + '" ao salvar.';
-            };
-            fr.readAsDataURL(arq);
+            arquivoNovo = { file: arq, nome: arq.name };
+            U.el('ed-nf-arquivo-info').textContent = 'Vai anexar "' + arq.name + '" ao salvar.';
           });
+        }
+        if (U.el('ed-nf-baixar')) {
+          U.el('ed-nf-baixar').addEventListener('click', function () { ERP.notasPagar.baixarOriginal(p); });
         }
         if (U.el('ed-nf-remover')) {
           U.el('ed-nf-remover').addEventListener('click', function () {
@@ -1521,7 +1534,17 @@ ERP.contas = (function () {
         }
         ligar(); somar();
       },
-      acoes: [{ txt: 'Salvar alterações', cls: 'btn-aprovar', fn: function () {
+      acoes: [{ txt: 'Salvar alterações', cls: 'btn-aprovar', fn: function salvarEdicao() {
+        /* O arquivo novo sobe primeiro; só com o caminho em mãos o
+           título é gravado — título salvo apontando para arquivo que
+           não chegou é anexo fantasma. */
+        if (arquivoNovo && arquivoNovo.file) {
+          ERP.notasPagar.guardar(arquivoNovo.file).then(function (g) {
+            if (g.erro) return ERP.app.aviso(g.erro + ' Nada foi salvo — tente de novo.', 'erro');
+            arquivoNovo = g.anexo; salvarEdicao();
+          });
+          return;
+        }
         const nomeCr = U.val('ed-credor');
         const credorId = nomeCr ? S.credorPorNome(nomeCr, U.val('ed-conta')) : p.credor;
         const rateio = Array.from(document.querySelectorAll('#ed-rateio .lin')).map(function (l) {
@@ -1536,10 +1559,7 @@ ERP.contas = (function () {
           credor: credorId, rateio: rateio,
           nf_dispensada: nfDispensada, chave: nfDispensada ? null : (U.val('ed-nf-chave') || null)
         };
-        if (arquivoNovo !== undefined) {
-          dados.arquivo_dados = arquivoNovo ? arquivoNovo.dados : null;
-          dados.arquivo = arquivoNovo ? arquivoNovo.nome : null;
-        }
+        if (arquivoNovo !== undefined) dados.anexo = arquivoNovo || null;
         if (ehBoleto) {
           const bruto = U.val('ed-barras');
           if (bruto) {
@@ -1841,7 +1861,7 @@ ERP.contas = (function () {
         '<div class="resumo-linha"><span>Valor</span><span class="v">' + U.brl(p.valor) + '</span></div>' +
         '<div class="resumo-linha"><span>Saldo</span><span class="v">' + U.brl(S.saldoDe(p)) + '</span></div>' +
         (p.chave ? '<div class="resumo-linha"><span>Chave da NF</span><span class="v" style="font-size:11px;word-break:break-all">' + U.esc(p.chave) + '</span></div>' : '') +
-        (p.arquivo ? '<div class="resumo-linha"><span>Arquivo</span><span class="v">' + U.esc(p.arquivo) + '</span></div>' : '') +
+        (S.anexoDaParcela(p) ? '<div class="resumo-linha"><span>Arquivo</span><span class="v">' + U.esc(S.anexoDaParcela(p).nome) + '</span></div>' : '') +
         (p.motivo ? '<div class="ajuda">Reprovado: ' + U.esc(p.motivo) + '</div>' : '') +
         (p.motivo_cancelamento ? '<div class="ajuda">Cancelado: ' + U.esc(p.motivo_cancelamento) + '</div>' : '') +
         composicao(p) + notaFiscal(p) +
@@ -2136,5 +2156,5 @@ ERP.contas = (function () {
      ter uma cópia sua. Duas janelas para o mesmo ato acabariam
      divergindo — e é nesta que a sugestão de retenção mora. */
   return { montar, render, preFiltrar, verDetalhe: abrirDetalhe, saldoBancarioResumoHTML, abrirAba,
-           abrirNF: abrirNF };
+           abrirNF: abrirNF, editar: abrirEditar };
 })();

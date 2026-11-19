@@ -43,6 +43,7 @@ const MODULO_DA_TELA = {
   'ui-cadastros.js': 'cadastros',
   'ui-lancamento.js': 'financeiro',
   'ui-contas.js': 'financeiro',
+  'notas-pagar.js': 'financeiro',
   'ui-receber.js': 'financeiro',
   'ui-conciliacao.js': 'financeiro',
   'ui-saldo.js': 'financeiro',
