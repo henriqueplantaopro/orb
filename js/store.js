@@ -1743,7 +1743,12 @@ ERP.store = (function () {
     const t = st.transferenciasBanco.find(function (x) { return x.id === id; });
     if (!t) return { erro: 'Transferência não encontrada.' };
     if (t.cancelada) return { erro: 'Esta transferência já foi cancelada.' };
-    t.cancelada = { motivo: motivo, em: U.hoje(), usuario: usuario().nome };
+    /* `cancelada` é boolean no banco: o objeto que ia aqui não
+       cabia na coluna. O motivo tem a coluna dele. */
+    t.cancelada = true;
+    t.motivo_cancelamento = motivo;
+    t.cancelada_em = U.hoje();
+    t.cancelada_por = usuario().nome;
     logar('banco', t.id, 'cancelou transferência', U.brl(t.valor) + ' — ' + motivo);
     return { ok: true };
   }
@@ -3867,8 +3872,9 @@ ERP.store = (function () {
     }
     const situacao = situacaoPedida;
 
+    const idPg = novoId('pg');
     st.pagamentos.push({
-      id: novoId('pg'), parcela_id: pid, data: d.data, valor,
+      id: idPg, parcela_id: pid, data: d.data, valor,
       /* Empresa que pagou (vem da conta) e, quando é pagamento cruzado,
          o vínculo entre as duas — é o que alimenta a conta corrente
          entre empresas. */
@@ -3887,7 +3893,7 @@ ERP.store = (function () {
     recalcular(pid);
     logar('conta_pagar', pid, situacao === 'liquidado' ? 'pagou' : 'solicitou pagamento',
       U.brl(valor) + ' em ' + U.fData(d.data) + ' · ' + ((D.banco(d.banco) || {}).apelido || ''));
-    return { ok: true, status: p.status, situacao: situacao };
+    return { ok: true, status: p.status, situacao: situacao, id: idPg };
   }
 
   /* Solicitação em lote: é assim que o dia a dia funciona — marcar tudo
@@ -4172,6 +4178,7 @@ ERP.store = (function () {
       });
       if (aindaVivo) return;
       l.situacao = 'pendente'; l.alvo_tipo = null; l.alvo_id = null; l.alvo_ids = null;
+      l.pagamento_id = null; l.pagamentos_ids = null;
       l.observacao = ((l.observacao || '') + ' · reaberta pelo estorno de ' + U.fData(U.hoje())).trim();
     });
     logar('conta_pagar', pg.parcela_id, 'estornou', U.brl(pg.valor) + ' — ' + motivo +
@@ -13293,6 +13300,105 @@ ERP.store = (function () {
   }
 
   /* ── candidatos por linha ───────────────────────────────*/
+  /* ── QUAL LINHA DO EXTRATO EXPLICA QUAL PAGAMENTO ───────
+     A linha conciliada contra um TÍTULO cria o pagamento na hora — e,
+     até a v182, não guardava qual. O candidato "pagamento já baixado"
+     só reconhecia como ocupado o pagamento ligado por alvo_tipo
+     'pagamento', então a SEGUNDA fatura de R$ 54,76 da Claro casava
+     com o pagamento que a PRIMEIRA linha tinha acabado de criar: duas
+     saídas do banco num pagamento só, e o segundo título em aberto.
+     Agora a linha guarda `pagamento_id`; para as antigas, a ligação
+     é reconstruída por título + data + conta + valor. */
+  function linhaExplicaPagamento(l, pg) {
+    if (!l || !pg || l.situacao !== 'conciliado' || pg.estornado) return false;
+    if (l.alvo_tipo === 'pagamento') return l.alvo_id === pg.id;
+    if (l.pagamento_id) return l.pagamento_id === pg.id;
+    if (l.pagamentos_ids) return l.pagamentos_ids.indexOf(pg.id) > -1;
+    const ids = l.alvo_tipo === 'parcela' ? [l.alvo_id] : l.alvo_tipo === 'parcelas' ? (l.alvo_ids || []) : [];
+    if (ids.indexOf(pg.parcela_id) < 0) return false;
+    if (pg.data !== l.data || (pg.banco && pg.banco !== l.banco)) return false;
+    if (l.alvo_tipo === 'parcelas') return true;
+    const total = Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100;
+    return Math.abs(total - Math.round(Math.abs(l.valor) * 100) / 100) < 0.005;
+  }
+  const linhasDoPagamento = (pg, idx) => (idx ? (idx['pg:' + pg.id] || []).concat(idx['par:' + pg.parcela_id] || [])
+    .filter(function (l, i, a) { return a.indexOf(l) === i; }) : st.linhas)
+    .filter(function (l) { return linhaExplicaPagamento(l, pg); });
+  /* Índice das linhas conciliadas por pagamento e por título: a
+     conferência cruza TODOS os pagamentos com TODAS as linhas, e sem
+     índice isso é pagamentos × linhas a cada desenho da tela. */
+  function indiceLinhasConciliadas() {
+    const idx = {};
+    const pos = (k, l) => { (idx[k] = idx[k] || []).push(l); };
+    st.linhas.forEach(function (l) {
+      if (l.situacao !== 'conciliado') return;
+      if (l.alvo_tipo === 'pagamento') pos('pg:' + l.alvo_id, l);
+      if (l.pagamento_id) pos('pg:' + l.pagamento_id, l);
+      (l.pagamentos_ids || []).forEach(function (x) { pos('pg:' + x, l); });
+      if (l.alvo_tipo === 'parcela') pos('par:' + l.alvo_id, l);
+      if (l.alvo_tipo === 'parcelas') (l.alvo_ids || []).forEach(function (x) { pos('par:' + x, l); });
+    });
+    return idx;
+  }
+
+  /* Conferência da conciliação de uma conta: o que ficou torto.
+     · `dobradas`: um pagamento explicando duas ou mais linhas — o
+       caso da Claro. A linha mais nova é a que deve ser desfeita e
+       vinculada ao título certo.
+     · `diferencas`: linha conciliada com pagamento de valor diferente
+       — o boleto de R$ 225,52 baixado como R$ 221,00. A diferença
+       pode entrar como juros/multa sem refazer nada. */
+  function conferenciaConciliacao(banco) {
+    const dobradas = [], diferencas = [];
+    const idx = indiceLinhasConciliadas();
+    st.pagamentos.forEach(function (pg) {
+      if (pg.estornado || pg.situacao !== 'liquidado') return;
+      const ls = linhasDoPagamento(pg, idx).filter(function (l) { return !banco || l.banco === banco; });
+      if (!ls.length) return;
+      const p = parcela(pg.parcela_id) || {};
+      const nome = nomeCredorVisivel(p, (D.credor(p.credor) || {}).nome || '');
+      if (ls.length > 1) {
+        ls.sort(function (a, b) { return String(a.conciliado_em || '').localeCompare(String(b.conciliado_em || '')) || a.id.localeCompare(b.id); });
+        dobradas.push({ pagamento: pg, linhas: ls, credor: nome, sobra: ls.slice(1) });
+        return;
+      }
+      const l = ls[0];
+      if (l.alvo_tipo === 'parcelas') return;
+      const total = Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100;
+      const ext = Math.round(Math.abs(l.valor) * 100) / 100;
+      if (Math.abs(ext - total) > 0.004) {
+        diferencas.push({ pagamento: pg, linha: l, credor: nome, extrato: ext, pago: total,
+          diferenca: Math.round((ext - total) * 100) / 100 });
+      }
+    });
+    return { dobradas: dobradas, diferencas: diferencas };
+  }
+
+  /* Lança a diferença de uma linha já conciliada como juros/multa do
+     pagamento — o conserto do boleto que foi baixado pelo valor da
+     nota e saiu do banco com encargos. */
+  function encargosDaConciliacao(linhaId, d) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const l = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (!l || l.situacao !== 'conciliado') return { erro: 'Linha conciliada não encontrada.' };
+    const pg = st.pagamentos.find(function (x) { return linhaExplicaPagamento(l, x); });
+    if (!pg) return { erro: 'Não achei o pagamento desta linha.' };
+    const total = Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100;
+    const dif = Math.round((Math.abs(l.valor) - total) * 100) / 100;
+    const j = Math.round((Number(d && d.juros) || 0) * 100) / 100;
+    const m = Math.round((Number(d && d.multa) || 0) * 100) / 100;
+    if (dif <= 0.004) return { erro: 'Esta linha não saiu maior que o pagamento — não há encargo a lançar.' };
+    if (j < 0 || m < 0) return { erro: 'Juros e multa não podem ser negativos.' };
+    if (Math.abs(j + m - dif) > 0.005) {
+      return { erro: 'Juros + multa (' + U.brl(j + m) + ') têm de fechar com a diferença de ' + U.brl(dif) + '.' };
+    }
+    pg.juros = Math.round(((pg.juros || 0) + j) * 100) / 100;
+    pg.multa = Math.round(((pg.multa || 0) + m) * 100) / 100;
+    logar('conta_pagar', pg.parcela_id, 'lançou encargos pela conciliação',
+      U.brl(j) + ' de juros e ' + U.brl(m) + ' de multa · extrato ' + U.brl(Math.abs(l.valor)));
+    return { ok: true };
+  }
+
   function candidatos(l) {
     const alvo = Math.abs(l.valor);
     /* Título a receber que é o único daquele valor exato na janela:
@@ -13346,10 +13452,7 @@ ERP.store = (function () {
            hoje. O que a data faz é ordenar e explicar, não eliminar —
            o que identifica o pagamento é o valor e o favorecido. */
         if (Math.abs(total - alvo) > 0.005) return;
-        const jaConciliado = st.linhas.some(function (x) {
-          return x.situacao === 'conciliado' && x.alvo_tipo === 'pagamento' && x.alvo_id === pg.id;
-        });
-        if (jaConciliado) return;
+        if (linhasDoPagamento(pg).length) return;
 
         /* E o nome tem de bater, como já batia no ramo das parcelas.
 
@@ -13805,10 +13908,43 @@ ERP.store = (function () {
           ((D.banco(pg.banco) || {}).apelido || pg.banco) + ', e esta linha é da conta ' +
           ((D.banco(l.banco) || {}).apelido || l.banco) + '.' };
       }
+      const outra = linhasDoPagamento(pg).filter(function (x) { return x.id !== l.id; })[0];
+      if (outra) {
+        return { erro: 'Este pagamento já está conciliado com a linha de ' + U.fData(outra.data) + ' (' +
+          U.brl(Math.abs(outra.valor)) + '). Duas saídas do banco não pagam o mesmo título duas vezes — ' +
+          'se são duas cobranças iguais, vincule esta linha ao OUTRO título.' };
+      }
       if (pg.situacao !== 'liquidado') {
         const r = liquidar(alvo.id, { data: l.data, valor: Math.abs(l.valor),
           juros: alvo.juros, multa: alvo.multa });
         if (r.erro) return r;
+      } else {
+        /* Pagamento baixado antes, pelo valor da nota; o banco mostra
+           o valor com encargos. Antes a linha era amarrada sem olhar o
+           valor, e os R$ 4,52 de juros sumiam do relatório. */
+        const totalPg = Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100;
+        const ext = Math.round(Math.abs(l.valor) * 100) / 100;
+        const dif = Math.round((ext - totalPg) * 100) / 100;
+        if (dif > 0.004) {
+          const temEnc = (alvo.juros !== undefined && alvo.juros !== null) || (alvo.multa !== undefined && alvo.multa !== null);
+          if (!temEnc) {
+            return { erro: 'O extrato (' + U.brl(ext) + ') é maior que o pagamento baixado (' + U.brl(totalPg) +
+              ') em ' + U.brl(dif) + '. Se a diferença for juros ou multa, informe-os.',
+              pago_a_maior: true, diferenca: dif, saldo: totalPg, total: ext };
+          }
+          const j = Math.round((Number(alvo.juros) || 0) * 100) / 100;
+          const m = Math.round((Number(alvo.multa) || 0) * 100) / 100;
+          if (j < 0 || m < 0) return { erro: 'Juros e multa não podem ser negativos.' };
+          if (Math.abs(j + m - dif) > 0.005) {
+            return { erro: 'O pagamento já está baixado: juros + multa (' + U.brl(j + m) +
+              ') têm de fechar com a diferença de ' + U.brl(dif) + '.' };
+          }
+          pg.juros = Math.round(((pg.juros || 0) + j) * 100) / 100;
+          pg.multa = Math.round(((pg.multa || 0) + m) * 100) / 100;
+        } else if (dif < -0.004) {
+          return { erro: 'O extrato (' + U.brl(ext) + ') é menor que o pagamento baixado (' + U.brl(totalPg) +
+            ') em ' + U.brl(-dif) + '. Corrija o pagamento (estorne e baixe pelo valor certo) antes de conciliar.' };
+        }
       }
     } else if (alvo.tipo === 'parcela') {
       const p = parcela(alvo.id);
@@ -13863,6 +13999,7 @@ ERP.store = (function () {
         confirmar_cruzamento: true, origem_cruzamento: 'extrato'
       });
       if (r.erro) return r;
+      l.pagamento_id = r.id || null;
     } else if (alvo.tipo === 'receber') {
       /* A conta do extrato é a conta do crédito: é a única hora em que
          o sistema sabe com certeza onde o dinheiro entrou. */
@@ -13882,6 +14019,115 @@ ERP.store = (function () {
     logar('extrato', l.id, 'conciliou', U.fData(l.data) + ' · ' + U.brl(Math.abs(l.valor)) +
       ' · ' + (l.memo || '').slice(0, 40));
     return { ok: true };
+  }
+
+  /* ── MÚTUO ENTRE AS EMPRESAS DO GRUPO, PELO EXTRATO ─────
+     Transferência da Novaped para a HJM não é receita da HJM nem
+     despesa da Novaped: é empréstimo entre as empresas. A linha do
+     extrato vira uma transferência entre contas do grupo — que já é o
+     que alimenta a conta corrente entre empresas — e quem mandou o
+     dinheiro vira CREDORA de quem recebeu.
+
+     Os dois lados: a mesma transferência aparece no extrato das duas
+     contas (saída numa, entrada na outra). Conciliar o primeiro lado
+     cria a transferência; conciliar o segundo ENCONTRA a que já existe
+     (mesmas contas, mesmo valor, até 5 dias de distância) e só a
+     amarra — senão o mútuo contaria em dobro. */
+  function conciliarMutuo(linhaId, d) {
+    d = d || {};
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const l = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (!l) return { erro: 'Lançamento do extrato não encontrado.' };
+    if (l.situacao !== 'pendente') {
+      return { erro: l.situacao === 'conciliado' ? 'Esta linha já está conciliada.'
+        : 'Esta linha está como ' + l.situacao + ' — reabra antes de conciliar.' };
+    }
+    const minha = empresaDaConta(l.banco);
+    const outraConta = D.banco(d.conta);
+    if (!outraConta) return { erro: 'Escolha a conta da outra empresa (de onde veio ou para onde foi o dinheiro).' };
+    const outra = outraConta.empresa || null;
+    if (!outra || !minha) return { erro: 'As duas contas precisam estar ligadas a uma empresa no cadastro de bancos.' };
+    if (outra === minha) {
+      return { erro: 'As duas contas são da mesma empresa — isso é remanejo de caixa, não mútuo. ' +
+        'Use "Transferir entre contas" no Saldo bancário.' };
+    }
+    const valor = Math.round(Math.abs(l.valor) * 100) / 100;
+    if (!(valor > 0)) return { erro: 'Linha sem valor.' };
+    const entrada = l.valor > 0 || l.entrada > 0;
+    const origem = entrada ? outraConta.id : l.banco;
+    const destino = entrada ? l.banco : outraConta.id;
+    const ladoMeu = entrada ? 'linha_destino' : 'linha_origem';
+    const diasEntre = (a, b) => Math.abs((new Date(a + 'T12:00:00') - new Date(b + 'T12:00:00')) / 864e5);
+
+    /* O outro lado já registrou? */
+    let t = st.transferenciasBanco.find(function (x) {
+      return !x.cancelada && x.origem === origem && x.destino === destino &&
+        Math.abs(x.valor - valor) < 0.005 && !x[ladoMeu] && diasEntre(x.data, l.data) <= 5;
+    });
+    const achou = !!t;
+    if (!t) {
+      const empO = D.banco(origem).empresa, empD = D.banco(destino).empresa;
+      t = {
+        id: novoId('tb'), data: l.data, valor: valor, origem: origem, destino: destino,
+        origem_nome: (D.banco(origem) || {}).apelido || origem,
+        destino_nome: (D.banco(destino) || {}).apelido || destino,
+        empresa_origem: empO, empresa_destino: empD,
+        mutuo: { credora: empO, devedora: empD,
+          credora_nome: (D.empresaPor(empO) || {}).apelido || empO,
+          devedora_nome: (D.empresaPor(empD) || {}).apelido || empD },
+        documento: l.documento || '', obs: d.obs || ('Mútuo identificado no extrato · ' + (l.memo || '')),
+        origem_registro: 'extrato', usuario: usuario().nome, lancado_em: new Date()
+      };
+      st.transferenciasBanco.push(t);
+    }
+    t[ladoMeu] = l.id;
+    l.situacao = 'conciliado';
+    l.alvo_tipo = 'transferencia';
+    l.alvo_id = t.id;
+    l.conciliado_em = new Date();
+    l.conciliado_por = usuario().nome;
+    l.observacao = 'Mútuo: ' + t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome;
+    logar('extrato', l.id, achou ? 'conciliou o outro lado do mútuo' : 'conciliou como mútuo',
+      U.brl(valor) + ' · ' + t.origem_nome + ' → ' + t.destino_nome + ' · ' +
+      t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome);
+    return { ok: true, transferencia: t, outro_lado: achou };
+  }
+
+  /* Mútuo por período: saldo anterior, o que mudou no período e o
+     saldo final, por par de empresas — e as operações. O saldo de
+     conta corrente é ACUMULADO (o empréstimo de março continua devido
+     em junho), por isso o anterior entra. */
+  function relatorioMutuos(de, ate) {
+    const tudoAte = contaCorrenteEmpresas({ ate: ate });
+    const antes = de ? contaCorrenteEmpresas({ ate: U.addDias(de, -1) }) : { linhas: [] };
+    const periodo = tudoAte.linhas.filter(function (l) { return !de || l.data >= de; });
+    const pares = {};
+    const par = function (l) {
+      const ids = [l.devedora, l.credora].sort();
+      const k = ids.join('|');
+      return pares[k] = pares[k] || { a: ids[0], b: ids[1],
+        a_nome: l.devedora === ids[0] ? l.devedora_nome : l.credora_nome,
+        b_nome: l.devedora === ids[1] ? l.devedora_nome : l.credora_nome,
+        anterior: 0, a_deve_mais: 0, b_deve_mais: 0 };
+    };
+    /* sinal: positivo = A deve a B */
+    antes.linhas.forEach(function (l) { const p = par(l); p.anterior += (l.devedora === p.a ? 1 : -1) * l.valor; });
+    periodo.forEach(function (l) { const p = par(l); if (l.devedora === p.a) p.a_deve_mais += l.valor; else p.b_deve_mais += l.valor; });
+    const r2 = v => Math.round(v * 100) / 100;
+    const saldos = Object.keys(pares).map(function (k) {
+      const p = pares[k];
+      const fim = r2(p.anterior + p.a_deve_mais - p.b_deve_mais);
+      const devA = fim >= 0;
+      return {
+        devedora_nome: devA ? p.a_nome : p.b_nome, credora_nome: devA ? p.b_nome : p.a_nome,
+        anterior: r2(devA ? p.anterior : -p.anterior),
+        aumentou: r2(devA ? p.a_deve_mais : p.b_deve_mais),
+        diminuiu: r2(devA ? p.b_deve_mais : p.a_deve_mais),
+        saldo: Math.abs(fim)
+      };
+    }).sort(function (x, y) { return y.saldo - x.saldo; });
+    return { de: de, ate: ate, saldos: saldos,
+      linhas: periodo.slice().sort(function (x, y) { return x.data.localeCompare(y.data); }) };
   }
 
   /* ── uma linha do extrato, vários títulos ──────────────
@@ -13945,6 +14191,7 @@ ERP.store = (function () {
     l.alvo_tipo = 'parcelas';
     l.alvo_id = ids[0];
     l.alvo_ids = ids;
+    l.pagamentos_ids = st.pagamentos.filter(function (pg) { return !pagamentosAntes[pg.id]; }).map(function (pg) { return pg.id; });
     l.conciliado_em = new Date();
     l.conciliado_por = usuario().nome;
     logar('extrato', l.id, 'conciliou com ' + ids.length + ' títulos', U.fData(l.data) + ' · ' + U.brl(alvo));
@@ -14127,6 +14374,7 @@ ERP.store = (function () {
     l.situacao = 'conciliado';
     l.alvo_tipo = 'parcela';
     l.alvo_id = p.id;
+    l.pagamento_id = rp.id || null;
     l.conciliado_em = new Date();
     l.conciliado_por = usuario().nome;
     l.observacao = 'Lançado pela conciliação';
@@ -14182,6 +14430,9 @@ ERP.store = (function () {
     nova.alvo_tipo = atual.alvo_tipo;
     nova.alvo_id = atual.alvo_id;
     nova.alvo_ids = atual.alvo_ids ? atual.alvo_ids.slice() : null;
+    nova.pagamento_id = atual.pagamento_id || null;
+    nova.pagamentos_ids = atual.pagamentos_ids ? atual.pagamentos_ids.slice() : null;
+    atual.pagamento_id = null; atual.pagamentos_ids = null;
     nova.observacao = ((nova.observacao || '') + ' · vínculo movido de ' + atual.id +
       ': ' + motivo).trim();
     atual.situacao = 'pendente';
@@ -14211,7 +14462,27 @@ ERP.store = (function () {
       return !pg.estornado && pg.situacao === 'liquidado' &&
         (alvos.indexOf(pg.parcela_id) >= 0 || alvos.indexOf(pg.id) >= 0);
     });
-    if (['parcela', 'parcelas', 'pagamento', 'pagar'].indexOf(l.alvo_tipo) >= 0 && pgLigado) {
+    /* EXCEÇÃO: a linha que caiu num pagamento que OUTRA linha já
+       explica (as duas faturas iguais da Claro). Soltar esta não
+       deixa nenhum pagamento sem lastro — a outra continua — e é o
+       único jeito de levá-la ao título certo sem estornar nada. */
+    const meusPgs = st.pagamentos.filter(function (pg) { return linhaExplicaPagamento(l, pg); });
+    const dobrada = meusPgs.length > 0 && meusPgs.every(function (pg) {
+      return linhasDoPagamento(pg).some(function (x) { return x.id !== l.id; });
+    });
+    if (l.alvo_tipo === 'transferencia') {
+      const t = st.transferenciasBanco.find(function (x) { return x.id === l.alvo_id; });
+      if (t) {
+        if (t.linha_origem === l.id) t.linha_origem = null;
+        if (t.linha_destino === l.id) t.linha_destino = null;
+        /* Criada por esta conciliação e sem o outro lado amarrado:
+           desfazer a linha desfaz o mútuo. */
+        if (t.origem_registro === 'extrato' && !t.linha_origem && !t.linha_destino && !t.cancelada) {
+          t.cancelada = true;
+          t.motivo_cancelamento = 'conciliação desfeita: ' + motivo;
+        }
+      }
+    } else if (['parcela', 'parcelas', 'pagamento', 'pagar'].indexOf(l.alvo_tipo) >= 0 && pgLigado && !dobrada) {
       return { erro: 'Esta linha está ligada a pagamento liquidado. Estorne o pagamento — ' +
         'a linha é liberada junto.' };
     }
@@ -14232,6 +14503,7 @@ ERP.store = (function () {
     }
     const antes = { tipo: l.alvo_tipo, id: l.alvo_id };
     l.situacao = 'pendente'; l.alvo_tipo = null; l.alvo_id = null; l.alvo_ids = null;
+    l.pagamento_id = null; l.pagamentos_ids = null;
     l.observacao = ((l.observacao || '') + ' · desconciliada: ' + motivo).trim();
     logar('extrato', l.id, 'desconciliou', U.brl(l.valor) + ' — ' + motivo +
       (antes.id ? ' (era ' + antes.tipo + ' ' + antes.id + ')' : ''));
@@ -21117,6 +21389,10 @@ ERP.store = (function () {
         descricao: descricaoVisivel(p),
         competencia: p.comp || '', emissao: p.emissao || '', vencimento: p.venc || '',
         baixa: pg.data, parcela: p.num + '/' + (p.total || 1),
+        /* Três valores, para bater com o extrato e para saber quanto
+           foi de encargo: o principal (o que quitou do título), os
+           juros/multa, e o que saiu do banco (a soma). */
+        principal: Math.round(pg.valor * 100) / 100,
         valor: Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100,
         juros: Math.round(((pg.juros || 0) + (pg.multa || 0)) * 100) / 100,
         banco: (D.banco(pg.banco) || {}).apelido || '',
@@ -21149,6 +21425,7 @@ ERP.store = (function () {
           descricao: r.discriminacao || ((D.centro(r.centro) || {}).curto || ''),
           competencia: r.competencia || '', emissao: r.emissao || '', vencimento: r.vencimento || '',
           baixa: b.data, parcela: (i + 1) + '/' + lista.length,
+          principal: Math.round((b.valor || 0) * 100) / 100,
           valor: Math.round((b.valor || 0) * 100) / 100,
           juros: 0,
           banco: (D.banco(b.banco) || {}).apelido || '',
@@ -21176,7 +21453,10 @@ ERP.store = (function () {
       .reduce(function (a2, l) { return a2 + l.valor; }, 0) * 100) / 100;
     const pago = Math.round(linhas.filter(function (l) { return l.tipo === 'Saída'; })
       .reduce(function (a2, l) { return a2 + l.valor; }, 0) * 100) / 100;
+    const jurosPagos = Math.round(linhas.filter(function (l) { return l.tipo === 'Saída'; })
+      .reduce(function (a2, l) { return a2 + (l.juros || 0); }, 0) * 100) / 100;
     return { de: de, ate: ate, linhas: linhas, total_recebido: recebido, total_pago: pago,
+      total_juros: jurosPagos,
       resultado: Math.round((recebido - pago) * 100) / 100 };
   }
 
@@ -21393,7 +21673,8 @@ ERP.store = (function () {
     dataExiste,
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
-    pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO,
+    pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
+    conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
     criarFuncionario, editarFuncionario, desligarFuncionario, registrarReajusteSalarial, historicoSalarial, criarCargo,

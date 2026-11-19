@@ -12595,4 +12595,17 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     a3.so_nome === true && a4.path === '2026-11/x-d.xml' && Sn.anexoDaParcela({}) === null, '');
 })();
 
+
+/* ── v182 — faturas iguais, juros em pagamento já baixado, mútuo ── */
+(function () {
+  const S2 = sandbox.window.ERP.store;
+  ['conciliarMutuo', 'relatorioMutuos', 'conferenciaConciliacao', 'encargosDaConciliacao', 'linhasDoPagamento']
+    .forEach(function (fn) { verificar('v182 — store exporta ' + fn, typeof S2[fn] === 'function', ''); });
+  const html = require('fs').readFileSync(__dirname + '/index.html', 'utf8');
+  verificar('v182 — relatório "Mútuo entre empresas" na lista', /<option value="mutuos">/.test(html), '');
+  const srcR = require('fs').readFileSync(__dirname + '/js/ui-relatorios.js', 'utf8');
+  verificar('v182 — contas pagas com valor do título, juros/multa e valor pago',
+    /'Valor do título'/.test(srcR) && /'Juros\/multa'/.test(srcR) && /'Valor pago'/.test(srcR), '');
+})();
+
 concluir();
