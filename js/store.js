@@ -3745,7 +3745,9 @@ ERP.store = (function () {
           'se o seu perfil não vê os fechamentos, quem administra o sistema precisa rodar a ' +
           'atualização do banco (SQL 74).' };
     }
-    if (!lote.confirmado_em) {
+    /* Confirmado o fechamento inteiro, ou SÓ ESTE MÉDICO (v177): a
+       gestão pode liberar um médico sem confirmar os outros. */
+    if (!lote.confirmado_em && !par.confirmado_em) {
       return { tipo: 'nao_confirmado', curto: 'aguardando confirmação da produtividade',
         texto: 'O fechamento de produtividade de ' + U.fComp(lote.competencia) +
           ' ainda não foi confirmado pela gestão. Enquanto não confirmarem, o valor não vai para pagamento.' };
@@ -9610,6 +9612,102 @@ ERP.store = (function () {
     return { ok: true, lote: l, bloqueados: bloqueados.length };
   }
 
+  /* ── CONFIRMAR UM MÉDICO SÓ (v177) ──────────────────────
+     Caso real: no fechamento, uma médica recebeu antecipado e precisa
+     ser conciliada; os outros ainda não têm o valor fidedigno. Antes,
+     para liberar o pagamento dela, era preciso confirmar o fechamento
+     INTEIRO — e com isso todos ficavam liberados para pagar. Agora a
+     confirmação pode ser de um médico, gravada nas parcelas dele. */
+  const parcelasDoMedico = function (l, tituloId) {
+    return st.parcelas.filter(function (p) {
+      return p.titulo_id === tituloId && (l.titulo_ids || []).indexOf(tituloId) > -1 &&
+        ['cancelado', 'substituido'].indexOf(p.status) < 0;
+    });
+  };
+  const jaAndou = function (p) { return p.status === 'pago' || pagoDe(p.id) > 0.004 || emCursoDe(p.id).length > 0; };
+  function confirmarMedicoProdutividade(loteId, tituloId) {
+    if (!pode('confirmar_produtividade')) {
+      return { erro: 'Seu perfil não confirma produtividade — é a aprovação do módulo.' };
+    }
+    const l = st.lotesProdutividade.find(function (x) { return x.id === loteId; });
+    if (!l) return { erro: 'Fechamento não encontrado.' };
+    if (l.cancelado) return { erro: 'Este fechamento foi cancelado.' };
+    if (l.confirmado_em) return { erro: 'O fechamento inteiro já está confirmado — este médico já pode ser pago.' };
+    const ps = parcelasDoMedico(l, tituloId);
+    if (!ps.length) return { erro: 'Lançamento do médico não encontrado neste fechamento.' };
+    if (ps.every(function (p) { return p.confirmado_em; })) return { erro: 'Este médico já está confirmado.' };
+    const agora = new Date().toISOString(), quem = usuario().nome;
+    ps.forEach(function (p) { p.confirmado_em = agora; p.confirmado_por = quem; });
+    const t = st.titulos.find(function (x) { return x.id === tituloId; }) || {};
+    const nome = (D.credor(t.credor) || {}).nome || '';
+    logar('produtividade', l.centro, 'confirmou a produtividade de um médico',
+      nome + ' · ' + U.fComp(l.competencia) + ' · ' + U.brl(ps.reduce(function (a, p) { return a + p.valor; }, 0)));
+    return { ok: true, medico: nome, bloqueado: ps.some(function (p) { return !!p.bloqueio_pagamento; }) };
+  }
+  function desfazerConfirmacaoMedico(loteId, tituloId) {
+    if (!pode('confirmar_produtividade')) {
+      return { erro: 'Seu perfil não confirma produtividade — é a aprovação do módulo.' };
+    }
+    const l = st.lotesProdutividade.find(function (x) { return x.id === loteId; });
+    if (!l) return { erro: 'Fechamento não encontrado.' };
+    if (l.confirmado_em) return { erro: 'O fechamento inteiro está confirmado. Use "Desfazer confirmação" no fechamento.' };
+    const ps = parcelasDoMedico(l, tituloId).filter(function (p) { return p.confirmado_em; });
+    if (!ps.length) return { erro: 'Este médico não está confirmado.' };
+    if (ps.some(jaAndou)) return { erro: 'Este médico já foi pago (ou está em pagamento) — a confirmação fica.' };
+    ps.forEach(function (p) { p.confirmado_em = null; p.confirmado_por = null; });
+    const t = st.titulos.find(function (x) { return x.id === tituloId; }) || {};
+    logar('produtividade', l.centro, 'desfez a confirmação de um médico',
+      ((D.credor(t.credor) || {}).nome || '') + ' · ' + U.fComp(l.competencia));
+    return { ok: true };
+  }
+
+  /* ── DESFAZER A CONFIRMAÇÃO DO FECHAMENTO (v177) ─────────
+     O fechamento foi confirmado inteiro só para liberar um médico.
+     Desfazer volta o fechamento para "aguardando confirmação", MAS:
+       · quem já foi pago, ou está em pagamento (na aprovação, na
+         remessa), continua confirmado — desconfirmar o que já saiu
+         do banco seria mentir;
+       · quem for escolhido para ficar ("manter") continua confirmado.
+     Esses passam a ter a confirmação INDIVIDUAL, e o resto volta a
+     esperar a gestão. O motivo é obrigatório e fica no histórico. */
+  function desconfirmarLoteProdutividade(loteId, d) {
+    if (!pode('confirmar_produtividade')) {
+      return { erro: 'Seu perfil não confirma produtividade — é a aprovação do módulo.' };
+    }
+    d = d || {};
+    const l = st.lotesProdutividade.find(function (x) { return x.id === loteId; });
+    if (!l) return { erro: 'Fechamento não encontrado.' };
+    if (l.cancelado) return { erro: 'Este fechamento foi cancelado.' };
+    if (!l.confirmado_em) return { erro: 'Este fechamento não está confirmado.' };
+    const motivo = String(d.motivo || '').trim();
+    if (!motivo) return { erro: 'Diga por que está desfazendo a confirmação.' };
+    const manter = d.manter || [];
+    const r = { ok: true, mantidos: [], forcados: [], voltaram: 0 };
+    (l.titulo_ids || []).forEach(function (tid) {
+      const ps = parcelasDoMedico(l, tid);
+      if (!ps.length) return;
+      const t = st.titulos.find(function (x) { return x.id === tid; }) || {};
+      const nome = (D.credor(t.credor) || {}).nome || '';
+      const forcado = ps.some(jaAndou);
+      if (forcado || manter.indexOf(tid) > -1) {
+        ps.forEach(function (p) {
+          if (!p.confirmado_em) { p.confirmado_em = l.confirmado_em; p.confirmado_por = l.confirmado_por || ''; }
+        });
+        (forcado ? r.forcados : r.mantidos).push(nome);
+      } else {
+        ps.forEach(function (p) { p.confirmado_em = null; p.confirmado_por = null; });
+        r.voltaram++;
+      }
+    });
+    l.desconfirmacoes = (l.desconfirmacoes || []).concat([{ em: new Date().toISOString(), por: usuario().nome,
+      motivo: motivo, confirmado_em: l.confirmado_em, mantidos: r.mantidos.concat(r.forcados) }]);
+    l.confirmado_em = null; l.confirmado_por = null; l.confirmado_por_id = null;
+    logar('produtividade', l.centro, 'desfez a confirmação do fechamento',
+      U.fComp(l.competencia) + ' · ' + motivo + ' · continuam confirmados: ' +
+      (r.mantidos.concat(r.forcados).join(', ') || 'nenhum') + ' · ' + r.voltaram + ' voltaram a aguardar');
+    return r;
+  }
+
   /* Bloqueio de pagamento por médico: contrato não assinado, check-in
      não confirmado, o que a gestão precisar segurar. O título continua
      lançado (o custo é real), mas não entra em remessa. */
@@ -9678,12 +9776,18 @@ ERP.store = (function () {
   /* Situação do fechamento para a lista de lançamentos. */
   function situacaoLoteProdutividade(l) {
     const bloqueados = (l.bloqueios || []).filter(function (b) { return !b.liberado_em; });
+    const individuais = l.confirmado_em ? 0 : (l.titulo_ids || []).filter(function (tid) {
+      const ps = parcelasDoMedico(l, tid);
+      return ps.length && ps.every(function (p) { return p.confirmado_em; });
+    }).length;
     return {
       confirmado: !!l.confirmado_em,
+      confirmados_individuais: individuais,
       bloqueados: bloqueados.length,
       medicos_bloqueados: bloqueados.map(function (b) { return b.medico; }),
       situacao: l.cancelado ? 'cancelado'
-        : !l.confirmado_em ? 'aguardando confirmação'
+        : !l.confirmado_em ? (individuais ? 'confirmado em parte (' + individuais + ' de ' + (l.medicos || (l.titulo_ids || []).length) + ')'
+                                           : 'aguardando confirmação')
         : bloqueados.length ? 'confirmado com bloqueio'
         : 'confirmado'
     };
@@ -15719,10 +15823,46 @@ ERP.store = (function () {
     }
     if (lotes.length) return { status: 'lancado', valor: lancado, lotes: lotes.length };
     return { status: 'previsto',
-      valor: (pv && pv.produtividade) || (D.centro(centro) || {}).prev_produtividade || 0, lotes: 0 };
+      /* `prev_repasse` é o campo do cadastro (Cadastros › Projetos,
+         "previsão de repasse"). Lia-se `prev_produtividade`, que não
+         existe: sem previsão salva no mês, o custo saía ZERO e o
+         Resultado mostrava margem de 100% (v176). */
+      valor: (pv && pv.produtividade) || (D.centro(centro) || {}).prev_repasse || 0, lotes: 0 };
   }
 
   const NOME_STATUS_PROD = { previsto: 'previsto', lancado: 'lançado', confirmado: 'confirmado' };
+
+  /* ── EM QUE PÉ ESTÁ A PRODUTIVIDADE DO MÊS (v176) ─────────
+     Do ponto de vista de quem paga o médico, que é o que o Resultado
+     quer saber ao lado da margem:
+       paga         — fechamento lançado e todo o repasse pago;
+       confirmada   — a gestão confirmou o fechamento ("Confirmar
+                      fechamento"); falta pagar;
+       lancada      — o arquivo foi lançado, mas a gestão ainda não
+                      confirmou (o financeiro não paga nesse estado);
+       previsao     — não há fechamento, há valor previsto;
+       sem_previsao — nem fechamento, nem previsão. */
+  const NOME_SITUACAO_PROD = { paga: 'paga', confirmada: 'confirmada', lancada: 'lançada · a confirmar',
+    previsao: 'previsão', sem_previsao: 'sem previsão', nao_se_aplica: '—' };
+  const ORDEM_SITUACAO_PROD = { sem_previsao: 0, previsao: 1, lancada: 2, confirmada: 3, paga: 4, nao_se_aplica: 5 };
+  function situacaoProdutividadeDe(centro, competencia) {
+    const lotes = fechamentosVivosDe(centro, competencia);
+    /* Locação e venda não têm repasse médico: "sem previsão" ali
+       seria pendência falsa. */
+    if (!lotes.length && (D.centro(centro) || {}).produtividade === false) return 'nao_se_aplica';
+    if (!lotes.length) {
+      const pv = previsaoDe(centro, competencia);
+      const previsto = (pv && pv.produtividade) || (D.centro(centro) || {}).prev_repasse || 0;
+      return previsto > 0 ? 'previsao' : 'sem_previsao';
+    }
+    const ids = {};
+    lotes.forEach(function (l) { (l.titulo_ids || []).forEach(function (id) { ids[id] = true; }); });
+    const ps = st.parcelas.filter(function (p) {
+      return ids[p.titulo_id] && ['cancelado', 'substituido'].indexOf(p.status) < 0;
+    });
+    if (ps.length && ps.every(function (p) { return p.status === 'pago'; })) return 'paga';
+    return lotes.every(function (l) { return !!l.confirmado_em; }) ? 'confirmada' : 'lancada';
+  }
 
   /* Painel de STATUS: uma linha por projeto e competência, com o
      estágio do faturamento do jeito que a operação fala — previsto,
@@ -15828,7 +15968,11 @@ ERP.store = (function () {
       const pct = (imp.iss || 0) + (imp.pis_cofins || 0) + (imp.irpj || 0) + (imp.csll || 0);
       const impostos = Math.round(faturamento * pct) / 100;
       const lucro = Math.round((faturamento - custo - impostos) * 100) / 100;
+      /* Grupo (nota única): manda a especialidade mais atrasada. */
+      const situacoes = centros.map(function (id) { return situacaoProdutividadeDe(id, l.competencia); });
+      const prodSit = situacoes.sort(function (a, b) { return ORDEM_SITUACAO_PROD[a] - ORDEM_SITUACAO_PROD[b]; })[0] || 'sem_previsao';
       return Object.assign({}, l, {
+        prod_situacao: prodSit,
         faturamento: faturamento, custo: custo, tipo_custo: tipoCusto,
         impostos: impostos, impostos_pct: Math.round(pct * 100) / 100,
         lucro: lucro,
@@ -21104,7 +21248,7 @@ ERP.store = (function () {
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
-    statusProdutividade, NOME_STATUS_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
+    statusProdutividade, NOME_STATUS_PROD, situacaoProdutividadeDe, NOME_SITUACAO_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
     editarEstimativaEsteira, desfazerEtapaFaturamento, oQueDesfazer, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
     residuoPrevisao, marcarPrevisoes, marcarParcial, salvarPrevisaoDespesa, previsoesDespesa,
     excluirPrevisaoDespesa, replicarSerieDespesa, realizadoDespesa, residuoDespesa,
@@ -21127,7 +21271,8 @@ ERP.store = (function () {
     aprovarRequisicao, registrarCotacao, totalCotado, aprovarCompra, emailDoPedido,
     registrarLoteProdutividade, lotesProdutividade, cancelarLoteProdutividade,
     confirmarLoteProdutividade, bloquearPagamentoMedico, liberarPagamentoMedico, situacaoLoteProdutividade,
-    substituirFechamento, editarLoteProdutividade, voltarFaturamentoParaPrevisao, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
+    substituirFechamento, editarLoteProdutividade, confirmarMedicoProdutividade, desfazerConfirmacaoMedico,
+    desconfirmarLoteProdutividade, voltarFaturamentoParaPrevisao, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
     empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
     empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,

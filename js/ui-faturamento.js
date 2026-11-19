@@ -305,13 +305,79 @@ ERP.faturamento = (function () {
      resultado somado de várias competências mistura mês fechado com
      mês em andamento, e a margem que sai disso não descreve nenhum
      dos dois. */
-  let resComp = U.hoje().slice(0, 7), resCentro = '';
+  let resComp = U.hoje().slice(0, 7), resCentro = '', resStatus = '';
+  /* Filtro de status do faturamento do Resultado (v176). "Já
+     faturado" junta faturado e recebido (em parte ou todo): o que
+     recebeu também foi faturado, e é isso que a pergunta quer. */
+  const JA_FATURADO = ['faturado', 'recebido_parcial', 'recebido'];
+  const casaStatusRes = function (l) {
+    if (!resStatus) return true;
+    if (resStatus === 'ja_faturado') return JA_FATURADO.indexOf(l.status) > -1;
+    if (resStatus === 'nao_faturado') return JA_FATURADO.indexOf(l.status) < 0;
+    return l.status === resStatus;
+  };
+
+  /* EXPORTAR O RESULTADO, no padrão dos relatórios (ERP.exportar):
+     uma linha por projeto, com o cliente em coluna para filtrar no
+     Excel — o agrupamento da tela vira a coluna "Cliente". */
+  function exportarResultado(lista, porCliente, nomes) {
+    const soma = campo => Math.round(lista.reduce(function (t, l) { return t + (l[campo] || 0); }, 0) * 100) / 100;
+    const linhas = [];
+    nomes.forEach(function (nome) {
+      porCliente[nome].forEach(function (l) {
+        linhas.push({
+          cliente: nome,
+          projeto: l.projeto.curto || l.projeto.nome,
+          status_fat: S.NOME_STATUS_FAT[l.status] || l.status,
+          status_prod: S.NOME_SITUACAO_PROD[l.prod_situacao] || '',
+          faturamento: l.faturamento, custo: l.custo, tipo_custo: l.tipo_custo,
+          impostos: l.impostos, impostos_pct: l.impostos_pct, lucro: l.lucro,
+          margem: l.margem === null ? null : l.margem
+        });
+      });
+    });
+    const fat = soma('faturamento'), lucro = soma('lucro');
+    const rotStatus = resStatus ? (U.el('res-status').selectedOptions[0] || {}).textContent : '';
+    ERP.exportar.abrir({
+      nome: 'resultado-' + resComp + (resStatus ? '-' + resStatus : ''),
+      titulo: 'Resultado por cliente',
+      /* Mesmo desenho dos relatórios: título, a linha do recorte e,
+         embaixo, a tabela com filtro. */
+      cabecalho: [['Resultado por cliente'], ['Competência ' + U.fComp(resComp) +
+        (resCentro ? ' · projeto ' + ((D.centro(resCentro) || {}).curto || '') : '') +
+        (rotStatus ? ' · status do faturamento: ' + rotStatus : '') +
+        ' · ' + (sub === 'locacao' ? 'Locações' : 'Serviços médicos'), '', 'Projetos', linhas.length]],
+      subtitulo: 'Competência ' + U.fComp(resComp) +
+        (resCentro ? ' · projeto ' + ((D.centro(resCentro) || {}).curto || '') : '') +
+        (rotStatus ? ' · status do faturamento: ' + rotStatus : '') +
+        ' · ' + (sub === 'locacao' ? 'Locações' : 'Serviços médicos') +
+        ' · ' + linhas.length + ' projeto(s)',
+      colunas: [
+        { campo: 'cliente', titulo: 'Cliente' },
+        { campo: 'projeto', titulo: 'Projeto' },
+        { campo: 'status_fat', titulo: 'Status do faturamento' },
+        { campo: 'status_prod', titulo: 'Status da produtividade' },
+        { campo: 'faturamento', titulo: 'Valor faturado', tipo: 'numero' },
+        { campo: 'custo', titulo: 'Custo', tipo: 'numero' },
+        { campo: 'tipo_custo', titulo: 'Tipo de custo' },
+        { campo: 'impostos', titulo: 'Impostos', tipo: 'numero' },
+        { campo: 'impostos_pct', titulo: 'Impostos %', tipo: 'numero' },
+        { campo: 'lucro', titulo: 'Lucro direto', tipo: 'numero' },
+        { campo: 'margem', titulo: 'Margem %', tipo: 'numero' }
+      ],
+      linhas: linhas,
+      /* `rodape` é uma LISTA DE LINHAS: a do total vai alinhada às colunas. */
+      rodape: [[], ['Total', linhas.length + ' projeto(s)', '', '', fat, soma('custo'), '', soma('impostos'), '',
+        lucro, fat > 0 ? Math.round(lucro / fat * 1000) / 10 : '']]
+    });
+  }
 
   function renderResultado() {
     const box = U.el('fa-aba-resultado');
     if (!box) return;
     if (!resComp) resComp = U.hoje().slice(0, 7);
-    const lista = S.resultadoFaturamento({ competencia: resComp, centro: resCentro }).filter(noSub);
+    const lista = S.resultadoFaturamento({ competencia: resComp, centro: resCentro }).filter(noSub)
+      .filter(casaStatusRes);
     const som = campo => Math.round(lista.reduce(function (t, l) { return t + (l[campo] || 0); }, 0) * 100) / 100;
     const totFat = som('faturamento'), totLucro = som('lucro');
 
@@ -356,8 +422,18 @@ ERP.faturamento = (function () {
               return '<option value="' + c.id + '"' + (c.id === resCentro ? ' selected' : '') + '>' +
                 U.esc(c.curto) + '</option>'; }).join('') +
         '</select></div>' +
+        '<div class="f"><label for="res-status">Status do faturamento</label><select id="res-status">' +
+          [['', 'todos'], ['ja_faturado', 'já faturado (faturado ou recebido)'], ['nao_faturado', 'ainda não faturado']]
+            .concat(Object.keys(S.NOME_STATUS_FAT).map(function (k) { return [k, S.NOME_STATUS_FAT[k]]; }))
+            .map(function (o) {
+              return '<option value="' + o[0] + '"' + (o[0] === resStatus ? ' selected' : '') + '>' + U.esc(o[1]) + '</option>';
+            }).join('') +
+        '</select></div>' +
+        '<button class="btn-sm" id="res-exportar" style="align-self:flex-end"' + (lista.length ? '' : ' disabled') +
+          '>Exportar Excel</button>' +
       '</div>' +
       '<div class="pr-confere">' +
+        '<span id="res-qtd">Projetos na tela <b>' + lista.length + '</b></span>' +
         '<span>Faturamento <b>' + U.brl(totFat) + '</b></span>' +
         '<span>Custo <b>' + U.brl(som('custo')) + '</b></span>' +
         '<span>Impostos <b>' + U.brl(som('impostos')) + '</b></span>' +
@@ -366,7 +442,7 @@ ERP.faturamento = (function () {
       '</div>' +
       (lista.length
         ? '<div class="tabela-rolagem"><table class="tab-resultado"><thead><tr>' +
-          '<th>Cliente / projeto</th><th>Faturamento</th>' +
+          '<th>Cliente / projeto</th><th>Faturamento</th><th>Produtividade</th>' +
           '<th class="num">Valor faturado</th><th class="num">Custo</th>' +
           '<th class="num">Impostos</th><th class="num">Lucro direto</th><th class="num">Margem</th>' +
           '</tr></thead><tbody>' +
@@ -375,7 +451,7 @@ ERP.faturamento = (function () {
             const f = soma(ls, 'faturamento'), lu = soma(ls, 'lucro');
             return '<tr class="res-cliente"><td class="desc">' + U.esc(nome) +
                 '<div class="sub">' + ls.length + ' projeto(s)</div></td>' +
-              '<td></td>' +
+              '<td></td><td></td>' +
               '<td class="num">' + U.brl(f) + '</td>' +
               '<td class="num">' + U.brl(soma(ls, 'custo')) + '</td>' +
               '<td class="num">' + U.brl(soma(ls, 'impostos')) + '</td>' +
@@ -385,6 +461,8 @@ ERP.faturamento = (function () {
                 return '<tr><td class="desc" style="padding-left:24px">' +
                     U.esc(l.projeto.curto || l.projeto.nome) + '</td>' +
                   '<td class="sub">' + U.esc(S.NOME_STATUS_FAT[l.status] || l.status) + '</td>' +
+                  '<td class="sub" data-res-prod="' + l.prod_situacao + '">' +
+                    U.esc(S.NOME_SITUACAO_PROD[l.prod_situacao] || '') + '</td>' +
                   '<td class="num">' + U.brl(l.faturamento) + '</td>' +
                   '<td class="num">' + U.brl(l.custo) +
                     '<div class="sub">' + U.esc(l.tipo_custo) + '</div></td>' +
@@ -394,9 +472,12 @@ ERP.faturamento = (function () {
                   '<td class="num">' + (l.margem === null ? '—' : U.pct(l.margem)) + '</td></tr>';
               }).join('');
           }).join('') + '</tbody></table></div>'
-        : '<div class="vazio"><strong>Nada em ' + U.fComp(resComp) + '.</strong>' +
-          'Escolha outra competência.</div>');
+        : '<div class="vazio"><strong>Nada em ' + U.fComp(resComp) +
+          (resStatus ? ' com esse status' : '') + '.</strong>' +
+          (resStatus ? 'Troque o status do faturamento ou a competência.' : 'Escolha outra competência.') + '</div>');
     U.ajustarColunas(box);
+    U.el('res-status').addEventListener('change', function () { resStatus = this.value; renderResultado(); });
+    U.el('res-exportar').addEventListener('click', function () { exportarResultado(lista, porCliente, nomes); });
     U.el('res-comp').addEventListener('change', function () {
       /* O campo de mês pode ser esvaziado pelo teclado; esvaziado,
          ele volta para o mês corrente em vez de virar "todas". */

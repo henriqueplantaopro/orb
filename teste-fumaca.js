@@ -12516,7 +12516,7 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v164 — bloquear passa a existir no detalhe do lançamento, não só na importação',
     /data-lp-bloquear=/.test(srcProd) && /bloquearPagamentoMedico\(loteId/.test(srcProd), '');
   verificar('v164 — e liberar redesenha a lista de lançamentos, não a prévia que não está na tela',
-    /ERP\.app\.aviso\('Pagamento de ' \+ nome \+ ' liberado\.', 'ok'\);\s*\n[^\n]*\n[^\n]*\n[^\n]*\n[^\n]*\n\s*renderLotes\(\);/.test(srcProd), '');
+    /ERP\.app\.aviso\('Pagamento de ' \+ nome \+ ' desbloqueado'[\s\S]{0,700}?renderLotes\(\);/.test(srcProd), '');
   verificar('v164 — detalhe vazio diz por que está vazio',
     /aponta para ' \+ ids\.length \+ ' título\(s\), e nenhum deles está aqui/.test(srcProd), '');
   verificar('v164 — a conferência de "já lançado" usa a mesma chave que é gravada',
