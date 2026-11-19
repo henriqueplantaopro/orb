@@ -461,6 +461,7 @@ ERP.app = (function () {
     if (nome === 'recebido') ERP.receber.abrirAba('recebidas');
     if (nome === 'despesas') ERP.previsoes.renderDespesas();
     if (nome === 'retencoes') ERP.retencoes.render();
+    if (nome === 'baixarnf') ERP.notasPagar.render();
     if (painel === 'conciliacao') ERP.conciliacao.render();
     // "Sem anexo" é a lista de contas com o filtro de anexo já aplicado
     /* "Atrasadas" virou aba de verdade, com contador, e não só uma
@@ -602,6 +603,7 @@ ERP.app = (function () {
     montarSessao();
     ERP.lancamento.montar();
     ERP.contas.montar();
+    if (ERP.notasPagar) ERP.notasPagar.montar();
     ERP.relatorios.montar();
     ERP.produtividade.montar();
     ERP.remessa.montar();

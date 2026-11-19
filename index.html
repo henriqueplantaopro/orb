@@ -113,6 +113,7 @@
     <button data-aba="remessa" data-area="pagar">Remessa bancária</button>
     <button data-aba="despesas" data-area="pagar">Despesas previstas</button>
     <button data-aba="retencoes" data-area="pagar">Retenções de impostos</button>
+    <button data-aba="baixarnf" data-area="pagar">Baixar NFs</button>
     <button data-aba="anexos" data-area="pagar" class="aba-lembrete">Pago sem NF<span class="contador" id="cont-anexos">0</span></button>
     <button data-aba="pago" data-area="pago" style="display:none">Pagamentos realizados</button>
     <button data-aba="receber" data-area="receber" style="display:none">Contas a receber<span class="contador" id="cont-receber">0</span></button>
@@ -613,6 +614,26 @@
   </div>
 
   <!-- ══════════ RELATÓRIOS ══════════ -->
+  <div data-painel="baixarnf" style="display:none">
+    <div class="card">
+      <h3 style="margin-top:0">Baixar NFs anexadas</h3>
+      <div class="ajuda">Junta num .zip os arquivos (XML e PDF) exatamente como foram anexados aos títulos, com uma planilha-índice.</div>
+      <div class="filtros">
+        <div class="f"><label for="bn-campo">Período por</label><select id="bn-campo">
+          <option value="emissao">Emissão</option><option value="venc">Vencimento</option><option value="pago_em">Pagamento</option></select></div>
+        <div class="f"><label for="bn-de">De</label><input type="date" id="bn-de"></div>
+        <div class="f"><label for="bn-ate">até</label><input type="date" id="bn-ate"></div>
+        <div class="f"><label for="bn-empresa">Empresa</label><select id="bn-empresa"><option value="">todas</option></select></div>
+        <div class="f"><label for="bn-situacao">Situação</label><select id="bn-situacao">
+          <option value="">todas</option><option value="apagar">a pagar</option><option value="pagas">pagas</option></select></div>
+        <div class="f"><label for="bn-tipo">Arquivos</label><select id="bn-tipo">
+          <option value="todos">XML e PDF</option><option value="xml">só XML</option><option value="pdf">só PDF</option></select></div>
+        <div class="f"><label for="bn-fornecedor">Fornecedor, CNPJ ou NF</label><input id="bn-fornecedor" placeholder="digite para filtrar"></div>
+      </div>
+      <div id="bn-saida"></div>
+    </div>
+  </div>
+
   <div data-painel="aprovacoes" style="display:none">
     <div class="card">
       <h2>Pagamentos aguardando aprovação<span class="sub">visão da diretoria e do sócio</span></h2>
@@ -771,6 +792,7 @@
 <script src="js/store.js"></script>
 <script src="js/ui-lancamento.js"></script>
 <script src="js/ui-contas.js"></script>
+<script src="js/notas-pagar.js"></script>
 <script src="js/vendor/exceljs.min.js"></script>
 <script src="js/exportar-fluxo.js"></script>
 <script src="js/ui-relatorios.js"></script>

@@ -12570,4 +12570,29 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   Sv.setUsuario('u8');
 })();
 
+
+/* ── v179 — o arquivo da nota: guardado, baixado como veio, e em lote ── */
+(function () {
+  const fsN = require('fs');
+  const html = fsN.readFileSync(__dirname + '/index.html', 'utf8');
+  const srcN = fsN.readFileSync(__dirname + '/js/notas-pagar.js', 'utf8');
+  const srcL = fsN.readFileSync(__dirname + '/js/ui-lancamento.js', 'utf8');
+  verificar('v179 — a aba "Baixar NFs" e o script estão na página',
+    /data-aba="baixarnf"/.test(html) && /data-painel="baixarnf"/.test(html) &&
+    /<script src="js\/notas-pagar\.js"><\/script>/.test(html), '');
+  verificar('v179 — o lançamento guarda o arquivo, não só o nome',
+    /arquivo: anexoGuardado \|\|/.test(srcL) && /ERP\.notasPagar\.guardar\(arquivoEscolhido\)/.test(srcL), '');
+  verificar('v179 — os arquivos vão para o balde privado notas-pagar',
+    /const BALDE = 'notas-pagar'/.test(srcN) &&
+    fsN.existsSync(__dirname + '/supabase/77-ATUALIZAR-v179.sql'), '');
+  const Sn = sandbox.window.ERP.store;
+  const a1 = Sn.anexoDaParcela({ arquivo: { nome: 'a.xml', dados: 'data:text/xml;base64,PGEvPg==' } });
+  const a2 = Sn.anexoDaParcela({ arquivo: 'b.pdf', arquivo_dados: 'data:application/pdf;base64,JVBERg==' });
+  const a3 = Sn.anexoDaParcela({ arquivo: 'c.xml' });
+  const a4 = Sn.anexoDaParcela({ arquivo: { nome: 'd.xml', path: '2026-11/x-d.xml' } });
+  verificar('v179 — os três formatos antigos e o novo são lidos do mesmo jeito',
+    a1.nome === 'a.xml' && !!a1.dados && a2.nome === 'b.pdf' && !!a2.dados &&
+    a3.so_nome === true && a4.path === '2026-11/x-d.xml' && Sn.anexoDaParcela({}) === null, '');
+})();
+
 concluir();

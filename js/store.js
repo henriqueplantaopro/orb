@@ -10362,15 +10362,42 @@ ERP.store = (function () {
   /* Informar ou anexar a NF DEPOIS, inclusive de título já pago — é o
      caso normal: paga-se o boleto e a nota chega dias depois. Mexe só
      nos campos da nota, sem reabrir o título inteiro pra edição. */
+  /* ── O ANEXO DA NOTA, NUM FORMATO SÓ ────────────────────
+     O arquivo de uma conta a pagar chegou a ser guardado de TRÊS
+     jeitos, conforme a tela por onde entrou:
+       · Nota fiscal  →  arquivo = { nome, dados }  (base64 inteiro)
+       · Editar       →  arquivo = 'nome.xml', arquivo_dados = base64
+       · Lançamento   →  arquivo = 'nome.xml' e NADA MAIS — o conteúdo
+                         era descartado; só o nome ficava.
+     A partir da v179 o arquivo vai para o balde privado
+     `notas-pagar` e o título guarda { nome, path }. Os registros
+     antigos continuam lendo: esta função é o único lugar que sabe
+     dos formatos, e responde sempre { nome, path, dados } — ou
+     { nome, so_nome:true } quando o arquivo nunca foi guardado. */
+  function anexoDaParcela(p) {
+    if (!p) return null;
+    const a = p.arquivo;
+    if (a && typeof a === 'object') {
+      if (!a.path && !a.dados) return null;
+      return { nome: a.nome || 'arquivo', path: a.path || null, dados: a.dados || null,
+        tamanho: a.tamanho || null };
+    }
+    if (p.arquivo_dados) {
+      return { nome: (typeof a === 'string' && a) || 'nota', path: null, dados: p.arquivo_dados };
+    }
+    if (typeof a === 'string' && a) return { nome: a, so_nome: true };
+    return null;
+  }
+
   function informarNF(id, d) {
     if (!pode('lancar') && !pode('pagar')) return { erro: 'Seu perfil não altera dados de nota fiscal.' };
     const p = parcela(id);
     if (!p) return { erro: 'Título não encontrado.' };
     if (p.status === 'cancelado') return { erro: 'Título cancelado.' };
-    const antes = { doc: p.doc, arquivo: p.arquivo ? p.arquivo.nome : null, sem_nf: p.sem_nf };
+    const antes = { doc: p.doc, arquivo: anexoDaParcela(p) ? anexoDaParcela(p).nome : null, sem_nf: p.sem_nf };
     if (d.documento !== undefined) p.doc = d.documento || null;
     if (d.chave !== undefined) p.chave = d.chave || null;
-    if (d.arquivo !== undefined) p.arquivo = d.arquivo || null;
+    if (d.arquivo !== undefined) { p.arquivo = d.arquivo || null; delete p.arquivo_dados; }
     if (d.sem_nf !== undefined) p.sem_nf = !!d.sem_nf;
     // informou número, chave ou arquivo → deixa de ser "sem NF"
     if (temNota(p)) p.sem_nf = false;
@@ -10389,12 +10416,12 @@ ERP.store = (function () {
       .forEach(function (x) {
         if (d.documento !== undefined) x.doc = p.doc;
         if (d.chave !== undefined) x.chave = p.chave;
-        if (d.arquivo !== undefined) x.arquivo = p.arquivo;
+        if (d.arquivo !== undefined) { x.arquivo = p.arquivo; delete x.arquivo_dados; }
         x.sem_nf = p.sem_nf;
       });
     logar('parcela', p.id, 'informou dados da NF',
       (antes.doc ? 'doc ' + antes.doc + ' → ' : 'doc → ') + (p.doc || '—') +
-      (p.arquivo ? ' · anexo ' + p.arquivo.nome : '') + (p.sem_nf ? ' · marcado sem NF' : ''));
+      (anexoDaParcela(p) ? ' · anexo ' + anexoDaParcela(p).nome : '') + (p.sem_nf ? ' · marcado sem NF' : ''));
     return { ok: true, parcela: p };
   }
 
@@ -10635,7 +10662,11 @@ ERP.store = (function () {
        alterações — "de [blob] para [blob]" — não ajuda ninguém a
        entender o que mudou, só pesa a tela de histórico. Registra só
        que um anexo entrou ou saiu, nunca o conteúdo. */
-    if (dados.arquivo_dados !== undefined && dados.arquivo_dados !== (p.arquivo_dados || null)) {
+    if (dados.anexo !== undefined) {
+      mudou.push(dados.anexo ? 'anexou a NF (' + (dados.anexo.nome || 'arquivo') + ')' : 'removeu o anexo da NF');
+      p.arquivo = dados.anexo || null;
+      delete p.arquivo_dados;
+    } else if (dados.arquivo_dados !== undefined && dados.arquivo_dados !== (p.arquivo_dados || null)) {
       mudou.push(dados.arquivo_dados ? 'anexou a NF (' + (dados.arquivo || 'arquivo') + ')' : 'removeu o anexo da NF');
       p.arquivo_dados = dados.arquivo_dados;
       p.arquivo = dados.arquivo || null;
@@ -21274,7 +21305,7 @@ ERP.store = (function () {
     substituirFechamento, editarLoteProdutividade, confirmarMedicoProdutividade, desfazerConfirmacaoMedico,
     desconfirmarLoteProdutividade, voltarFaturamentoParaPrevisao, fechamentosVivosDe, fechamentosSemTitulos, compararFechamento,
     coberturaProdutividade, produtividadePendente, coberturaFaturamento, faturamentoPendente,
-    empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato,
+    empresaDaConta, empresaDoCentro, empresaDoTitulo, empresaDaParcela, contaDoExtrato, anexoDaParcela,
     empresaEmissora, origemDaEmpresaEmissora, definirEmpresaEmissora, apelidoEmpresa,
     dadosDaEmpresaParaRps, empresaDoLoteRps, anexarNotaEmitida,
     dossieFaturamento, editarFaturamento, discriminacaoDaNota, discriminacaoPadrao,
