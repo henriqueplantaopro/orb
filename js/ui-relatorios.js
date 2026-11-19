@@ -304,8 +304,11 @@ ERP.relatorios = (function () {
         ' · ' + r.faturados + ' de ' + r.projetos + ' projeto(s) faturado(s) · total ' +
         U.brl(r.total_bruto),
       colunas: colunas, linhas: linhas,
-      rodape: ['Total', '', '', '', r.documentos + ' documento(s)',
-        r.total_bruto, r.total_liquido].concat(porComp ? [r.total_previsto, ''] : []).concat([''])
+      /* `rodape` é uma LISTA DE LINHAS. Passada como uma linha só, cada
+         valor do total saía numa linha própria, empilhado na coluna A
+         (v176). */
+      rodape: [[], ['Total', '', '', '', r.documentos + ' documento(s)',
+        r.total_bruto, r.total_liquido].concat(porComp ? [r.total_previsto, ''] : []).concat([''])]
     });
   }
 

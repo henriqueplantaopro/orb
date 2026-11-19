@@ -24,6 +24,7 @@ ERP.produtividade = (function () {
         U.el('pr-aba-lotes').style.display = b.dataset.praba === 'lotes' ? '' : 'none';
         U.el('pr-aba-cobertura').style.display = b.dataset.praba === 'cobertura' ? '' : 'none';
         U.el('pr-aba-pendentes').style.display = b.dataset.praba === 'pendentes' ? '' : 'none';
+        if (b.dataset.praba !== 'importar' && alvoImport) { alvoImport = null; desenharAlvo(); }
         if (b.dataset.praba === 'pendentes') renderPendentes();
         if (b.dataset.praba === 'lotes') { loteAberto = null; renderLotes(); }
         if (b.dataset.praba === 'cobertura') renderCobertura();
@@ -68,6 +69,11 @@ ERP.produtividade = (function () {
   }
 
   function ligarCobertura() {
+    const st = U.el('pr-cob-status');
+    if (st) st.addEventListener('change', function () { cobStatus = this.value; desenharCobertura(); });
+    document.querySelectorAll('[data-cob-importar]').forEach(function (b) {
+      b.addEventListener('click', function () { importarDaCobertura(this.dataset.cobImportar, U.val('pr-cob-comp')); });
+    });
     const b2 = U.el('pr-cob-todos');
     if (b2) {
       b2.addEventListener('click', function () {
@@ -83,20 +89,68 @@ ERP.produtividade = (function () {
      padrão esconde exatamente o caso que a tela existe para
      encontrar. */
   let cobTodos = true;
+  /* Filtro de situação da cobertura (v176): '' todos · 'lancado' ·
+     'sem' (esperado e não lançado) · 'nao_tem' (não marcado). */
+  let cobStatus = '';
+
+  /* ── IMPORTAR A PARTIR DA COBERTURA (v176) ──────────────
+     Da linha do projeto que está sem produtividade, um clique leva
+     à importação já com o projeto escolhido — sem trocar de aba,
+     voltar e procurar o projeto numa lista de sessenta. O projeto
+     escolhido aqui vale sobre o palpite tirado do nome do arquivo;
+     a competência do arquivo continua mandando (é o que o arquivo
+     diz), e a da cobertura só entra se o arquivo não trouxer uma. */
+  let alvoImport = null;   // { centro, comp }
+  function desenharAlvo() {
+    const box = U.el('pr-alvo');
+    if (!box) return;
+    if (!alvoImport) { box.innerHTML = ''; return; }
+    const c = D.centro(alvoImport.centro) || {};
+    box.innerHTML = '<div class="aviso" style="margin:0 0 8px" id="pr-alvo-aviso">Importando a produtividade de <b>' +
+      U.esc(c.curto || c.nome || '') + '</b> · ' + U.fComp(alvoImport.comp) + ', escolhido na Cobertura. ' +
+      'Escolha o arquivo abaixo. <button class="btn-ghost" id="pr-alvo-limpar">Não é deste projeto</button></div>';
+    U.el('pr-alvo-limpar').addEventListener('click', function () {
+      alvoImport = null; desenharAlvo();
+      if (lote) render();
+    });
+  }
+  function importarDaCobertura(centro, comp) {
+    alvoImport = { centro: centro, comp: comp };
+    document.querySelector('#pr-nav [data-praba="importar"]').click();
+    desenharAlvo();
+    /* Já com um arquivo na tela de outro projeto: a prévia passa a
+       mostrar o projeto escolhido. */
+    if (lote) render();
+    const arq = U.el('pr-arquivo');
+    if (arq) { arq.value = ''; try { arq.click(); } catch (e) {} }
+  }
 
   function desenharCobertura() {
     const comp = U.val('pr-cob-comp');
-    const linhas = S.coberturaProdutividade(comp, cobTodos);
+    const todasLinhas = S.coberturaProdutividade(comp, cobTodos);
+    const linhas = todasLinhas.filter(function (x) {
+      if (cobStatus === 'lancado') return !!x.lote;
+      if (cobStatus === 'sem') return x.esperado && !x.lote;
+      if (cobStatus === 'nao_tem') return !x.esperado && !x.lote;
+      return true;
+    });
     /* Falta = esperado e não lançado. Projeto de locação não entra
        na conta, senão o número "faltando" assusta sem motivo. */
-    const faltando = linhas.filter(function (x) { return x.esperado && !x.lote; }).length;
-    const extras = linhas.filter(function (x) { return !x.esperado && x.lote; }).length;
+    const faltando = todasLinhas.filter(function (x) { return x.esperado && !x.lote; }).length;
+    const extras = todasLinhas.filter(function (x) { return !x.esperado && x.lote; }).length;
+    const podeImportar = S.podeMover('produtividade') || S.pode('lancar');
     U.el('pr-cob-tabela').innerHTML =
       '<div class="filtros" style="margin:6px 0">' +
-        '<button class="btn-sm" id="pr-cob-todos">' +
+        '<div class="f"><label for="pr-cob-status">Situação</label><select id="pr-cob-status">' +
+          [['', 'todas'], ['lancado', 'lançado'], ['sem', 'sem produtividade'], ['nao_tem', 'não tem produtividade']]
+            .map(function (o) {
+              return '<option value="' + o[0] + '"' + (o[0] === cobStatus ? ' selected' : '') + '>' + o[1] + '</option>';
+            }).join('') + '</select></div>' +
+        '<button class="btn-sm" id="pr-cob-todos" style="align-self:flex-end">' +
           (cobTodos ? 'Ver só os com produtividade' : 'Ver TODOS os projetos') + '</button>' +
       '</div>' +
       '<div class="ajuda" style="margin:6px 0">' + linhas.length + ' projeto(s)' +
+      (cobStatus ? ' nesta situação, de ' + todasLinhas.length : '') +
       (cobTodos ? ' (todos os ativos)' : ' com produtividade') + ' — ' +
       (faltando ? '<b>' + faltando + ' sem produtividade lançada</b> nesta competência.'
                 : 'todos os esperados já lançados nesta competência.') +
@@ -112,7 +166,7 @@ ERP.produtividade = (function () {
          faturamento não faz sentido. */
       '<table><thead><tr><th>Projeto</th><th>Unidade</th><th>Situação</th>' +
       '<th class="num">Médicos</th><th class="num">Valor</th>' +
-      '<th>Faturamento</th></tr></thead><tbody>' +
+      '<th>Faturamento</th>' + (podeImportar ? '<th></th>' : '') + '</tr></thead><tbody>' +
       linhas.map(function (x) {
         const c = D.centro(x.centro) || {};
         /* Vermelho só no que é falta de verdade: esperado e não
@@ -129,7 +183,10 @@ ERP.produtividade = (function () {
               : '<span class="badge b-aguardando">não tem produtividade</span>') + '</td>' +
           '<td class="num">' + (x.lote ? x.medicos : '—') + '</td>' +
           '<td class="num">' + (x.lote ? U.brl(x.valor) : '—') + '</td>' +
-          '<td>' + etapaFat(x.centro, comp) + '</td></tr>';
+          '<td>' + etapaFat(x.centro, comp) + '</td>' +
+          (podeImportar ? '<td>' + (x.lote ? ''
+            : '<button class="btn-sm" data-cob-importar="' + x.centro + '">Importar produtividade</button>') + '</td>' : '') +
+          '</tr>';
       }).join('') + '</tbody></table>' +
       '<div class="ajuda">A autorização do órgão e a liberação para emitir a NF ficam em ' +
         '<b>Faturamento › Esteira</b>.</div>';
@@ -399,13 +456,19 @@ ERP.produtividade = (function () {
                 ? (l.confirmado_em
                     ? '<div class="sub" title="' + U.esc(l.confirmado_por || '') + '">✓ confirmada em ' +
                       U.fData(U.dataLocal(l.confirmado_em)) + '</div>'
-                    : '<div class="sub" style="color:var(--amber,#8a6d00)">aguardando confirmação</div>')
+                    : (function () {
+                        const sl = S.situacaoLoteProdutividade(l);
+                        return '<div class="sub" style="color:var(--amber,#8a6d00)" data-lp-sit="' + l.id + '">' +
+                          U.esc(sl.situacao) + '</div>';
+                      })())
                 : '') + '</td>' +
             '<td class="acoes"><button class="btn-sm" data-lp-ver="' + l.id + '">' +
               (loteAberto === l.id ? 'Fechar' : 'Ver detalhe') + '</button>' +
               (!l.cancelado && !l.confirmado_em && S.pode('confirmar_produtividade')
                 ? '<button class="btn-sm btn-aprovar" data-lp-confirmar="' + l.id + '">' +
                   'Confirmar fechamento</button>' : '') +
+              (!l.cancelado && l.confirmado_em && S.pode('confirmar_produtividade')
+                ? '<button class="btn-sm" data-lp-desconfirmar="' + l.id + '">Desfazer confirmação</button>' : '') +
               (!l.cancelado ? (S.podeCorrigirProdutividade()
                   ? '<button class="btn-sm" data-lp-editar="' + l.id + '">Editar</button>'
                   : '<button class="btn-sm" data-lp-fat="' + l.id + '">Valor a faturar</button>') +
@@ -509,7 +572,13 @@ ERP.produtividade = (function () {
           '<td class="num">' + U.brl(p.valor) + '</td>' +
           '<td class="num">' + (pago > 0.004 ? U.brl(pago) : '—') + '</td>' +
           '<td><span class="badge ' + s.cls + '">' + s.txt + '</span>' +
-            (s.motivo ? '<div class="sub">' + U.esc(s.motivo) + '</div>' : '') + '</td>' +
+            (s.motivo ? '<div class="sub">' + U.esc(s.motivo) + '</div>' : '') +
+            /* De quem é a confirmação: do fechamento todo, só deste
+               médico, ou de ninguém ainda (v177). */
+            (l.cancelado || l.confirmado_em ? ''
+              : p.confirmado_em
+                ? '<div class="sub" data-lp-conf-ind="' + p.id + '">✓ confirmado só este médico</div>'
+                : '<div class="sub" style="color:var(--amber,#8a6d00)">aguardando confirmação</div>') + '</td>' +
           /* ── COMO RECEBE, AQUI ─────────────────────────────────
              O impedimento de pagamento era descoberto duas telas
              depois, no contas a pagar, por quem não tem o arquivo
@@ -537,6 +606,13 @@ ERP.produtividade = (function () {
                 'Incluir dados bancários</button>' : '') + '</td>';
           })() +
           '<td class="acoes"><button class="btn-sm" data-lp-medico="' + p.id + '">' + rotuloComposicao(p) + '</button>' +
+            (!l.cancelado && !l.confirmado_em && S.pode('confirmar_produtividade')
+              ? (p.confirmado_em
+                  ? (pago > 0.004 ? '' : ' <button class="btn-sm" data-lp-desconf-med="' + p.id + '" data-lote="' + l.id +
+                      '">Desfazer confirmação</button>')
+                  : ' <button class="btn-sm btn-aprovar" data-lp-conf-med="' + p.id + '" data-lote="' + l.id +
+                    '">Confirmar só este</button>')
+              : '') +
             /* BLOQUEAR E DESBLOQUEAR AQUI, os dois.
                Só o "Liberar" existia, e só aparecia em quem já
                estava bloqueado — então bloquear por falta de
@@ -545,7 +621,7 @@ ERP.produtividade = (function () {
             (S.podeMover('produtividade') || S.pode('lancar')
               ? (s.bloqueio
                   ? ' <button class="btn-sm btn-aprovar" data-lp-liberar="' + p.id + '" ' +
-                    'data-lote="' + l.id + '">Liberar</button>'
+                    'data-lote="' + l.id + '">Desbloquear</button>'
                   : (pago > 0.004
                       ? ''
                       : ' <button class="btn-sm btn-cancelar" data-lp-bloquear="' + p.id + '" ' +
@@ -660,6 +736,18 @@ ERP.produtividade = (function () {
           fecharTxt: 'Cancelar',
           corpo: '<label for="lb-motivo">Por que está liberando?</label>' +
             '<input id="lb-motivo" placeholder="ex.: documento entregue, escala conferida">' +
+            /* Desbloquear não basta quando o fechamento ainda não foi
+               confirmado: o médico continuaria sem poder ser pago. */
+            (function () {
+              const l = S.st.lotesProdutividade.find(function (x) { return x.id === loteId; }) || {};
+              if (l.confirmado_em || p.confirmado_em) return '';
+              return S.pode('confirmar_produtividade')
+                ? '<label class="marcar" style="margin-top:8px"><input type="checkbox" id="lb-confirmar" checked>' +
+                  '<span>Confirmar também a produtividade de ' + U.esc(nome) + ' (só dele) — sem isso o ' +
+                  'fechamento ainda não confirmado continua segurando o pagamento</span></label>'
+                : '<div class="aviso" style="margin-top:8px">O fechamento ainda não foi confirmado: mesmo ' +
+                  'desbloqueado, ' + U.esc(nome) + ' só pode ser pago depois da confirmação da gestão.</div>';
+            })() +
             '<div class="ajuda">Fica na trilha junto com o motivo do bloqueio: quem olhar ' +
             'depois precisa entender por que o pagamento foi travado e por que foi solto.</div>' +
             '<div id="lb-erro"></div>',
@@ -675,12 +763,91 @@ ERP.produtividade = (function () {
               if (erro) erro.innerHTML = '<div class="login-erro">' + U.esc(r.erro) + '</div>';
               return;
             }
+            let conf = null;
+            if (U.el('lb-confirmar') && U.el('lb-confirmar').checked) conf = S.confirmarMedicoProdutividade(loteId, p.titulo_id);
             ERP.app.fecharModal();
-            ERP.app.aviso('Pagamento de ' + nome + ' liberado.', 'ok');
+            ERP.app.aviso('Pagamento de ' + nome + ' desbloqueado' +
+              (conf && conf.ok ? ' e confirmado — já pode ser pago.' : conf && conf.erro ? ', mas a confirmação falhou: ' + conf.erro : '.'),
+              conf && conf.erro ? 'erro' : 'ok');
             /* `render()` desenha a PRÉVIA da importação, que aqui
                não existe: ela sai no primeiro `if (!L) return`. A
                liberação acontecia e a tela ficava igual, mostrando
                "bloqueado" — até alguém trocar de aba. */
+            renderLotes();
+          } }]
+        });
+      });
+    });
+
+    /* CONFIRMAR / DESFAZER um médico só (v177). */
+    document.querySelectorAll('[data-lp-conf-med]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const p = S.todasParcelas().find(function (x) { return x.id === b2.dataset.lpConfMed; });
+        if (!p) return;
+        const nome = ERP.lancamento.nomeCredor(p.credor) || 'o médico';
+        ERP.app.modal({
+          titulo: 'Confirmar só ' + nome, fecharTxt: 'Cancelar',
+          corpo: '<div class="ajuda">Libera para pagamento <b>apenas</b> ' + U.esc(nome) + ' (' + U.brl(p.valor) +
+            '). Os outros médicos deste fechamento continuam aguardando a confirmação.</div>' +
+            (p.bloqueio_pagamento ? '<div class="aviso" style="margin-top:8px">' + U.esc(nome) + ' está com o pagamento ' +
+              '<b>bloqueado</b>: confirmado, só sai depois de desbloquear.</div>' : ''),
+          acoes: [{ txt: 'Confirmar só este médico', cls: 'btn-aprovar', fn: function () {
+            const r = S.confirmarMedicoProdutividade(b2.dataset.lote, p.titulo_id);
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal();
+            ERP.app.aviso('Produtividade de ' + nome + ' confirmada' + (r.bloqueado ? ' (segue bloqueada até desbloquear).' : ' — já pode ser pago.'), 'ok');
+            renderLotes();
+          } }]
+        });
+      });
+    });
+    document.querySelectorAll('[data-lp-desconf-med]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const p = S.todasParcelas().find(function (x) { return x.id === b2.dataset.lpDesconfMed; });
+        if (!p) return;
+        const r = S.desfazerConfirmacaoMedico(b2.dataset.lote, p.titulo_id);
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.aviso('Confirmação de ' + (ERP.lancamento.nomeCredor(p.credor) || 'o médico') + ' desfeita.', 'ok');
+        renderLotes();
+      });
+    });
+    /* DESFAZER A CONFIRMAÇÃO DO FECHAMENTO, mantendo quem precisar. */
+    document.querySelectorAll('[data-lp-desconfirmar]').forEach(function (b2) {
+      b2.addEventListener('click', function () {
+        const l = S.st.lotesProdutividade.find(function (x) { return x.id === b2.dataset.lpDesconfirmar; });
+        if (!l) return;
+        const c = D.centro(l.centro) || {};
+        const meds = (l.titulo_ids || []).map(function (tid) {
+          const ps = S.todasParcelas().filter(function (x) { return x.titulo_id === tid && ['cancelado', 'substituido'].indexOf(x.status) < 0; });
+          if (!ps.length) return null;
+          const andou = ps.some(function (x) { return x.status === 'pago' || S.pagoDe(x.id) > 0.004 || (S.emCursoDe ? S.emCursoDe(x.id).length : 0); });
+          return { tid: tid, nome: ERP.lancamento.nomeCredor(ps[0].credor) || '—',
+            valor: ps.reduce(function (a, x) { return a + x.valor; }, 0), andou: andou,
+            /* já tinha confirmação só dele antes do fechamento inteiro: vem marcado */
+            individual: ps.every(function (x) { return !!x.confirmado_em; }) };
+        }).filter(Boolean);
+        ERP.app.modal({
+          titulo: 'Desfazer confirmação · ' + (c.curto || c.nome) + ' · ' + U.fComp(l.competencia), fecharTxt: 'Cancelar',
+          corpo: '<div class="ajuda">O fechamento volta a <b>aguardar confirmação</b>. Marque quem continua ' +
+            'confirmado (liberado para pagar). Quem já foi pago ou está em pagamento continua confirmado — não dá ' +
+            'para desconfirmar o que já saiu.</div>' +
+            '<table id="dc-medicos"><thead><tr><th></th><th>Médico</th><th class="num">Valor</th><th>Situação</th></tr></thead><tbody>' +
+            meds.map(function (m) {
+              return '<tr><td><input type="checkbox" style="width:auto" data-dc-manter="' + m.tid + '"' +
+                (m.andou ? ' checked disabled' : m.individual ? ' checked' : '') + '></td><td class="desc">' + U.esc(m.nome) + '</td>' +
+                '<td class="num">' + U.brl(m.valor) + '</td><td class="sub">' + (m.andou ? 'pago ou em pagamento' : '—') + '</td></tr>';
+            }).join('') + '</tbody></table>' +
+            '<label for="dc-motivo">Por que está desfazendo?</label>' +
+            '<input id="dc-motivo" placeholder="ex.: confirmei o fechamento só para conciliar uma médica">',
+          acoes: [{ txt: 'Desfazer confirmação', cls: 'btn-cancelar', fn: function () {
+            const manter = Array.from(document.querySelectorAll('[data-dc-manter]:checked:not(:disabled)'))
+              .map(function (x) { return x.dataset.dcManter; });
+            const r = S.desconfirmarLoteProdutividade(l.id, { motivo: U.val('dc-motivo'), manter: manter });
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal();
+            const ficam = r.mantidos.concat(r.forcados);
+            ERP.app.aviso('Confirmação desfeita. ' + (ficam.length ? 'Continuam confirmados: ' + ficam.join(', ') + '. ' : '') +
+              r.voltaram + ' voltaram a aguardar.', 'ok');
             renderLotes();
           } }]
         });
@@ -956,6 +1123,9 @@ ERP.produtividade = (function () {
       try {
         const wb = XLSX.read(new Uint8Array(leitor.result), { type: 'array' });
         lote = ler(wb, arq.name);
+        /* Veio da Cobertura e o arquivo não traz período: vale o mês
+           da linha que foi clicada. */
+        if (alvoImport && !lote.competencia) lote.competencia = alvoImport.comp;
         complementar = null;   // arquivo novo: a pergunta do complemento volta a valer
         zerosAceitos = null;   // e a dos médicos com valor zerado também
         render();
@@ -2124,7 +2294,7 @@ ERP.produtividade = (function () {
        voltar a mostrar o arquivo anterior. */
     if (!L) return;
     const medicos = porMedico(L);
-    const centro = centroSugerido(L.projeto);
+    const centro = (alvoImport && alvoImport.centro) || centroSugerido(L.projeto);
     /* TOTAL NÃO IMPRESSO NÃO É TOTAL ZERO.
 
        Nem todo fechamento traz a linha "Total da produtividade" no
@@ -2188,6 +2358,10 @@ ERP.produtividade = (function () {
           (proc ? L.qtd_procedimentos + ' ' + voc.sing + '(s) de ' + L.linhas.length + ' tipo(s)'
                 : L.linhas.length + ' linha(s) de setor/tipo') + '</span>' +
       '</div>' +
+      (alvoImport && L.competencia && L.competencia !== alvoImport.comp
+        ? '<div class="aviso" style="margin:10px 0" id="pr-alvo-mes">O arquivo é de <b>' + U.fComp(L.competencia) +
+          '</b>, e na Cobertura você clicou em ' + U.fComp(alvoImport.comp) + '. Vale o mês do arquivo — confira ' +
+          'se é o arquivo certo.</div>' : '') +
       (function () {
         const rep = docsRepetidos(L);
         const ds = Object.keys(rep);
@@ -2862,6 +3036,7 @@ ERP.produtividade = (function () {
       divergencias: divergencias.length };
     if (feitos > 0) {
       lote = null;
+      alvoImport = null; desenharAlvo();
       Object.keys(bloqueiosPre).forEach(function (k) { delete bloqueiosPre[k]; });
       Object.keys(motivosPre).forEach(function (k) { delete motivosPre[k]; });
       Object.keys(bancariosPre).forEach(function (k) { delete bancariosPre[k]; });
