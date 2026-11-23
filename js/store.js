@@ -13118,11 +13118,141 @@ ERP.store = (function () {
     if (!acct) return null;
     /* A conta do OFX às vezes vem com o dígito junto, às vezes sem. */
     const bate = (a, b) => a && b && (a === b || a === b + '' || so(a + '') === so(b + ''));
+    /* O Itaú põe a AGÊNCIA na frente da conta no ACCTID: agência 3039,
+       conta 99045-6 chega como 3039990456. Cadastrada do jeito que
+       está no cartão (agência num campo, conta no outro), a conta
+       nunca era reconhecida. */
+    const dig = v => String(v || '').replace(/\D/g, '');
     return D.bancos.find(function (b) {
       const c = so(b.conta), cdv = so(String(b.conta || '') + String(b.conta_dv || ''));
+      const ag = dig(b.agencia).replace(/^0+/, '');
+      const agc = ag ? so(ag + dig(b.conta).replace(/^0+/, '')) : '';
+      const agcdv = ag ? so(ag + dig(b.conta).replace(/^0+/, '') + dig(b.conta_dv)) : '';
       const mesmoBanco = !bank || !b.banco || so(b.banco) === bank;
-      return mesmoBanco && (bate(acct, c) || bate(acct, cdv));
+      return mesmoBanco && (bate(acct, c) || bate(acct, cdv) || bate(acct, agc) || bate(acct, agcdv));
     }) || null;
+  }
+
+  /* ── CONTAS BANCÁRIAS, PELA ADMINISTRAÇÃO ────────────────
+     Até a v183 a lista de contas era só de leitura: conta nova só
+     entrava por SQL. Cadastro se faz na tela. */
+  const CODIGO_BANCO = { '237': 'Bradesco', '341': 'Itaú', '033': 'Santander', '001': 'Banco do Brasil',
+    '104': 'Caixa', '077': 'Inter', '260': 'Nubank', '336': 'C6', '748': 'Sicredi', '756': 'Sicoob', '422': 'Safra' };
+  function salvarContaBancaria(d) {
+    d = d || {};
+    if (!podeMover('cadastros')) return { erro: 'Seu perfil não cadastra contas bancárias.' };
+    const t = v => String(v == null ? '' : v).trim();
+    const banco = t(d.banco).replace(/\D/g, '').padStart(3, '0');
+    const agencia = t(d.agencia).replace(/\D/g, '');
+    const conta = t(d.conta).replace(/\D/g, '');
+    const falta = [];
+    if (!t(d.apelido)) falta.push('nome da conta');
+    if (!D.empresaPor(d.empresa)) falta.push('empresa');
+    if (!/^\d{3}$/.test(banco) || banco === '000') falta.push('código do banco (3 números)');
+    if (!agencia) falta.push('agência');
+    if (!conta) falta.push('conta');
+    if (falta.length) return { erro: 'Falta: ' + falta.join(', ') + '.' };
+    const igual = D.bancos.find(function (b) {
+      return b.id !== d.id && String(b.banco || '').replace(/\D/g, '').padStart(3, '0') === banco &&
+        String(b.agencia || '').replace(/\D/g, '').replace(/^0+/, '') === agencia.replace(/^0+/, '') &&
+        String(b.conta || '').replace(/\D/g, '').replace(/^0+/, '') === conta.replace(/^0+/, '');
+    });
+    if (igual) return { erro: 'Esta agência e conta já estão cadastradas como "' + igual.apelido + '".' };
+    let saldoIni = 0;
+    if (t(d.saldo_inicial)) {
+      saldoIni = typeof d.saldo_inicial === 'number' ? d.saldo_inicial : U.parseValor(d.saldo_inicial);
+      if (saldoIni === null || isNaN(saldoIni)) return { erro: 'Saldo inicial: use 00.000,00.' };
+    }
+    if (saldoIni && !t(d.saldo_inicial_em)) return { erro: 'Informe a data do saldo inicial.' };
+    const dados = {
+      empresa: d.empresa, apelido: t(d.apelido), banco: banco,
+      agencia: agencia, agencia_dv: t(d.agencia_dv).replace(/[^\dXx]/g, ''),
+      conta: conta, conta_dv: t(d.conta_dv).replace(/[^\dXx]/g, ''),
+      saldo_inicial: Math.round((saldoIni || 0) * 100) / 100,
+      saldo_inicial_em: t(d.saldo_inicial_em) || null,
+      ativo: d.ativo !== false
+    };
+    let b = d.id ? D.bancos.find(function (x) { return x.id === d.id; }) : null;
+    if (d.id && !b) return { erro: 'Conta não encontrada.' };
+    if (b) {
+      /* Trocar a empresa de uma conta que já tem extrato mudaria de dono
+         o dinheiro que já passou por ela. */
+      if (b.empresa !== dados.empresa && st.linhas.some(function (l) { return l.banco === b.id; })) {
+        return { erro: 'Esta conta já tem extrato importado — a empresa dela não pode mudar.' };
+      }
+      Object.assign(b, dados);
+    } else {
+      b = Object.assign({ id: novoId('bc'), layout_remessa: '', convenio: '' }, dados);
+      D.bancos.push(b);
+    }
+    logar('cadastro', b.id, d.id ? 'editou conta bancária' : 'cadastrou conta bancária',
+      b.apelido + ' · ' + (CODIGO_BANCO[banco] || banco) + ' ag. ' + agencia + ' c/c ' + conta +
+      (dados.conta_dv ? '-' + dados.conta_dv : ''));
+    return { ok: true, id: b.id };
+  }
+
+  /* Linha de SALDO no meio dos lançamentos: o Itaú manda "SALDO
+     ANTERIOR" e "SALDO TOTAL DISPONÍVEL DIA" como se fossem créditos.
+     Não são movimento — contá-las inflava as entradas a explicar. */
+  const ehLinhaDeSaldo = memo => /^\s*S\s*A\s*L\s*D\s*O\b/i.test(String(memo || ''));
+
+  /* ── EXTRATO IMPORTADO NA CONTA ERRADA ───────────────────
+     O arquivo da Novaped entrou na conta do Bradesco da HJM (a conta
+     do arquivo não estava cadastrada, então nada avisou). Mover leva
+     o arquivo inteiro — linhas e saldo — para a conta certa. Só se
+     nenhuma linha dele estiver conciliada: conciliada já gerou
+     pagamento naquela conta. */
+  function extratosDaConta(bancoId) {
+    return st.extratos.filter(function (e) { return e.banco === bancoId; }).map(function (e) {
+      const ls = st.linhas.filter(function (l) { return l.extrato_id === e.id; });
+      return { extrato: e, linhas: ls.length,
+        conciliadas: ls.filter(function (l) { return l.situacao === 'conciliado'; }).length };
+    }).sort(function (a, b) { return String(b.extrato.criado_em || '').localeCompare(String(a.extrato.criado_em || '')); });
+  }
+
+  function moverExtrato(extratoId, bancoDestino) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const e = st.extratos.find(function (x) { return x.id === extratoId; });
+    if (!e) return { erro: 'Extrato não encontrado.' };
+    const destino = D.bancos.find(function (b) { return b.id === bancoDestino; });
+    if (!destino) return { erro: 'Escolha a conta certa.' };
+    if (destino.id === e.banco) return { erro: 'O extrato já está nesta conta.' };
+    const ls = st.linhas.filter(function (l) { return l.extrato_id === e.id; });
+    const conc = ls.filter(function (l) { return l.situacao === 'conciliado'; });
+    if (conc.length) {
+      return { erro: conc.length + ' linha(s) deste extrato já estão conciliadas na conta atual. ' +
+        'Desfaça essas conciliações antes de mover.' };
+    }
+    const ja = ls.filter(function (l) {
+      return st.linhas.some(function (x) { return x.chave === destino.id + '|' + l.fitid; });
+    });
+    if (ja.length && ja.length === ls.length) {
+      return { erro: 'Este extrato já foi importado também na ' + destino.apelido + '. ' +
+        'Não há o que mover — a cópia daqui é que sobra.' };
+    }
+    const origem = e.banco;
+    let movidas = 0, saldos = 0;
+    ls.forEach(function (l) {
+      if (ja.indexOf(l) > -1) {
+        /* já existe na conta certa: esta cópia é ignorada, para não duplicar */
+        l.situacao = 'ignorado';
+        l.observacao = 'cópia de linha já importada na ' + destino.apelido;
+        return;
+      }
+      l.banco = destino.id;
+      l.chave = destino.id + '|' + l.fitid;
+      if (ehLinhaDeSaldo(l.memo) && l.situacao === 'pendente') {
+        l.situacao = 'ignorado';
+        l.observacao = 'linha de saldo do extrato — não é movimento';
+        saldos++;
+      }
+      movidas++;
+    });
+    e.banco = destino.id;
+    logar('extrato', e.id, 'moveu extrato de conta',
+      ((D.bancos.find(function (b) { return b.id === origem; }) || {}).apelido || origem) + ' → ' + destino.apelido +
+      ' · ' + movidas + ' linha(s)');
+    return { ok: true, movidas: movidas, saldos: saldos, ignoradas_duplicadas: ja.length };
   }
 
   function importarExtrato(bancoId, lido, nomeArquivo) {
@@ -13141,8 +13271,17 @@ ERP.store = (function () {
         conta_certa: daConta.id, divergente: true };
     }
     if (!daConta && lido.conta && lido.conta.numero) {
-      /* Conta não cadastrada: não impede, mas registra o aviso — é
-         assim que se descobre agência/conta faltando no cadastro. */
+      /* Conta não cadastrada: ANTES só avisava e importava na conta
+         da tela — foi assim que o extrato do Itaú da Novaped entrou
+         na conta do Bradesco da HJM. Agora para e pergunta; a tela
+         só segue com a confirmação explícita (`importar_sem_conta`). */
+      if (!lido.importar_sem_conta) {
+        const nb = (CODIGO_BANCO[String(lido.conta.banco || '').replace(/\D/g, '').slice(-3)] || '');
+        return { erro: 'A conta ' + lido.conta.numero + (nb ? ' (' + nb + ')' : '') + ' do arquivo não está ' +
+          'cadastrada. Se ela é de outra empresa ou conta, cadastre em Administração › Contas bancárias e ' +
+          'importe nela. Importar na ' + ((D.bancos.find(function (b) { return b.id === bancoId; }) || {}).apelido || '') +
+          ' só se tiver certeza de que o arquivo é desta conta.', nao_cadastrada: true };
+      }
       lido.aviso_conta = 'A conta ' + lido.conta.numero + ' do arquivo não está cadastrada no sistema. ' +
         'Confira o cadastro da conta para o reconhecimento automático funcionar.';
     }
@@ -13152,8 +13291,9 @@ ERP.store = (function () {
       periodo_ini: lido.periodo.ini, periodo_fim: lido.periodo.fim,
       saldo: lido.saldo.valor, qtd: 0, criado_em: new Date(), usuario: usuario().nome, usuario_id: (usuario() || {}).id || null
     };
-    let novos = 0, repetidos = 0;
+    let novos = 0, repetidos = 0, saldosIgnorados = 0;
     lido.lancamentos.forEach(function (l) {
+      if (ehLinhaDeSaldo(l.memo)) { saldosIgnorados++; return; }
       const chave = bancoId + '|' + l.fitid;
       if (st.linhas.some(function (x) { return x.chave === chave; })) { repetidos++; return; }
       st.linhas.push({
@@ -13172,7 +13312,7 @@ ERP.store = (function () {
        divergência apurada no primeiro desaparecia. A trava de
        conferência de saldo caía com dois cliques. */
     if (!novos) {
-      return { ok: true, novos: 0, repetidos: repetidos, extrato: null,
+      return { ok: true, novos: 0, repetidos: repetidos, saldos_ignorados: saldosIgnorados, extrato: null,
         aviso: 'Este extrato já tinha sido importado: nenhum lançamento novo. ' +
           'A conferência de saldo anterior continua valendo.' };
     }
@@ -13180,7 +13320,7 @@ ERP.store = (function () {
     logar('extrato', ext.id, 'importou extrato',
       novos + ' lançamento(s)' + (repetidos ? ', ' + repetidos + ' já existiam' : '') +
       ' · ' + (D.banco ? '' : '') + U.fData(lido.periodo.ini));
-    return { ok: true, novos: novos, repetidos: repetidos, extrato: ext };
+    return { ok: true, novos: novos, repetidos: repetidos, saldos_ignorados: saldosIgnorados, extrato: ext };
   }
 
   const linhasExtrato = f => st.linhas.slice().filter(function (l) {
@@ -21733,7 +21873,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
-    medicoSemPagamento, desfazerSemPagamento,
+    medicoSemPagamento, desfazerSemPagamento, salvarContaBancaria, extratosDaConta, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,

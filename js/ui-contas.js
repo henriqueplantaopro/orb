@@ -270,15 +270,18 @@ ERP.contas = (function () {
     const caixa = U.el('f-flt-banco');
     if (caixa) caixa.style.display = abaContas === 'pagas' ? '' : 'none';
     if (abaContas !== 'pagas' && sel.value) { sel.value = ''; }
-    if (sel.dataset.pronto) return;
+    /* refeito quando o número de contas muda (conta nova cadastrada) */
+    if (sel.dataset.pronto === String(D.bancos.length)) return;
+    const jaLigado = !!sel.dataset.pronto, atualB = sel.value;
     sel.innerHTML = '<option value="">todos os bancos</option>' +
       D.bancos.filter(function (b) { return b.ativo; }).map(function (b) {
         const e = D.empresaPor(b.empresa);
         return '<option value="' + b.id + '">' + U.esc(b.apelido) +
           (e ? ' · ' + U.esc(e.apelido) : '') + '</option>';
       }).join('');
-    sel.dataset.pronto = '1';
-    sel.addEventListener('change', render);
+    sel.value = atualB;
+    sel.dataset.pronto = String(D.bancos.length);
+    if (!jaLigado) sel.addEventListener('change', render);
   }
 
   function preencherFiltroEmpresa() {
