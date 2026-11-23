@@ -1579,7 +1579,7 @@ ERP.store = (function () {
     const alvos = c.grupo_faturamento ? projetosDoGrupo(c.grupo_faturamento) : [centroId];
     const faturados = alvos.filter(function (id) {
       return st.receber.some(function (r) {
-        return r.centro === id && r.competencia === competencia &&
+        return cobreCentro(r, id) && r.competencia === competencia &&
           ['nota', 'fatura'].indexOf(r.origem) > -1 &&
           ['cancelado', 'substituido'].indexOf(r.status) < 0;
       });
@@ -4557,6 +4557,25 @@ ERP.store = (function () {
     .filter(function (c) { return c.tipo === 'projeto' && c.grupo_faturamento === grupo; })
     .map(function (c) { return c.id; });
 
+  /* A NOTA DO GRUPO COBRE TODOS OS SETORES DO RATEIO, não só o
+     principal. O recebível único do grupo mora num centro só (o
+     primeiro do rateio), e quase toda pergunta "este setor já tem
+     nota?" olhava apenas `r.centro`. Foi assim que o GHC Bonsucesso
+     ficou com a anestesia "faturada" pela nota inteira, os outros
+     quatro setores ainda "liberados" — e o botão "Anexar NF"
+     continuou na linha do grupo, convidando a lançar a mesma nota de
+     novo (e de novo). */
+  function cobreCentro(r, centro) {
+    return r.centro === centro ||
+      (r.rateio_centros || []).some(function (x) { return x.centro === centro; });
+  }
+  /* Quanto do documento é deste setor: a parte do rateio, ou o
+     documento inteiro quando ele é só do setor. */
+  function parteDoCentro(r, centro) {
+    const parte = (r.rateio_centros || []).find(function (x) { return x.centro === centro; });
+    return parte ? (Number(parte.valor) || 0) : (r.valor_bruto || 0);
+  }
+
   /* Base do grupo numa competência: soma do que cada projeto confirmou
      (ou, na falta, previu), com a lista para o gestor conferir. */
   function baseDoGrupo(grupo, competencia) {
@@ -4639,7 +4658,7 @@ ERP.store = (function () {
        previsão discordarem — e é a previsão que alimenta o DRE. */
     const jaFaturado = ids.filter(function (id) {
       return st.receber.some(function (r) {
-        return r.centro === id && r.competencia === competencia &&
+        return cobreCentro(r, id) && r.competencia === competencia &&
           ['nota', 'fatura'].indexOf(r.origem) > -1 &&
           ['cancelado', 'substituido'].indexOf(r.status) < 0;
       });
@@ -9534,7 +9553,7 @@ ERP.store = (function () {
         '. Desfaça na Esteira do faturamento antes.' };
     }
     const faturado = st.receber.some(function (r) {
-      return ['nota', 'fatura'].indexOf(r.origem) > -1 && r.centro === centro &&
+      return ['nota', 'fatura'].indexOf(r.origem) > -1 && cobreCentro(r, centro) &&
         r.competencia === competencia && ['cancelado', 'substituido'].indexOf(r.status) < 0;
     });
     if (faturado) return { erro: 'Este mês já foi faturado — o valor da nota é que vale.' };
@@ -15769,7 +15788,7 @@ ERP.store = (function () {
     }
     if (!String(motivo || '').trim()) return { erro: 'Diga por que este lançamento não tem faturamento.' };
     const jaNota = st.receber.some(function (r) {
-      return r.centro === centro && r.competencia === comp && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+      return cobreCentro(r, centro) && r.competencia === comp && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
         ['cancelado', 'substituido'].indexOf(r.status) < 0;
     });
     if (jaNota) return { erro: 'Este projeto já tem nota emitida em ' + U.fComp(comp) + '.' };
@@ -16342,7 +16361,7 @@ ERP.store = (function () {
        existir de novo. A esteira já sabe que está faturado; só não
        estava olhando. */
     const jaFaturado = st.receber.filter(function (r) {
-      return r.centro === centro && r.competencia === competencia &&
+      return cobreCentro(r, centro) && r.competencia === competencia &&
         ['nota', 'fatura'].indexOf(r.origem) > -1 &&
         ['cancelado', 'substituido'].indexOf(r.status) < 0;
     });
@@ -16656,7 +16675,7 @@ ERP.store = (function () {
       if (!c || c.tipo !== 'projeto') return;
       const pv = previsaoDe(centro, competencia);
       const docs = st.receber.filter(function (r) {
-        return r.centro === centro && r.competencia === competencia &&
+        return cobreCentro(r, centro) && r.competencia === competencia &&
           ['nota', 'fatura'].indexOf(r.origem) > -1 && ['cancelado', 'substituido'].indexOf(r.status) < 0;
       });
       const etapa = docs.length ? 'faturado' : etapaDaPrevisao(pv);
@@ -16700,8 +16719,11 @@ ERP.store = (function () {
         sem_previsao: !pv || (!pv.faturamento && !pv.confirmado_em && !pv.autorizado_em),
         estimado: (pv && pv.faturamento) ? null : (c.prev_faturamento || 0),
         prod: statusProdutividade(centro, competencia),
-        valor: docs.length ? Math.round(docs.reduce(function (a, r) { return a + r.valor_bruto; }, 0) * 100) / 100
+        /* O setor vale a PARTE dele na nota do grupo — com a nota
+           inteira em cada setor, o grupo somava a nota sete vezes. */
+        valor: docs.length ? Math.round(docs.reduce(function (a, r) { return a + parteDoCentro(r, centro); }, 0) * 100) / 100
           : (pv ? pv.faturamento : 0),
+        documentos_ids: docs.map(function (r) { return r.id; }),
         documentos: docs.map(function (r) { return r.numero; }),
         parado_desde: desde,
         dias: U.diasEntre(desde, hoje),
@@ -16850,7 +16872,18 @@ ERP.store = (function () {
         /* O valor do grupo é o do faturamento único: se alguma
            especialidade concentra a nota, é ela; senão, a soma. */
         g.valor = Math.round(esp.reduce(function (t, e) { return t + (e.valor || 0); }, 0) * 100) / 100;
-        g.documentos = esp.reduce(function (t, e) { return t.concat(e.documentos || []); }, []);
+        /* A mesma nota aparece em cada setor do rateio: no grupo ela
+           conta UMA vez. Duas notas com o mesmo número continuam
+           sendo duas (é o sintoma que a linha precisa mostrar). */
+        const idsDoc = [];
+        g.documentos = [];
+        esp.forEach(function (e) {
+          (e.documentos_ids || []).forEach(function (id, i) {
+            if (idsDoc.indexOf(id) > -1) return;
+            idsDoc.push(id); g.documentos.push((e.documentos || [])[i]);
+          });
+        });
+        g.documentos_ids = idsDoc;
         /* OS DOCUMENTOS ANEXADOS (AF, escala, medição) do grupo. Cada
            setor já os lê da previsão-âncora do grupo, mas a linha do
            grupo não copiava nada disso — o GHC tinha anexo e a esteira
@@ -17376,6 +17409,24 @@ ERP.store = (function () {
     if (!(d.valor > 0)) return { erro: 'Informe o valor do documento.' };
     const base = baseDoGrupo(d.grupo, d.competencia);
     if (!base.projetos) return { erro: 'Nenhum projeto neste grupo de faturamento.' };
+    /* A NOTA DO GRUPO É UMA SÓ — e já existindo, não entra outra.
+       Sem esta porta, cada clique em "Anexar NF" criava mais um
+       recebível com o valor inteiro do grupo: no GHC Bonsucesso a
+       NF 240 entrou duas vezes e a esteira passou a dizer
+       R$ 5,3 milhões para uma nota de R$ 1,95 milhão. */
+    const idsGrupo = base.itens.map(function (i) { return i.centro; });
+    const jaTem = st.receber.filter(function (r) {
+      return r.competencia === d.competencia && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0 &&
+        (r.grupo_faturamento === d.grupo || idsGrupo.some(function (id) { return cobreCentro(r, id); }));
+    });
+    if (jaTem.length) {
+      return { erro: 'O grupo ' + d.grupo + ' já tem ' + (jaTem.length > 1 ? 'os documentos ' : 'o documento ') +
+        jaTem.map(function (r) { return 'nº ' + (r.numero || '—') + ' (' + U.brl(r.valor_bruto) + ')'; }).join(', ') +
+        ' em ' + U.fComp(d.competencia) + '. A nota do grupo é uma só: se ela mudou, use "Substituir NF" ' +
+        'na esteira; se foi lançada em dobro, cancele a repetida em Contas a receber.',
+        documentos: jaTem.map(function (r) { return r.id; }) };
+    }
     /* Cada projeto do grupo precisa estar liberado: a nota é uma só,
        mas a autorização do órgão é por medição de cada especialidade. */
     const travados = base.itens.filter(function (i) {
@@ -17544,6 +17595,28 @@ ERP.store = (function () {
     const c = D.centro(d.centro);
     if (!c) return { erro: 'Projeto não encontrado.' };
     if (!d.competencia) return { erro: 'Informe a competência.' };
+
+    /* O MESMO NÚMERO DO MESMO EMITENTE NÃO ENTRA DUAS VEZES. Número de
+       nota é único por CNPJ e série: repetido, é a mesma nota lançada
+       de novo — nunca uma nota nova. */
+    const emitente = d.empresa || empresaEmissora(d.centro, d.competencia);
+    const numLimpo = String(d.numero).trim().replace(/^0+(?=\d)/, '');
+    const serieLimpa = String(d.serie || '').trim();
+    const repetida = st.receber.find(function (r) {
+      if (['nota', 'fatura'].indexOf(r.origem) < 0) return false;
+      if (['cancelado', 'substituido'].indexOf(r.status) > -1) return false;
+      if (String(r.numero || '').trim().replace(/^0+(?=\d)/, '') !== numLimpo) return false;
+      if (String(r.serie || '').trim() !== serieLimpa) return false;
+      const emR = r.emitida_por_empresa || r.empresa || empresaEmissora(r.centro, r.competencia);
+      return !emitente || !emR || emR === emitente;
+    });
+    if (repetida) {
+      const cR = D.centro(repetida.centro) || {};
+      return { erro: 'A nota nº ' + d.numero + (serieLimpa ? ' série ' + serieLimpa : '') +
+        ' já está no contas a receber (' + (repetida.grupo_faturamento || cR.curto || '') + ' · ' +
+        U.fComp(repetida.competencia) + ' · ' + U.brl(repetida.valor_bruto) + '). ' +
+        'O mesmo número não entra duas vezes.', documentos: [repetida.id] };
+    }
 
     const marcar = function (rec) {
       if (!rec) return;
@@ -18706,11 +18779,32 @@ ERP.store = (function () {
       return r.conferir && r.status === 'previsto';
     }).map(function (p) {
       const nota = st.receber.find(function (x) { return x.id === p.conferir; }) || null;
+      /* NOTA DO GRUPO: a previsão de cada setor se compara com a PARTE
+         dele na nota, não com a nota inteira — senão cada setor do GHC
+         aparecia com R$ 1,5 milhão de "diferença" e "projeto
+         diferente dos dois lados", quando a nota é justamente dele. */
+      const parte = nota ? parteDaNota(nota, p.centro) : null;
       return {
         previsto: p, nota: nota,
-        diferenca: nota ? Math.round((nota.valor_liquido - p.valor_liquido) * 100) / 100 : 0
+        do_grupo: !!(parte && parte.do_grupo),
+        cobre_projeto: !!nota && cobreCentro(nota, p.centro),
+        nota_bruto: parte ? parte.bruto : 0,
+        nota_liquido: parte ? parte.liquido : 0,
+        diferenca: nota ? Math.round((parte.liquido - p.valor_liquido) * 100) / 100 : 0
       };
     }).filter(function (v) { return v.nota; });
+  }
+
+  /* O que da nota cabe a um setor: a parte do rateio (bruto e, pelo
+     mesmo percentual, o líquido), ou a nota inteira. */
+  function parteDaNota(nota, centro) {
+    const p = (nota.rateio_centros || []).find(function (x) { return x.centro === centro; });
+    if (!p || !(nota.valor_bruto > 0)) {
+      return { bruto: nota.valor_bruto || 0, liquido: nota.valor_liquido || 0, do_grupo: false };
+    }
+    const fator = (nota.valor_liquido || 0) / nota.valor_bruto;
+    return { bruto: Math.round(p.valor * 100) / 100,
+      liquido: Math.round(p.valor * fator * 100) / 100, do_grupo: true };
   }
 
   const vinculosPendentesQtd = () => vinculosPendentes().length;
@@ -18729,9 +18823,11 @@ ERP.store = (function () {
          STATUS da previsão, não o valor, e R$ 40.000 de receita
          prevista sumiam — com a observação dizendo o contrário. */
       p.abatimentos = p.abatimentos || {};
-      p.abatimentos[nota.id] = Math.round(nota.valor_bruto * 100) / 100;
-      p.valor_bruto = Math.max(0, Math.round((p.valor_bruto - nota.valor_bruto) * 100) / 100);
-      p.valor_liquido = Math.max(0, Math.round((p.valor_liquido - nota.valor_liquido) * 100) / 100);
+      /* Da nota do grupo, abate só a parte deste setor. */
+      const pt = parteDaNota(nota, p.centro);
+      p.abatimentos[nota.id] = Math.round(pt.bruto * 100) / 100;
+      p.valor_bruto = Math.max(0, Math.round((p.valor_bruto - pt.bruto) * 100) / 100);
+      p.valor_liquido = Math.max(0, Math.round((p.valor_liquido - pt.liquido) * 100) / 100);
       p.observacao = 'Resíduo da previsão após a NF ' + nota.numero;
       if (p.valor_liquido <= 0.004) {
         p.status = 'substituido';
