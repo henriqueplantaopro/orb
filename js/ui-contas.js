@@ -2073,6 +2073,24 @@ ERP.contas = (function () {
      DRE de quem recebe o arquivo. */
   function colunasExportacao() {
     const hoje = U.hoje();
+    /* Os pagamentos da parcela, somados uma vez por linha. */
+    const memo = {};
+    const pagos = function (l) {
+      if (memo[l.p.id]) return memo[l.p.id];
+      const pgs = S.pagamentosDe(l.p.id);
+      const soma = k => pgs.reduce(function (t, g) { return t + (Number(g[k]) || 0); }, 0);
+      const juros = soma('juros') + soma('multa');
+      const ultima = pgs.map(function (g) { return g.data || ''; }).filter(Boolean).sort().slice(-1)[0] || l.p.pago_em || '';
+      const unicos = a => a.filter(function (x, i) { return x && a.indexOf(x) === i; }).join(' + ');
+      const f = S.formaDoCredor(l.p.credor);
+      memo[l.p.id] = {
+        juros: juros, desconto: soma('desconto'), saiu: soma('valor') + juros, data: ultima,
+        banco: unicos(pgs.map(function (g) { return (D.banco(g.banco) || {}).apelido || ''; })),
+        forma: unicos(pgs.map(function (g) { return g.forma || ''; })) || (pgs.length && f ? (f.nome || f.codigo || '') : '')
+      };
+      return memo[l.p.id];
+    };
+    const parte = (l, v) => Math.round((Number(v) || 0) * (l.rt.pct || 100)) / 100;
     return [
       { titulo: 'Documento', largura: 16, valor: l => l.p.doc || '' },
       { titulo: 'Descrição', largura: 40, valor: l => S.descricaoVisivel(l.p) },
@@ -2090,35 +2108,40 @@ ERP.contas = (function () {
           ? l.p.contas_rateio.map(x => x.conta).join('+') : (l.p.conta || '') },
       { titulo: 'Centro de custo', largura: 22, valor: l => (D.centro(l.rt.centro) || {}).curto || '' },
       { pdf: false, titulo: 'Projeto', largura: 22, valor: l => (D.centro(l.rt.centro) || {}).unidade || '' },
-      { titulo: 'Competência', largura: 12, valor: l => l.p.comp || '' },
-      { pdf: false, titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => U.fData(l.p.emissao) },
-      { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => U.fData(l.p.venc) },
+      { titulo: 'Competência', largura: 12, valor: l => l.p.comp ? U.fComp(l.p.comp) : '' },
       { pdf: false, titulo: 'Parcela', largura: 9, valor: l => l.p.num + '/' + (l.p.total || 1) },
-      /* Em título rateado, a linha é do CENTRO: o valor da linha é a
-         parte dele. O valor cheio do título vai numa coluna à parte,
-         que não entra no PDF — somar a coluna principal dobrava o
-         total. */
-      { titulo: 'Valor da parcela', largura: 15, tipo: 'numero',
-        valor: l => Math.round(l.p.valor * (l.rt.pct || 100)) / 100 },
-      { pdf: false, titulo: 'Valor cheio do título', largura: 15, tipo: 'numero', valor: l => l.p.valor },
-      { pdf: false, titulo: '% do rateio', largura: 11, tipo: 'numero', valor: l => l.rt.pct },
-      { pdf: false, titulo: 'Valor no centro', largura: 15, tipo: 'numero',
-        valor: l => Math.round(l.p.valor * (l.rt.pct || 100)) / 100 },
-      /* Título rateado vira uma linha por centro: pago e saldo saem na
-         MESMA proporção do rateio. Repetir o valor cheio em cada linha
-         dobrava o total quando alguém somava a coluna. */
-      { titulo: 'Pago', largura: 13, tipo: 'numero',
-        valor: l => Math.round(S.pagoDe(l.p.id) * (l.rt.pct || 100)) / 100 },
-      { titulo: 'Saldo', largura: 13, tipo: 'numero',
-        valor: l => Math.round(S.saldoDe(l.p) * (l.rt.pct || 100)) / 100 },
+      /* De onde e como saiu o dinheiro — o que se procura no extrato. */
+      { pdf: false, titulo: 'Forma PG', largura: 16, valor: l => pagos(l).forma },
+      { pdf: false, titulo: 'Banco', largura: 22, valor: l => pagos(l).banco },
       { titulo: 'Situação', largura: 14, valor: l => l.p.status || '' },
       { pdf: false, titulo: 'Aprovação', largura: 12, valor: l => l.p.aprovacao || '' },
-      { titulo: 'Dias em atraso', largura: 12, tipo: 'numero',
-        valor: l => (l.p.status === 'aberto' || l.p.status === 'parcial') && l.p.venc < hoje
-          ? U.diasEntre(l.p.venc, hoje) : 0 },
-      { titulo: 'NF', largura: 14, valor: l => l.p.arquivo ? 'arquivo anexado'
+      { pdf: false, titulo: 'NF', largura: 14, valor: l => l.p.arquivo ? 'arquivo anexado'
           : l.p.doc ? 'nº informado' : (l.p.sem_nf ? 'sem NF' : '—') },
-      { pdf: false, titulo: 'Pago em', largura: 12, tipo: 'data', valor: l => l.p.pago_em ? U.fData(l.p.pago_em) : '' }
+      /* AS DATAS JUNTAS, LOGO ANTES DOS VALORES (v191): vencimento e
+         pagamento lado a lado, que é como se confere atraso e juros.
+         A emissão saiu — não é data de caixa. */
+      { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => U.fData(l.p.venc) },
+      { titulo: 'Data do PG', largura: 12, tipo: 'data', valor: l => pagos(l).data ? U.fData(pagos(l).data) : '' },
+      /* OS TRÊS VALORES, sempre. "Pago" era o que abateu o título —
+         o boleto de 221,00 pago com juros por 225,56 saía 221,00, e o
+         arquivo não batia com o extrato nem dizia quanto foi de
+         encargo. Agora: o título, os juros/multa, o desconto e o que
+         saiu do banco. Em título rateado, tudo na proporção do centro
+         da linha — somar a coluna dá o total, sem dobrar. */
+      { titulo: 'Valor do título', largura: 15, tipo: 'numero', valor: l => parte(l, l.p.valor) },
+      { titulo: 'Juros/multa', largura: 13, tipo: 'numero', valor: l => parte(l, pagos(l).juros) },
+      { pdf: false, titulo: 'Desconto', largura: 13, tipo: 'numero', valor: l => parte(l, pagos(l).desconto) },
+      { titulo: 'Valor pago', largura: 15, tipo: 'numero', valor: l => parte(l, pagos(l).saiu) },
+      { titulo: 'Saldo', largura: 13, tipo: 'numero', valor: l => parte(l, S.saldoDe(l.p)) },
+      { pdf: false, titulo: '% do rateio', largura: 11, tipo: 'numero', valor: l => l.rt.pct },
+      { pdf: false, titulo: 'Valor cheio do título', largura: 15, tipo: 'numero', valor: l => l.p.valor },
+      /* Paga: quantos dias depois do vencimento saiu. Aberta: quantos
+         dias já passou até hoje. */
+      { titulo: 'Dias de atraso', largura: 12, tipo: 'numero', valor: l => {
+          const d = pagos(l).data;
+          if (l.p.status === 'pago' && d) return d > l.p.venc ? U.diasEntre(l.p.venc, d) : 0;
+          return (l.p.status === 'aberto' || l.p.status === 'parcial') && l.p.venc < hoje
+            ? U.diasEntre(l.p.venc, hoje) : 0; } }
     ];
   }
 
