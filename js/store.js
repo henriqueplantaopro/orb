@@ -13229,6 +13229,101 @@ ERP.store = (function () {
     }).sort(function (a, b) { return String(b.extrato.criado_em || '').localeCompare(String(a.extrato.criado_em || '')); });
   }
 
+  /* ── AS CONCILIAÇÕES, UMA POR ARQUIVO ─────────────────
+
+     A aba "Já conciliados" era uma lista só, de todas as linhas de
+     todos os extratos da conta, desde sempre — e crescia sem fim.
+     Quem concilia pensa por ARQUIVO ("o extrato do Bradesco da
+     semana passada"): então a resposta vem agrupada por arquivo
+     importado, com o resumo dele por fora (empresa, banco, período,
+     entradas, saídas) e tudo o que foi feito em cada linha por dentro.
+
+     O período filtra pelo que o arquivo cobre: entra o extrato cujo
+     intervalo encosta no período pedido. */
+  function descreverVinculo(l) {
+    if (l.situacao === 'ignorado') return 'Ignorada';
+    if (l.situacao !== 'conciliado') return '';
+    const credorDe = function (p) { return p ? nomeCredorVisivel(p, (D.credor(p.credor) || {}).nome || '') : ''; };
+    const titulo = function (p) {
+      return p ? [credorDe(p), descricaoVisivel(p), p.doc ? 'doc. ' + p.doc : ''].filter(Boolean).join(' · ') : '';
+    };
+    if (l.alvo_tipo === 'receber') {
+      const r = st.receber.find(function (x) { return x.id === l.alvo_id; });
+      return 'Recebimento' + (r ? ' · ' + (r.numero ? 'NF ' + r.numero + ' · ' : '') + (r.cliente_nome || '') : '');
+    }
+    if (l.alvo_tipo === 'pagamento') {
+      const pg = st.pagamentos.find(function (x) { return x.id === l.alvo_id; });
+      const p = pg ? parcela(pg.parcela_id) : null;
+      const enc = pg ? (pg.juros || 0) + (pg.multa || 0) : 0;
+      return 'Pagamento · ' + titulo(p) + (enc > 0.004 ? ' · juros/multa ' + U.brl(enc) : '');
+    }
+    if (l.alvo_tipo === 'parcela') return 'Pagamento · ' + titulo(parcela(l.alvo_id));
+    if (l.alvo_tipo === 'parcelas') {
+      const n = (l.alvo_ids || []).length;
+      return 'Pagamento em lote' + (n ? ' · ' + n + ' títulos' : '') +
+        (parcela(l.alvo_id) ? ' · ' + credorDe(parcela(l.alvo_id)) : '');
+    }
+    if (l.alvo_tipo === 'transferencia') {
+      const t = (st.transferenciasBanco || []).find(function (x) { return x.id === l.alvo_id; });
+      return t && t.mutuo ? 'Mútuo entre empresas' : 'Transferência entre contas';
+    }
+    return l.alvo_tipo ? String(l.alvo_tipo) : 'Conciliada';
+  }
+
+  function conciliacoesPorArquivo(f) {
+    f = f || {};
+    const de = f.de || '', ate = f.ate || '';
+    const diaDe = function (v) {
+      if (!v) return '';
+      const d = new Date(v); return isNaN(d) ? String(v).slice(0, 10) : U.dataLocal(d);
+    };
+    const porExtrato = {};
+    st.linhas.forEach(function (l) {
+      if (f.banco && l.banco !== f.banco) return;
+      const k = l.extrato_id || ('sem|' + l.banco);
+      (porExtrato[k] = porExtrato[k] || []).push(l);
+    });
+    const grupos = Object.keys(porExtrato).map(function (k) {
+      const ls = porExtrato[k];
+      const e = st.extratos.find(function (x) { return x.id === k; }) || null;
+      const bancoId = e ? e.banco : ls[0].banco;
+      const b = D.banco(bancoId) || {};
+      const datas = ls.map(function (l) { return l.data || ''; }).filter(Boolean).sort();
+      const ini = (e && e.periodo_ini) || datas[0] || '';
+      const fim = (e && e.periodo_fim) || datas[datas.length - 1] || '';
+      const soma = function (campo) {
+        return Math.round(ls.reduce(function (t, l) { return t + (Number(l[campo]) || 0); }, 0) * 100) / 100;
+      };
+      const n = function (sit) { return ls.filter(function (l) { return l.situacao === sit; }).length; };
+      return {
+        id: k, extrato: e ? e.id : null,
+        arquivo: e ? (e.arquivo || '—') : 'Lançamentos sem arquivo de origem',
+        banco_id: bancoId, banco: b.apelido || '', empresa: (D.empresaPor(b.empresa) || {}).apelido || '',
+        periodo_ini: ini, periodo_fim: fim,
+        importado_em: e ? diaDe(e.criado_em) : '', importado_por: e ? (e.usuario || '') : '',
+        entradas: soma('entrada'), saidas: soma('saida'),
+        linhas: ls.length, conciliadas: n('conciliado'), ignoradas: n('ignorado'), pendentes: n('pendente'),
+        itens: ls.slice().sort(function (a, b2) { return (a.data + a.id).localeCompare(b2.data + b2.id); })
+          /* O texto do vínculo só para o arquivo aberto: descrever cada
+             linha de cada arquivo procura o pagamento de cada uma, e a
+             lista fechada não precisa disso. */
+          .map(function (l) {
+            return f.abertos && f.abertos.indexOf(k) > -1 ? Object.assign({}, l, { vinculo: descreverVinculo(l) }) : l;
+          })
+      };
+    }).filter(function (g) {
+      if (!de && !ate) return true;
+      const i = g.periodo_ini || g.importado_em, fm = g.periodo_fim || g.importado_em;
+      return (!ate || !i || i <= ate) && (!de || !fm || fm >= de);
+    }).sort(function (a, b2) {
+      return String(b2.periodo_fim || '').localeCompare(String(a.periodo_fim || '')) ||
+        String(b2.importado_em || '').localeCompare(String(a.importado_em || ''));
+    });
+    return { de: de, ate: ate, grupos: grupos,
+      entradas: Math.round(grupos.reduce(function (t, g) { return t + g.entradas; }, 0) * 100) / 100,
+      saidas: Math.round(grupos.reduce(function (t, g) { return t + g.saidas; }, 0) * 100) / 100 };
+  }
+
   function moverExtrato(extratoId, bancoDestino) {
     if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
     const e = st.extratos.find(function (x) { return x.id === extratoId; });
@@ -22218,7 +22313,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
-    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, moverExtrato, CODIGO_BANCO,
+    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,
