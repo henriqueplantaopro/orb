@@ -114,7 +114,8 @@ ERP.receber = (function () {
       '<h2 style="font-size:13px;margin:0 0 4px">' + vs.length +
         ' vínculo(s) de faturamento a conferir</h2>' +
       '<div class="ajuda">A nota bateu com uma previsão do mesmo projeto e competência. ' +
-      'Confirme o que ela é: substitui o mês inteiro, é só uma parte dele, ou não tem relação. ' +
+      'Confirme o que ela é: <b>substitui a previsão</b> inteira, é <b>faturamento parcial</b> (a previsão fica com o resto) ' +
+      'ou <b>não tem relação</b>. ' +
       'Até você decidir, a previsão fica fora das somas.</div>' +
       /* OS DOIS LADOS ESCRITOS POR INTEIRO.
 
@@ -156,7 +157,7 @@ ERP.receber = (function () {
           '<td class="num"' + (Math.abs(v.diferenca) > 0.05 ? ' style="color:var(--amber)"' : '') + '>' +
             (v.diferenca ? U.brl(v.diferenca) : '—') + '</td>' +
           '<td class="acoes">' +
-            '<button class="btn-sm btn-aprovar" data-vinc-int="' + v.previsto.id + '">Substitui o mês</button>' +
+            '<button class="btn-sm btn-aprovar" data-vinc-int="' + v.previsto.id + '" title="a nota ocupa o lugar desta previsão">Substituir previsão</button>' +
             '<button class="btn-sm" data-vinc-parc="' + v.previsto.id + '">Faturamento parcial</button>' +
             '<button class="btn-sm" data-vinc-troca="' + v.nota.id + '" ' +
               'title="a sugestão não é esta previsão — escolher outra">Trocar previsão</button>' +

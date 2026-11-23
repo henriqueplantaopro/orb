@@ -128,7 +128,9 @@ ERP.conciliacao = (function () {
       b.setAttribute('aria-pressed', b.dataset.cn === aba);
       const n = { concretos: g.concretos.length, possiveis: g.possiveis.length,
                   sem: g.sem.length, produtividade: prod.length,
-                  regras: S.regras().length, feitos: res.conciliados }[b.dataset.cn];
+                  regras: S.regras().length,
+                  /* arquivos no período escolhido, de todas as contas */
+                  feitos: S.conciliacoesPorArquivo(filtroFeitos()).grupos.length }[b.dataset.cn];
       const marca = b.querySelector('.contador');
       if (marca) marca.textContent = n;
     });
@@ -145,9 +147,10 @@ ERP.conciliacao = (function () {
        aba === 'possiveis'     ? telaPossiveis(g.possiveis) :
        aba === 'sem'           ? telaSem(g.sem) :
        aba === 'produtividade' ? telaProdutividade(prod) :
-       aba === 'regras'        ? telaRegras() : telaFeitos(banco));
+       aba === 'regras'        ? telaRegras() : telaFeitos());
     ligar();
     ligarDesfazer();
+    if (aba === 'feitos') ligarFeitos();
   }
 
   /* Os arquivos importados nesta conta, com a saída para o caso do
@@ -612,33 +615,108 @@ ERP.conciliacao = (function () {
       '</tbody></table>';
   }
 
-  function telaFeitos(banco) {
-    const feitos = S.linhasExtrato({ banco: banco }).filter(function (l) {
-      return l.situacao !== 'pendente'; });
-    return '<div class="tabela-rolagem" style="margin:10px -14px 0"><table><thead><tr>' +
-      '<th>Data</th><th class="num">Valor</th><th>Descrição extrato</th>' +
-      '<th>Situação</th></tr></thead><tbody>' +
-      (feitos.length ? feitos.map(function (l) {
+  /* ── JÁ CONCILIADOS: uma conciliação por arquivo ───────
+     Era uma lista só, de todas as linhas da conta desde o primeiro
+     extrato — infinita. Agora abre nos últimos 30 dias, agrupada pelo
+     arquivo importado: por fora, o resumo (arquivo, empresa, banco,
+     período, entradas, saídas); clicando, tudo o que foi feito em
+     cada linha daquele arquivo. Todas as contas por padrão, porque o
+     resumo já diz de qual empresa e banco é cada arquivo. */
+  const feitos = { de: null, ate: null, conta: '', abertos: new Set() };
+  function filtroFeitos() {
+    if (!feitos.de) { feitos.ate = U.hoje(); feitos.de = U.addDias(U.hoje(), -30); }
+    return { de: feitos.de, ate: feitos.ate, banco: feitos.conta || null, abertos: Array.from(feitos.abertos) };
+  }
+  function telaFeitos() {
+    const r = S.conciliacoesPorArquivo(filtroFeitos());
+    const contas = D.bancos.filter(function (b) { return b.ativo !== false; });
+    const NUM = 'style="width:130px"';
+    return '<div class="filtros" style="margin-top:10px">' +
+        '<div class="f"><label for="cf-de">De</label><input type="date" id="cf-de" value="' + U.esc(feitos.de) + '"></div>' +
+        '<div class="f"><label for="cf-ate">até</label><input type="date" id="cf-ate" value="' + U.esc(feitos.ate) + '"></div>' +
+        '<div class="f"><label for="cf-conta">Conta</label><select id="cf-conta"><option value="">todas as contas</option>' +
+          contas.map(function (b) {
+            const e = D.empresaPor(b.empresa);
+            return '<option value="' + b.id + '"' + (feitos.conta === b.id ? ' selected' : '') + '>' +
+              U.esc(b.apelido) + (e ? ' · ' + U.esc(e.apelido) : '') + '</option>';
+          }).join('') + '</select></div>' +
+        '<button class="btn-sm" id="cf-30" style="align-self:flex-end">Últimos 30 dias</button>' +
+      '</div>' +
+      '<div class="pr-confere"><span>Arquivos <b>' + r.grupos.length + '</b></span>' +
+        '<span>Entradas <b>' + U.brl(r.entradas) + '</b></span>' +
+        '<span>Saídas <b>' + U.brl(r.saidas) + '</b></span></div>' +
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel" id="cf-tabela"><thead><tr>' +
+        '<th style="width:22px"></th><th>Arquivo</th><th>Empresa</th><th>Banco</th><th>Período</th>' +
+        '<th class="num" ' + NUM + '>Entradas</th><th class="num" ' + NUM + '>Saídas</th>' +
+        '<th class="num" style="width:110px">Conciliadas</th></tr></thead><tbody>' +
+      (r.grupos.length ? r.grupos.map(function (g) {
+        const aberto = feitos.abertos.has(g.id);
+        return '<tr class="cf-arq" data-cf-arq="' + U.esc(g.id) + '" style="cursor:pointer" title="clique para ver o que foi feito">' +
+            '<td>' + (aberto ? '▾' : '▸') + '</td>' +
+            '<td class="desc"><b>' + U.esc(g.arquivo) + '</b>' +
+              (g.importado_em ? '<div class="sub">importado em ' + U.fData(g.importado_em) +
+                (g.importado_por ? ' · ' + U.esc(String(g.importado_por).split(' ')[0]) : '') + '</div>' : '') + '</td>' +
+            '<td>' + U.esc(g.empresa || '—') + '</td>' +
+            '<td>' + U.esc(g.banco || '—') + '</td>' +
+            '<td class="mono">' + (g.periodo_ini ? U.fData(g.periodo_ini) : '—') + ' a ' +
+              (g.periodo_fim ? U.fData(g.periodo_fim) : '—') + '</td>' +
+            '<td class="num">' + U.num(g.entradas) + '</td>' +
+            '<td class="num erro">' + U.num(g.saidas) + '</td>' +
+            '<td class="num">' + g.conciliadas + ' de ' + g.linhas +
+              (g.pendentes ? '<div class="sub erro">' + g.pendentes + ' pendente(s)</div>' : '') +
+              (g.ignoradas ? '<div class="sub">' + g.ignoradas + ' ignorada(s)</div>' : '') + '</td>' +
+          '</tr>' +
+          (aberto ? '<tr class="cf-detalhe"><td></td><td colspan="7" style="padding:0 0 10px">' + detalheArquivo(g) + '</td></tr>' : '');
+      }).join('')
+        : '<tr><td colspan="8" class="vazio"><strong>Nenhum arquivo de extrato neste período.</strong> ' +
+          'Mude as datas ou a conta para ver conciliações mais antigas.</td></tr>') +
+      '</tbody></table></div>';
+  }
+
+  /* Tudo o que foi feito no arquivo: cada linha, a que ela foi
+     amarrada, e as ações de desfazer de sempre. */
+  function detalheArquivo(g) {
+    return '<table><thead><tr><th>Data</th><th>Extrato</th><th>O que foi feito</th><th>Situação</th></tr></thead><tbody>' +
+      g.itens.map(function (l) {
         return '<tr>' + linhaBase(l, false) +
+          '<td class="desc">' + (l.vinculo ? U.esc(l.vinculo) : '<span class="sub">—</span>') +
+            (l.observacao ? '<div class="sub">' + U.esc(l.observacao) + '</div>' : '') + '</td>' +
           '<td>' + (l.situacao === 'conciliado'
             ? '<span class="badge b-pago">conciliado</span>'
-            : '<span class="badge b-cancelado">ignorado</span>') +
-            (l.observacao ? '<div class="sub">' + U.esc(l.observacao) + '</div>' : '') +
-            /* As três ações existiam no store e não tinham caminho
-               pela tela: linha conciliada por engano, linha ignorada
-               por engano, e linha certa amarrada ao pagamento errado.
-               Sem elas, a única saída era estornar o pagamento, que
-               destrói informação verdadeira. */
-            '<div class="ap-acoes" style="margin-top:4px">' +
-              (l.situacao === 'conciliado'
-                ? '<button class="btn-sm" data-desconc="' + l.id + '">Desfazer</button>' +
-                  '<button class="btn-sm" data-reaponta="' + l.id + '">Trocar linha</button>'
-                : '<button class="btn-sm" data-reabre="' + l.id + '">Reabrir</button>') +
-            '</div>' +
+            : l.situacao === 'ignorado'
+              ? '<span class="badge b-cancelado">ignorado</span>'
+              : '<span class="badge b-aberto">pendente</span>') +
+            /* As ações de desfazer de cada linha continuam aqui: linha
+               conciliada por engano, ignorada por engano, ou amarrada
+               na linha errada. */
+            (l.situacao === 'pendente' ? '' :
+              '<div class="ap-acoes" style="margin-top:4px">' +
+                (l.situacao === 'conciliado'
+                  ? '<button class="btn-sm" data-desconc="' + l.id + '">Desfazer</button>' +
+                    '<button class="btn-sm" data-reaponta="' + l.id + '">Trocar linha</button>'
+                  : '<button class="btn-sm" data-reabre="' + l.id + '">Reabrir</button>') +
+              '</div>') +
           '</td></tr>';
-      }).join('')
-        : '<tr><td colspan="4" class="vazio"><strong>Nada conciliado ainda.</strong></td></tr>') +
-      '</tbody></table></div>';
+      }).join('') + '</tbody></table>';
+  }
+
+  function ligarFeitos() {
+    const tab = U.el('cf-tabela');
+    if (!tab) return;
+    tab.querySelectorAll('[data-cf-arq]').forEach(function (tr) {
+      tr.addEventListener('click', function (ev) {
+        if (ev.target.closest('button')) return;
+        const id = this.dataset.cfArq;
+        if (feitos.abertos.has(id)) feitos.abertos.delete(id); else feitos.abertos.add(id);
+        render();
+      });
+    });
+    const mudou = function () {
+      feitos.de = U.val('cf-de') || feitos.de; feitos.ate = U.val('cf-ate') || feitos.ate;
+      feitos.conta = U.val('cf-conta'); render();
+    };
+    ['cf-de', 'cf-ate', 'cf-conta'].forEach(function (id) { U.el(id).addEventListener('change', mudou); });
+    U.el('cf-30').addEventListener('click', function () { feitos.de = null; filtroFeitos(); render(); });
   }
 
   /* Recebimento abaixo do líquido esperado não tem resposta certa
