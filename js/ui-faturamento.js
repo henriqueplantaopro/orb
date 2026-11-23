@@ -1274,10 +1274,12 @@ ERP.faturamento = (function () {
                  é o que leva alguém a cancelar a repetida. */
               (function () {
                 const rep = l.documentos.filter(function (n, i) { return n && l.documentos.indexOf(n) !== i; });
+                /* Botão, não só aviso: cancelar nota é de diretoria, e quem
+                   lançou em dobro ficava sem como desfazer. */
                 return rep.length
-                  ? '<div class="erro" data-est-dup="1" title="Cancele a repetida em Contas a receber (ação Cancelar). ' +
-                    'O valor desta linha está contando a nota duas vezes.">NF ' + U.esc(rep.join(', ')) +
-                    ' lançada em dobro</div>'
+                  ? '<div><button class="btn-sm btn-nf-falta" data-est-dup="' + U.esc(l.centro + '|' + l.competencia) +
+                    '" title="o valor desta linha está contando a nota duas vezes — clique para tirar o lançamento repetido">' +
+                    'NF ' + U.esc(rep.join(', ')) + ' lançada em dobro</button></div>'
                   : '';
               })() + '</td>' +
             passo(l, 'confirmado') + passo(l, 'autorizado') + passo(l, 'liberado') + passo(l, 'faturado') +
@@ -1714,6 +1716,95 @@ ERP.faturamento = (function () {
             'gere o RPS novo na aba RPS em lote.'
           : 'NF ' + r.canceladas.join(', ') + ' substituída pela NF ' +
             ((r.receber || {}).numero || '') + '.', 'ok');
+      } }]
+    });
+  }
+
+  function depoisDeMexerNoReceber() {
+    renderEsteira();
+    atualizarAlertaFat();
+    if (ERP.receber && ERP.receber.render) ERP.receber.render();
+  }
+
+  /* A MESMA NF LANÇADA DUAS VEZES: a lista dos lançamentos dela, para
+     escolher qual sai. A nota continua viva no outro. */
+  function notaEmDobro(ref) {
+    const par = ref.split('|');
+    const notas = S.notasDoFaturamento(par[0], par[1]).filter(function (n) { return n.em_dobro; });
+    if (!notas.length) return ERP.app.aviso('Não há lançamento em dobro neste faturamento.', 'ok');
+    /* Sugere tirar o MAIS NOVO que não recebeu: o primeiro lançamento
+       é o que as conferências e o histórico já conhecem. */
+    const quando = function (n) { const t = n.criado_em ? new Date(n.criado_em).getTime() : 0; return isFinite(t) ? t : 0; };
+    const ordem = notas.slice().sort(function (a, b) { return quando(a) - quando(b); });
+    const sugerido = ordem.filter(function (n) { return !n.recebido; }).slice(-1)[0];
+    ERP.app.modal({
+      titulo: 'NF lançada em dobro · ' + U.fComp(par[1]),
+      fecharTxt: 'Voltar',
+      corpo:
+        '<div class="ajuda">A mesma nota entrou mais de uma vez no contas a receber, e o faturamento está ' +
+        'somando todas. Escolha o lançamento que sai — a nota continua no outro, uma vez só. Isto não cancela ' +
+        'a nota fiscal na prefeitura.</div>' +
+        '<table style="margin-top:8px"><thead><tr><th>NF</th><th>Lançada em</th><th>Por</th>' +
+        '<th class="num">Valor</th><th>Arquivo</th><th></th></tr></thead><tbody>' +
+        ordem.map(function (n) {
+          return '<tr><td>' + U.esc(n.numero) + (n.serie ? ' · ' + U.esc(n.serie) : '') +
+            '<div class="sub">' + U.esc(n.grupo || n.projeto) + '</div></td>' +
+            '<td>' + (n.criado_em ? U.fData(U.dataLocal(n.criado_em)) : '—') + '</td>' +
+            '<td>' + U.esc(String(n.criado_por || '—').split(' ')[0]) + '</td>' +
+            '<td class="num">' + U.brl(n.valor) + '</td>' +
+            '<td>' + (n.tem_arquivo ? 'anexado' : '—') + '</td>' +
+            '<td class="col-acoes"><div class="acoes">' + (n.recebido ? '<span class="sub">recebida</span>'
+              : '<label style="display:inline-flex;gap:4px;align-items:center;margin:0"><input type="radio" name="dup-sai" value="' +
+                n.id + '"' + (sugerido && sugerido.id === n.id ? ' checked' : '') + '> sai</label>') +
+            '</div></td></tr>';
+        }).join('') + '</tbody></table>',
+      acoes: [{ txt: 'Tirar o lançamento marcado', cls: 'btn-cancelar', fn: function () {
+        const marc = document.querySelector('input[name="dup-sai"]:checked');
+        if (!marc) return ERP.app.aviso('Marque o lançamento que sai.', 'erro');
+        const r = S.removerNotaRepetida(marc.value, 'retirado pela esteira do faturamento');
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        depoisDeMexerNoReceber();
+        ERP.app.aviso('Lançamento repetido retirado. A NF continua lançada uma vez.', 'ok');
+      } }]
+    });
+  }
+
+  /* NOVA PREVISÃO DE RECEBIMENTO para as notas do faturamento — no
+     grupo, a nota única; num projeto com complemento, cada uma. */
+  function previsaoRecebimento(ref) {
+    const par = ref.split('|');
+    const notas = S.notasDoFaturamento(par[0], par[1]).filter(function (n) { return !n.recebido; });
+    if (!notas.length) return ERP.app.aviso('Não há nota a receber neste faturamento.', 'ok');
+    ERP.app.modal({
+      titulo: 'Previsão de recebimento · ' + U.fComp(par[1]),
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="ajuda">A data em que o órgão deve pagar. É ela que o fluxo de caixa e o contas a ' +
+        'receber usam; a troca fica no histórico da nota.</div>' +
+        '<table style="margin-top:8px"><thead><tr><th>NF</th><th class="num">Valor</th>' +
+        '<th>Previsão atual</th><th>Nova previsão</th></tr></thead><tbody>' +
+        notas.map(function (n) {
+          return '<tr><td>' + U.esc(n.numero) + '<div class="sub">' + U.esc(n.grupo || n.projeto) + '</div></td>' +
+            '<td class="num">' + U.brl(n.valor) + '</td>' +
+            '<td>' + (n.vencimento ? U.fData(n.vencimento) : '—') + '</td>' +
+            '<td><input type="date" data-venc-nova="' + n.id + '" value="' + U.esc(n.vencimento) + '"></td></tr>';
+        }).join('') + '</tbody></table>' +
+        '<label style="margin-top:8px">Motivo / de onde veio a informação</label>' +
+        '<input id="venc-motivo" placeholder="ex.: órgão informou pagamento em 15/12">',
+      acoes: [{ txt: 'Salvar previsão', cls: 'btn-aprovar', fn: function () {
+        let n = 0;
+        const campos = Array.from(document.querySelectorAll('[data-venc-nova]'));
+        for (let i = 0; i < campos.length; i++) {
+          const atual = notas.find(function (x) { return x.id === campos[i].dataset.vencNova; }) || {};
+          if (!campos[i].value || campos[i].value === atual.vencimento) continue;
+          const r = S.alterarPrevisaoRecebimento(campos[i].dataset.vencNova, campos[i].value, U.val('venc-motivo'));
+          if (ERP.app.erroDoRetorno(r)) return;
+          n += r.n || 0;
+        }
+        ERP.app.fecharModal();
+        depoisDeMexerNoReceber();
+        ERP.app.aviso(n ? 'Previsão de recebimento alterada.' : 'Nada mudou.', 'ok');
       } }]
     });
   }
@@ -2810,6 +2901,13 @@ ERP.faturamento = (function () {
            Sem este botão, o caminho era cancelar pelo contas a
            receber — e o faturamento continuava "faturado", preso a
            um documento que não existe mais. */
+        /* PREVISÃO DE RECEBIMENTO: o órgão manda data nova e o fluxo
+           de caixa precisa dela. Fica na linha, com a data à vista. */
+        (S.pode('faturar')
+          ? ' <button class="btn-sm" data-est-venc="' + ref + '" ' +
+            'title="alterar a data prevista de recebimento">' +
+            (l.recebimento_previsto ? 'Receb. ' + U.fData(l.recebimento_previsto) : 'Data de receb.') + '</button>'
+          : '') +
         (S.pode('faturar') && S.pode('cancelar')
           ? ' <button class="btn-sm" data-est-sub="' + ref + '" ' +
             'title="cancelar esta NF e emitir outra no lugar">Substituir NF</button>' : '');
@@ -2827,6 +2925,12 @@ ERP.faturamento = (function () {
     });
     box.querySelectorAll('[data-est-sub]').forEach(function (b) {
       b.addEventListener('click', function () { substituirNF(this.dataset.estSub); });
+    });
+    box.querySelectorAll('[data-est-dup]').forEach(function (b) {
+      b.addEventListener('click', function () { notaEmDobro(this.dataset.estDup); });
+    });
+    box.querySelectorAll('[data-est-venc]').forEach(function (b) {
+      b.addEventListener('click', function () { previsaoRecebimento(this.dataset.estVenc); });
     });
     box.querySelectorAll('[data-est-rev]').forEach(function (b) {
       b.addEventListener('click', function () { revisarFaturamento(this.dataset.estRev); });

@@ -245,6 +245,15 @@ ERP.receber = (function () {
 
   function render() {
     const lista = S.listarReceber(filtros());
+    /* Número que aparece mais de uma vez entre os documentos vivos: só
+       esses são perguntados se estão em dobro (a pergunta varre o
+       contas a receber, e não precisa ser feita linha a linha). */
+    const vezesNum = {};
+    S.contasReceber().forEach(function (x) {
+      if (['nota', 'fatura'].indexOf(x.origem) < 0 || ['cancelado', 'substituido'].indexOf(x.status) > -1) return;
+      const k = String(x.numero || '').trim();
+      if (k) vezesNum[k] = (vezesNum[k] || 0) + 1;
+    });
     const todas = S.contasReceber();
     const hoje = U.hoje();
     const abertas = todas.filter(S.receberAberto);
@@ -343,7 +352,16 @@ ERP.receber = (function () {
                emissão. */
             (['nota', 'fatura'].indexOf(r.origem) > -1 && r.status !== 'recebido' && r.status !== 'cancelado' &&
               (r.valor_recebido || 0) <= 0.004 && S.pode('cancelar')
-              ? '<button class="btn-sm btn-cancelar" data-cancelar-rec="' + r.id + '">Cancelar</button>' : '') + '</td>' +
+              ? '<button class="btn-sm btn-cancelar" data-cancelar-rec="' + r.id + '">Cancelar</button>' : '') +
+            /* LANÇADA EM DOBRO: tirar o registro repetido é de quem
+               fatura, sem precisar do Cancelar de diretoria. */
+            (['nota', 'fatura'].indexOf(r.origem) > -1 && r.status !== 'recebido' && r.status !== 'cancelado' &&
+              r.status !== 'substituido' && (r.valor_recebido || 0) <= 0.004 && S.pode('faturar') &&
+              (vezesNum[String(r.numero || '').trim()] || 0) > 1 &&
+              (S.notasDoFaturamento(r.centro, r.competencia).find(function (n) { return n.id === r.id; }) || {}).em_dobro
+              ? '<button class="btn-sm btn-cancelar" data-dobro-rec="' + r.id + '" ' +
+                'title="esta NF está lançada mais de uma vez — tira este lançamento e a nota fica no outro">Lançada em dobro: tirar</button>'
+              : '') + '</td>' +
         '</tr>';
       }).join('') + '</tbody></table>';
 
@@ -366,6 +384,27 @@ ERP.receber = (function () {
             ERP.app.atualizarContadores();
             render();
             ERP.app.aviso('Documento cancelado. A previsão do projeto voltou a valer.', 'ok');
+          } }]
+        });
+      });
+    });
+    U.el('rc-saida').querySelectorAll('[data-dobro-rec]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.dobroRec;
+        const doc = S.contasReceber().find(function (x) { return x.id === id; }) || {};
+        ERP.app.modal({
+          titulo: 'Tirar lançamento em dobro · NF ' + U.esc(doc.numero || ''),
+          fecharTxt: 'Voltar',
+          corpo: '<div class="ajuda">A NF ' + U.esc(doc.numero || '') + ' está lançada mais de uma vez. ' +
+            'Este lançamento sai e a nota continua no outro, uma vez só. A nota fiscal não é cancelada.</div>' +
+            '<div class="resumo-linha"><span>Valor</span><span class="v">' + U.brl(doc.valor_bruto || 0) + '</span></div>',
+          acoes: [{ txt: 'Tirar este lançamento', cls: 'btn-cancelar', fn: function () {
+            const r2 = S.removerNotaRepetida(id, 'retirado pelo contas a receber');
+            if (r2.erro) return ERP.app.aviso(r2.erro, 'erro');
+            ERP.app.fecharModal();
+            ERP.app.atualizarContadores();
+            render();
+            ERP.app.aviso('Lançamento repetido retirado. A NF continua lançada uma vez.', 'ok');
           } }]
         });
       });
