@@ -23,16 +23,30 @@ ERP.conciliacao = (function () {
     U.el('cn-arquivo').addEventListener('change', importar);
     /* A conta mostra de qual empresa ela é: com três CNPJs no mesmo
        ERP, "Santander" sozinho não diz qual. */
-    U.el('cn-banco').innerHTML = D.bancos.filter(function (b) { return b.ativo; })
-      .map(function (b) {
-        const e = D.empresaPor(b.empresa);
-        return '<option value="' + b.id + '">' + U.esc(b.apelido) +
-          (e ? ' · ' + U.esc(e.apelido) : '') + '</option>';
-      }).join('');
+    opcoesContas();
     U.el('cn-banco').addEventListener('change', render);
     document.querySelectorAll('#cn-nav button').forEach(function (b) {
       b.addEventListener('click', function () { aba = this.dataset.cn; sel.clear(); render(); });
     });
+  }
+
+  /* As contas do seletor. Refeito quando o cadastro muda: conta nova
+     cadastrada na Administração não aparecia aqui até recarregar a
+     página — e o "mover para a conta certa" mudava para uma conta que
+     o seletor nem tinha. */
+  let assinaturaContas = '';
+  function opcoesContas() {
+    const ativas = D.bancos.filter(function (b) { return b.ativo !== false; });
+    const ass = ativas.map(function (b) { return b.id + ':' + b.apelido + ':' + b.empresa; }).join('|');
+    if (ass === assinaturaContas) return;
+    const sel = U.el('cn-banco'), atual = sel.value;
+    sel.innerHTML = ativas.map(function (b) {
+      const e = D.empresaPor(b.empresa);
+      return '<option value="' + b.id + '">' + U.esc(b.apelido) +
+        (e ? ' · ' + U.esc(e.apelido) : '') + '</option>';
+    }).join('');
+    if (atual && ativas.some(function (b) { return b.id === atual; })) sel.value = atual;
+    assinaturaContas = ass;
   }
 
   function importar(e) {
@@ -61,6 +75,16 @@ ERP.conciliacao = (function () {
 
   function aplicar(banco, lido, nome, forcar) {
     const r = S.importarExtrato(banco, lido, nome);
+    if (r.nao_cadastrada) {
+      return ERP.app.modal({
+        titulo: 'Conta do arquivo não cadastrada', fecharTxt: 'Cancelar',
+        corpo: '<div class="aviso-linha erro">' + U.esc(r.erro) + '</div>',
+        acoes: [{ txt: 'É desta conta — importar aqui', cls: 'btn-sm', fn: function () {
+          ERP.app.fecharModal();
+          aplicar(banco, Object.assign({}, lido, { importar_sem_conta: true }), nome, true);
+        } }]
+      });
+    }
     /* Arquivo de outra conta: o sistema reconhece pelo BANKID/ACCTID e
        oferece trocar, em vez de misturar extrato de empresas
        diferentes. */
@@ -87,12 +111,14 @@ ERP.conciliacao = (function () {
     render();
     ERP.app.aviso(r.novos + ' lançamento(s) importado(s)' +
       (r.repetidos ? ', ' + r.repetidos + ' já estavam no sistema' : '') +
+      (r.saldos_ignorados ? ', ' + r.saldos_ignorados + ' linha(s) de saldo ignorada(s) (não são movimento)' : '') +
       '. Saldo do extrato: ' + U.brl(lido.saldo.valor) + '.' +
       (lido.aviso_conta ? ' ' + lido.aviso_conta : ''),
       lido.aviso_conta ? 'erro' : 'ok');
   }
 
   function render() {
+    opcoesContas();
     const banco = U.val('cn-banco');
     const g = S.classificarLinhas(banco);
     const prod = S.gruposProdutividade(banco);
@@ -114,7 +140,7 @@ ERP.conciliacao = (function () {
         '<span>Pendentes <b class="' + (res.pendentes ? 'erro' : '') + '">' + res.pendentes + '</b></span>' +
         '<span>A explicar — entradas <b>' + U.brl(res.pendenteEntrada) + '</b></span>' +
         '<span>saídas <b>' + U.brl(res.pendenteSaida) + '</b></span>' +
-      '</div>' + blocoConferencia(banco) +
+      '</div>' + blocoExtratos(banco) + blocoConferencia(banco) +
       (aba === 'concretos'     ? telaConcretos(g.concretos) :
        aba === 'possiveis'     ? telaPossiveis(g.possiveis) :
        aba === 'sem'           ? telaSem(g.sem) :
@@ -122,6 +148,57 @@ ERP.conciliacao = (function () {
        aba === 'regras'        ? telaRegras() : telaFeitos(banco));
     ligar();
     ligarDesfazer();
+  }
+
+  /* Os arquivos importados nesta conta, com a saída para o caso do
+     arquivo que entrou na conta errada: mover para a certa. */
+  let extratosAbertos = false;
+  function blocoExtratos(banco) {
+    const es = S.extratosDaConta(banco);
+    if (!es.length) return '';
+    return '<details id="cn-extratos" style="margin:8px 0"' + (extratosAbertos ? ' open' : '') + '><summary class="sub" style="cursor:pointer">' +
+      'Arquivos importados nesta conta (' + es.length + ')</summary>' +
+      '<table class="rel"><thead><tr><th>Arquivo</th><th>Período</th><th class="num">Linhas</th>' +
+      '<th class="num">Conciliadas</th><th class="num">Saldo do arquivo</th><th>Importado</th><th></th></tr></thead><tbody>' +
+      es.map(function (x) {
+        const e = x.extrato;
+        const quando = e.criado_em ? new Date(e.criado_em) : null;
+        return '<tr><td class="desc">' + U.esc(e.arquivo || '—') + '</td>' +
+          '<td class="mono">' + (e.periodo_ini ? U.fData(e.periodo_ini) : '—') + ' a ' + (e.periodo_fim ? U.fData(e.periodo_fim) : '—') + '</td>' +
+          '<td class="num">' + x.linhas + '</td><td class="num">' + x.conciliadas + '</td>' +
+          '<td class="num">' + U.num(e.saldo || 0) + '</td>' +
+          '<td class="sub">' + (quando && !isNaN(quando) ? U.fData(quando.toISOString().slice(0, 10)) : '') +
+            (e.usuario ? ' · ' + U.esc(e.usuario) : '') + '</td>' +
+          '<td class="acoes">' + (x.conciliadas ? '' :
+            '<button class="btn-sm" data-cn-mover="' + e.id + '">Mover para outra conta</button>') + '</td></tr>';
+      }).join('') + '</tbody></table></details>';
+  }
+
+  function moverExtratoTela(id) {
+    const atual = U.val('cn-banco');
+    const contas = D.bancos.filter(function (b) { return b.ativo !== false && b.id !== atual; });
+    const nomeEmp = e => (D.empresaPor(e) || {}).apelido || e || '';
+    ERP.app.modal({
+      titulo: 'Mover o arquivo para a conta certa',
+      corpo: '<div class="ajuda">As linhas deste arquivo e o saldo dele saem desta conta e vão para a escolhida. ' +
+        'Linhas de saldo (ex.: "SALDO ANTERIOR" do Itaú) ficam ignoradas na mudança.</div>' +
+        '<label for="mv-conta">Conta certa</label><select id="mv-conta"><option value="">escolha…</option>' +
+        contas.map(function (b) {
+          return '<option value="' + b.id + '">' + U.esc(b.apelido) + ' · ' + U.esc(nomeEmp(b.empresa)) + '</option>';
+        }).join('') + '</select>',
+      acoes: [{ txt: 'Mover', cls: 'btn-aprovar', fn: function () {
+        const destino = U.val('mv-conta');
+        const r = S.moverExtrato(id, destino);
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal();
+        opcoesContas();
+        U.el('cn-banco').value = destino;
+        render();
+        ERP.app.aviso(r.movidas + ' linha(s) movida(s)' + (r.saldos ? ' (' + r.saldos + ' de saldo, ignoradas)' : '') +
+          (r.ignoradas_duplicadas ? '; ' + r.ignoradas_duplicadas + ' já estavam na conta certa' : '') +
+          '. A tela agora mostra a conta certa.', 'ok');
+      } }]
+    });
   }
 
   /* ── conferência: o que ficou torto na conciliação ──────
@@ -1316,6 +1393,12 @@ ERP.conciliacao = (function () {
     box.querySelectorAll('[data-cn-lanc]').forEach(function (b) {
       b.addEventListener('click', function () { lancar(this.dataset.cnLanc); });
     });
+    box.querySelectorAll('[data-cn-mover]').forEach(function (b) {
+      b.addEventListener('click', function () { moverExtratoTela(this.dataset.cnMover); });
+    });
+    if (U.el('cn-extratos')) {
+      U.el('cn-extratos').addEventListener('toggle', function () { extratosAbertos = this.open; });
+    }
     box.querySelectorAll('[data-cn-mutuo]').forEach(function (b) {
       b.addEventListener('click', function (e) { e.stopPropagation(); mutuo(this.dataset.cnMutuo); });
     });

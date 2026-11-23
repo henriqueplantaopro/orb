@@ -797,23 +797,79 @@ ERP.administracao = (function () {
 
   /* ── contas bancárias ───────────────────────────────────*/
   function bancos() {
-    return '<table><thead><tr><th>Conta</th><th>Banco</th><th>Agência / conta</th>' +
-      '<th>Convênio</th><th class="num">Saldo inicial</th><th>Layout</th><th>Situação</th>' +
+    const podeEditar = S.acesso ? S.acesso('cadastros').mover : true;
+    const nomeEmp = e => (D.empresaPor(e) || {}).apelido || e || '—';
+    const nomeBanco = c => S.CODIGO_BANCO[String(c || '').replace(/\D/g, '').padStart(3, '0')] || '';
+    return (podeEditar ? '<div class="ap-acoes"><button class="btn-aprovar" id="bc-nova">Nova conta bancária</button></div>' : '') +
+      '<table class="rel"><thead><tr><th>Conta</th><th>Empresa</th><th>Banco</th><th>Agência / conta</th>' +
+      '<th class="num">Saldo inicial</th><th>Remessa</th><th>Situação</th><th></th>' +
       '</tr></thead><tbody>' +
       D.bancos.map(function (b) {
         return '<tr><td class="desc">' + U.esc(b.apelido) + '</td>' +
-          '<td class="mono">' + U.esc(b.banco || '—') + '</td>' +
-          '<td class="mono">' + U.esc((b.agencia || '—') + (b.conta ? ' / ' + b.conta : '')) + '</td>' +
-          '<td class="mono">' + U.esc(b.convenio || '—') + '</td>' +
-          '<td class="num">' + U.brl(b.saldo_inicial || 0) +
+          '<td>' + U.esc(nomeEmp(b.empresa)) + '</td>' +
+          '<td class="mono">' + U.esc(b.banco || '—') + (nomeBanco(b.banco) ? ' <span class="sub">' + nomeBanco(b.banco) + '</span>' : '') + '</td>' +
+          '<td class="mono">' + U.esc((b.agencia || '—') + (b.agencia_dv ? '-' + b.agencia_dv : '') +
+            (b.conta ? ' / ' + String(b.conta).replace(/^0+/, '') + (b.conta_dv ? '-' + b.conta_dv : '') : '')) + '</td>' +
+          '<td class="num">' + U.num(b.saldo_inicial || 0) +
             (b.saldo_inicial_em ? '<div class="sub">em ' + U.fData(b.saldo_inicial_em) + '</div>' : '') + '</td>' +
-          '<td class="sub">' + U.esc(b.layout_remessa || 'não configurado') + '</td>' +
-          '<td>' + (b.ativo ? '<span class="badge b-aprovado">ativa</span>'
-                            : '<span class="badge b-cancelado">inativa</span>') + '</td></tr>';
+          '<td class="sub">' + U.esc(b.layout_remessa || '—') + '</td>' +
+          '<td>' + (b.ativo !== false ? '<span class="badge b-aprovado">ativa</span>'
+                            : '<span class="badge b-cancelado">inativa</span>') + '</td>' +
+          '<td class="acoes">' + (podeEditar ? '<button class="btn-sm" data-bc-editar="' + b.id + '">Editar</button>' : '') + '</td></tr>';
       }).join('') + '</tbody></table>' +
-      '<div class="ajuda">O saldo inicial é o ponto de partida do fluxo de caixa. O convênio e a versão ' +
-      'de layout são o que o banco confere no arquivo de remessa — hoje só o Bradesco está configurado; ' +
-      'o Santander precisa do layout dele para gerar remessa.</div>';
+      '<div class="ajuda">A conta precisa estar cadastrada com banco, agência e conta para o extrato OFX ser ' +
+      'reconhecido sozinho na conciliação. O saldo inicial é o ponto de partida do fluxo de caixa. O convênio e o ' +
+      'layout de remessa (pagamento em lote pelo banco) continuam configurados pelo suporte.</div>';
+  }
+
+  function formContaBancaria(id) {
+    const b = id ? D.bancos.find(function (x) { return x.id === id; }) : null;
+    const v = (k, pad) => U.esc(b ? (b[k] == null ? '' : b[k]) : (pad || ''));
+    const emps = D.empresas.filter(function (e) { return e.ativo !== false; });
+    ERP.app.modal({
+      titulo: b ? 'Editar conta · ' + U.esc(b.apelido) : 'Nova conta bancária',
+      corpo:
+        '<label for="bc-apelido">Nome da conta (como aparece nas telas)</label>' +
+        '<input id="bc-apelido" placeholder="ex.: Itaú — Novaped" value="' + v('apelido') + '">' +
+        '<label for="bc-empresa">Empresa dona da conta</label><select id="bc-empresa">' +
+          (b ? '' : '<option value="">escolha…</option>') +
+          emps.map(function (e) {
+            return '<option value="' + e.id + '"' + (b && b.empresa === e.id ? ' selected' : '') + '>' + U.esc(e.apelido) + '</option>';
+          }).join('') + '</select>' +
+        '<div class="row3"><div><label for="bc-banco">Código do banco</label>' +
+          '<input id="bc-banco" inputmode="numeric" placeholder="341 = Itaú" value="' + v('banco') + '">' +
+          '<div class="sub" id="bc-banco-nome"></div></div>' +
+        '<div><label for="bc-agencia">Agência</label><input id="bc-agencia" inputmode="numeric" placeholder="sem dígito" value="' + v('agencia') + '"></div>' +
+        '<div><label for="bc-agencia-dv">Dígito da agência</label><input id="bc-agencia-dv" placeholder="se tiver" value="' + v('agencia_dv') + '"></div></div>' +
+        '<div class="row2"><div><label for="bc-conta">Conta</label><input id="bc-conta" inputmode="numeric" placeholder="sem o dígito" value="' +
+          U.esc(b ? String(b.conta || '').replace(/^0+/, '') : '') + '"></div>' +
+        '<div><label for="bc-conta-dv">Dígito da conta</label><input id="bc-conta-dv" value="' + v('conta_dv') + '"></div></div>' +
+        '<div class="row2"><div><label for="bc-saldo">Saldo inicial (opcional)</label><input id="bc-saldo" inputmode="decimal" placeholder="00.000,00" value="' +
+          (b && b.saldo_inicial ? U.num(b.saldo_inicial) : '') + '"></div>' +
+        '<div><label for="bc-saldo-em">Saldo em</label><input type="date" id="bc-saldo-em" value="' + v('saldo_inicial_em') + '"></div></div>' +
+        (b ? '<label style="display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="bc-ativo"' +
+          (b.ativo !== false ? ' checked' : '') + '> Conta ativa</label>' : '') +
+        '<div class="ajuda">Exemplo Itaú: agência 3039, conta 99045, dígito 6. O arquivo OFX do Itaú traz tudo junto ' +
+          '(3039990456) — o sistema reconhece pelos campos separados.</div>',
+      acoes: [{ txt: b ? 'Salvar' : 'Cadastrar conta', cls: 'btn-aprovar', fn: function () {
+        const r = S.salvarContaBancaria({
+          id: b ? b.id : null, apelido: U.val('bc-apelido'), empresa: U.val('bc-empresa'),
+          banco: U.val('bc-banco'), agencia: U.val('bc-agencia'), agencia_dv: U.val('bc-agencia-dv'),
+          conta: U.val('bc-conta'), conta_dv: U.val('bc-conta-dv'),
+          saldo_inicial: U.val('bc-saldo'), saldo_inicial_em: U.val('bc-saldo-em'),
+          ativo: U.el('bc-ativo') ? U.el('bc-ativo').checked : true
+        });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal(); render();
+        ERP.app.aviso(b ? 'Conta atualizada.' : 'Conta cadastrada — já aparece na conciliação e no saldo bancário.', 'ok');
+      } }],
+      aoAbrir: function () {
+        const nome = function () {
+          U.el('bc-banco-nome').textContent = S.CODIGO_BANCO[String(U.val('bc-banco')).replace(/\D/g, '').padStart(3, '0')] || '';
+        };
+        U.el('bc-banco').addEventListener('input', nome); nome();
+      }
+    });
   }
 
   /* ── trilha de auditoria ────────────────────────────────
@@ -1037,6 +1093,10 @@ ERP.administracao = (function () {
     }
 
     if (aba === 'perfis') ligarMatriz();
+    if (U.el('bc-nova')) U.el('bc-nova').addEventListener('click', function () { formContaBancaria(null); });
+    document.querySelectorAll('[data-bc-editar]').forEach(function (bt) {
+      bt.addEventListener('click', function () { formContaBancaria(this.dataset.bcEditar); });
+    });
     if (aba === 'impostos') ligarImpostos();
     if (U.el('fiscal-salvar')) {
       U.el('fiscal-salvar').addEventListener('click', function () {
