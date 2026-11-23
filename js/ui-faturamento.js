@@ -1332,8 +1332,19 @@ ERP.faturamento = (function () {
     const l = S.esteiraFaturamento({ centro: par[0], competencia: par[1], sem_agrupar: true })[0] || {};
     const linhaGrupo = S.esteiraFaturamento({ competencia: par[1] })
       .find(function (x) { return x.eh_grupo && x.especialidades.some(function (e) { return e.centro === par[0]; }); });
-    const grupo = linhaGrupo ? linhaGrupo.projeto.curto : null;
-    const lotes = S.fechamentosVivosDe(par[0], par[1]);
+    /* A CHAVE do grupo é `grupo` (o rótulo gravado no projeto, ex.
+       "GHC - HGB"); `projeto.curto` é o NOME DO CLIENTE, só para a
+       tela. Usar o nome como chave fazia o sistema procurar projetos
+       do grupo "Grupo Hospitalar Conceição", que não existe: a janela
+       abria com R$ 0,00, sem os setores, e confirmar dava "Nenhum
+       projeto no grupo de faturamento". */
+    const grupo = linhaGrupo ? linhaGrupo.grupo : null;
+    const nomeGrupo = linhaGrupo ? (linhaGrupo.projeto.curto || grupo) : null;
+    /* No grupo, a produtividade é a de TODOS os setores — a nota é
+       uma só. Lida só no setor da linha, a janela dizia "nenhuma"
+       com a anestesia do mesmo grupo fechada. */
+    const lotes = (grupo ? S.projetosDoGrupo(grupo) : [par[0]]).reduce(function (acc, id) {
+      return acc.concat(S.fechamentosVivosDe(id, par[1])); }, []);
     const prod = lotes.reduce(function (t, x) { return t + (x.valor || 0); }, 0);
     /* TODAS as especialidades do grupo, não só as que lançaram
        produtividade no mês: a nota cobre o grupo inteiro, e uma
@@ -1359,12 +1370,13 @@ ERP.faturamento = (function () {
     const discInicial = S.discriminacaoDaNota(par[0], par[1], grupo, '');
     const discPadrao = S.discriminacaoPadrao(par[0], par[1], grupo, '');
     ERP.app.modal({
-      titulo: 'Confirmar valor e autorizar · ' + U.esc(grupo || (l.projeto || {}).curto || ''),
+      titulo: 'Confirmar valor e autorizar · ' + U.esc(nomeGrupo || (l.projeto || {}).curto || ''),
       fecharTxt: 'Cancelar',
       corpo:
         '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(par[1]) + '</span></div>' +
-        (grupo ? '<div class="resumo-linha"><span>Faturamento</span><span class="v">único do grupo ' +
-          U.esc(grupo) + '</span></div>' : '') +
+        (grupo ? '<div class="resumo-linha"><span>Faturamento</span><span class="v">nota única · ' +
+          U.esc(nomeGrupo) + (nomeGrupo !== grupo ? ' <span class="sub">(' + U.esc(grupo) + ')</span>' : '') +
+          '</span></div>' : '') +
         '<div class="resumo-linha"><span>Produtividade lançada</span><span class="v' +
           (lotes.length ? '' : ' erro') + '">' +
           (lotes.length ? U.brl(prod) + ' em ' + lotes.length + ' fechamento(s)' : 'nenhuma') + '</span></div>' +

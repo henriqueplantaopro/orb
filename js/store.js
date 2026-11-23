@@ -16188,8 +16188,37 @@ ERP.store = (function () {
 
   /* Autorização do órgão: quem confirmou o fechamento registra o
      protocolo/ofício com que o hospital aceitou o valor. */
+  /* NO GRUPO, AUTORIZAR E LIBERAR VALEM PARA A NOTA INTEIRA.
+     A autorização do órgão é uma só para a nota única; feita só no
+     setor da linha, os outros setores com valor ficavam em
+     "confirmado" e o grupo (que anda pelo mais atrasado) não saía do
+     lugar. Os setores em zero não faturam no mês e ficam de fora. */
+  function noGrupo(fn, centro, competencia, d) {
+    const c = D.centro(centro) || {};
+    if (!c.grupo_faturamento || (d && d._um)) return null;
+    const alvos = projetosDoGrupo(c.grupo_faturamento).filter(function (id) {
+      const pv = previsaoDe(id, competencia);
+      return id === centro || (pv && (pv.faturamento || 0) > 0);
+    });
+    if (alvos.length <= 1) return null;
+    let principal = null;
+    const falhas = [];
+    alvos.forEach(function (id) {
+      const r = fn(id, competencia, Object.assign({}, d || {}, { _um: true }));
+      if (id === centro) principal = r;
+      else if (r.erro) falhas.push(((D.centro(id) || {}).curto || id) + ': ' + r.erro);
+    });
+    if (principal && principal.erro) return principal;
+    if (falhas.length) {
+      return Object.assign({}, principal, { aviso_grupo: 'Não passou em ' + falhas.join(' · ') });
+    }
+    return principal;
+  }
+
   function autorizarFaturamento(centro, competencia, d) {
     d = d || {};
+    const doGrupo = noGrupo(autorizarFaturamento, centro, competencia, d);
+    if (doGrupo) return doGrupo;
     /* O PROTOCOLO NÃO TRAVA O FATURAMENTO.
 
        Ele era obrigatório aqui, com o argumento de que é a prova da
@@ -16258,6 +16287,8 @@ ERP.store = (function () {
     if (!pode('liberar_faturamento')) {
       return { erro: 'Seu perfil não libera faturamento. Fale com quem responde pelo faturamento.' };
     }
+    const doGrupo = noGrupo(liberarFaturamento, centro, competencia, d);
+    if (doGrupo) return doGrupo;
     const pv = previsaoDe(centro, competencia);
     if (!pv) return { erro: 'Não há previsão para este projeto nesta competência.' };
     if (!pv.autorizado_em) {
@@ -16776,8 +16807,14 @@ ERP.store = (function () {
         const esp = g.especialidades;
         /* A etapa do grupo é a MENOR entre as especialidades: o
            faturamento só anda quando o conjunto está pronto. */
-        const atras = esp.slice().sort(function (a, b) { return a.indice - b.indice; })[0];
+        /* ...entre as que TÊM VALOR. O setor em zero não faturou no mês
+           (zero é resposta) e nunca é confirmado — contá-lo prendia o
+           GHC em "previsão" para sempre: a cardiologia confirmada e
+           autorizada, e o grupo parado por seis setores zerados. Se
+           ninguém tem valor ainda, vale o conjunto. */
         const comValor = esp.filter(function (e) { return e.valor > 0; });
+        const contam = comValor.length ? comValor : esp;
+        const atras = contam.slice().sort(function (a, b) { return a.indice - b.indice; })[0];
         g.etapa = atras.etapa;
         g.indice = atras.indice;
         /* O valor do grupo é o do faturamento único: se alguma
@@ -16786,7 +16823,7 @@ ERP.store = (function () {
         g.documentos = esp.reduce(function (t, e) { return t.concat(e.documentos || []); }, []);
         g.centro = (comValor[0] || esp[0]).centro;
         g.previsao = (comValor[0] || esp[0]).previsao;
-        g.parado_desde = esp.reduce(function (t, e) {
+        g.parado_desde = contam.reduce(function (t, e) {
           return !t || e.parado_desde < t ? e.parado_desde : t; }, null);
         g.dias = U.diasEntre(g.parado_desde, hoje);
         ['confirmado_em', 'confirmado_por', 'autorizado_em', 'autorizado_por', 'protocolo',
