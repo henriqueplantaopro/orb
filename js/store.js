@@ -16735,6 +16735,10 @@ ERP.store = (function () {
         liberado_em: pv ? pv.liberado_em : null,
         liberado_por: pv ? pv.liberado_por : null,
         faturado_em: docs.length ? docs[0].emissao : null,
+        /* Quando o dinheiro deve entrar: o vencimento da nota, que é o
+           que o fluxo de caixa lê. */
+        recebimento_previsto: docs.map(function (r) { return r.vencimento || ''; })
+          .filter(Boolean).sort()[0] || null,
         /* DOCUMENTO DO FATURAMENTO — a AF, a escala, a medição.
            Todo faturamento tem um; o que não pode é esperar por ele
            e travar o financeiro. Então o valor segue, e o que fica
@@ -16884,6 +16888,8 @@ ERP.store = (function () {
           });
         });
         g.documentos_ids = idsDoc;
+        g.recebimento_previsto = esp.map(function (e) { return e.recebimento_previsto || ''; })
+          .filter(Boolean).sort()[0] || null;
         /* OS DOCUMENTOS ANEXADOS (AF, escala, medição) do grupo. Cada
            setor já os lê da previsão-âncora do grupo, mas a linha do
            grupo não copiava nada disso — o GHC tinha anexo e a esteira
@@ -17440,8 +17446,13 @@ ERP.store = (function () {
     const partes = ratearNoGrupo(d.grupo, d.competencia, d.valor);
     if (!partes.length) return { erro: 'Não há base (confirmada ou prevista) para ratear o documento.' };
     const principal = partes[0].centro;
+    /* Sem data informada, o recebimento previsto segue o prazo do
+       cliente — como na nota de projeto avulso. Vazio, a nota do grupo
+       sumia do fluxo de caixa. */
+    const cliP = D.clienteDoCentro(principal);
+    const venc = d.vencimento || dataPrevista(d.competencia, prazoDe(principal, cliP ? cliP.documento : null).dias);
     const r = criarReceber({
-      numero: d.numero, emissao: d.emissao || U.hoje(), vencimento: d.vencimento,
+      numero: d.numero, emissao: d.emissao || U.hoje(), vencimento: venc,
       cliente_nome: d.cliente_nome || (D.clienteDoCentro(principal) || {}).nome || d.grupo,
       centro: principal, competencia: d.competencia, valor_bruto: d.valor,
       discriminacao: d.discriminacao || ('Faturamento único ' + d.grupo + ' · ' + U.fComp(d.competencia)),
@@ -19491,8 +19502,118 @@ ERP.store = (function () {
   /* Cancelar NF ou fatura no a receber. Não existia: emitida errada, o
      único jeito era mudar a competência — e a previsão substituída
      ficava presa. Cancelar devolve a previsão ao estado anterior. */
+  /* ── A MESMA NOTA LANÇADA DUAS VEZES ─────────────────
+
+     Até a v188, cada clique em "Anexar NF" num grupo criava mais um
+     recebível com a nota inteira. A nota é uma só; o que sobra é um
+     registro a mais, e quem lança faturamento precisa conseguir
+     tirá-lo — cancelar nota fiscal é de diretoria, mas isto não
+     cancela nota nenhuma: a NF continua viva no contas a receber,
+     uma vez.
+
+     Só vale para o repetido de verdade: outro documento vivo, com o
+     mesmo número e série, na mesma competência e cobrindo o mesmo
+     faturamento. Sem esse irmão, o caminho é o cancelamento normal. */
+  function irmaosDeNota(r) {
+    if (!r) return [];
+    const num = function (x) { return String(x.numero || '').trim().replace(/^0+(?=\d)/, ''); };
+    const centros = (r.rateio_centros && r.rateio_centros.length)
+      ? r.rateio_centros.map(function (x) { return x.centro; }) : [r.centro];
+    return st.receber.filter(function (x) {
+      return x.id !== r.id && ['nota', 'fatura'].indexOf(x.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(x.status) < 0 &&
+        num(x) === num(r) && String(x.serie || '').trim() === String(r.serie || '').trim() &&
+        x.competencia === r.competencia &&
+        ((r.grupo_faturamento && x.grupo_faturamento === r.grupo_faturamento) ||
+          centros.some(function (c) { return cobreCentro(x, c); }));
+    });
+  }
+
+  function removerNotaRepetida(id, motivo) {
+    if (!pode('faturar')) return { erro: 'Seu perfil não lança faturamento.' };
+    const r = st.receber.find(function (x) { return x.id === id; });
+    if (!r) return { erro: 'Documento não encontrado.' };
+    if (['cancelado', 'substituido'].indexOf(r.status) > -1) return { erro: 'Este lançamento já saiu.' };
+    if (r.status === 'recebido' || (r.valor_recebido || 0) > 0.004) {
+      return { erro: 'Este lançamento já teve recebimento — remova o repetido que não recebeu, ' +
+        'ou estorne o recebimento antes.' };
+    }
+    const irmaos = irmaosDeNota(r);
+    if (!irmaos.length) {
+      return { erro: 'A NF ' + (r.numero || '') + ' não está lançada em dobro: este é o único lançamento dela. ' +
+        'Para cancelar a nota, use Cancelar no contas a receber (diretoria/sócio).' };
+    }
+    const m = 'Lançamento em dobro da NF ' + (r.numero || '') + (motivo ? ' — ' + motivo : '');
+    const c = desmancharReceber(id, m);
+    if (c.erro) return c;
+    r.lancamento_em_dobro = true;
+    /* O que a repetida tinha abatido/travado volta para a que fica:
+       as previsões dos setores continuam esperando conferência com a
+       nota viva, não soltas como se nada tivesse sido faturado. */
+    const fica = irmaos[0];
+    st.receber.filter(function (x) {
+      return x.origem === 'previsao' && x.status === 'previsto' && !x.conferir &&
+        x.competencia === fica.competencia && cobreCentro(fica, x.centro);
+    }).forEach(function (pv) {
+      pv.conferir = fica.id;
+      pv.observacao = 'Aguardando conferência do vínculo com a NF ' + fica.numero;
+      fica.substitui = (fica.substitui || []).concat(pv.id);
+    });
+    logar('conta_receber', id, 'removeu lançamento em dobro', m + ' · fica o lançamento ' + fica.id);
+    return { ok: true, fica: fica.id };
+  }
+
+  /* As notas vivas de um faturamento — do projeto, ou do grupo
+     inteiro quando ele fatura junto. É a lista que a esteira mostra
+     para mexer na previsão de recebimento e no lançamento em dobro. */
+  function notasDoFaturamento(centro, competencia) {
+    const g = grupoDe(centro);
+    const ids = g ? projetosDoGrupo(g) : [centro];
+    return st.receber.filter(function (r) {
+      return r.competencia === competencia && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0 &&
+        ids.some(function (id) { return cobreCentro(r, id); });
+    }).map(function (r) {
+      return { id: r.id, numero: r.numero || '', serie: r.serie || '', valor: r.valor_bruto,
+        vencimento: r.vencimento || '', emissao: r.emissao || '', status: r.status,
+        recebido: (r.valor_recebido || 0) > 0.004 || r.status === 'recebido',
+        projeto: (D.centro(r.centro) || {}).curto || '', grupo: r.grupo_faturamento || null,
+        criado_por: r.criado_por || '', criado_em: r.criado_em || null,
+        tem_arquivo: !!(r.arquivo && (r.arquivo.path || r.arquivo.dados)),
+        em_dobro: irmaosDeNota(r).length > 0 };
+    });
+  }
+
+  /* PREVISÃO DE RECEBIMENTO depois de faturado. O órgão avisa que
+     vai pagar noutra data, e o fluxo de caixa tem de acompanhar —
+     sem precisar abrir o contas a receber e achar o título. É o
+     mesmo campo `vencimento` do título, com a troca no histórico. */
+  function alterarPrevisaoRecebimento(id, data, motivo) {
+    if (!pode('faturar')) return { erro: 'Seu perfil não altera o contas a receber.' };
+    if (!data || !/^\d{4}-\d{2}-\d{2}$/.test(data)) return { erro: 'Informe a nova data prevista.' };
+    const r = st.receber.find(function (x) { return x.id === id; });
+    if (!r) return { erro: 'Documento não encontrado.' };
+    if (r.status === 'recebido') return { erro: 'Este documento já foi recebido.' };
+    const antes = r.vencimento || '';
+    const e = editarReceber(id, { vencimento: data });
+    if (e.erro) return e;
+    if (e.n && motivo) {
+      logar('conta_receber', id, 'mudou a previsão de recebimento',
+        (antes ? U.fData(antes) : '—') + ' → ' + U.fData(data) + ' · ' + motivo);
+    }
+    return { ok: true, n: e.n || 0 };
+  }
+
   function cancelarReceber(id, motivo) {
     if (!pode('cancelar')) return { erro: 'Seu perfil não cancela documento no contas a receber.' };
+    return desmancharReceber(id, motivo);
+  }
+
+  /* O desmanche em si, sem a pergunta de perfil — quem chama já
+     decidiu se pode. Cancelar nota é de diretoria/sócio; tirar um
+     LANÇAMENTO EM DOBRO não é cancelar nota nenhuma (a nota segue
+     viva, lançada uma vez), e por isso tem porta própria. */
+  function desmancharReceber(id, motivo) {
     if (!motivo) return { erro: 'Informe o motivo do cancelamento.' };
     const r = st.receber.find(function (x) { return x.id === id; });
     if (!r) return { erro: 'Documento não encontrado.' };
@@ -21979,7 +22100,7 @@ ERP.store = (function () {
     previsaoFaturamentoComoReceber, previsoesDeProjeto, mesesPrevisaoReceber: () => MESES_PREVISAO_RECEBER,
     vencimentoPrevistoDe, origemDoPrazo,
     saldoInicial, saldoInicialEm, saldoAtual, saldosAtuais,
-    receberAberto, receberVencido, diasDeAtraso, cancelarReceber, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
+    receberAberto, receberVencido, diasDeAtraso, cancelarReceber, removerNotaRepetida, notasDoFaturamento, alterarPrevisaoRecebimento, saldoReceberDe, vinculosPendentes, vinculosPendentesQtd, confirmarSubstituicao, recusarVinculo,
     previsoesParaVincular, vincularNotaAPrevisao,
     prazoDe, dataPrevista, salvarPrevisao, confirmarFaturamentoProdutividade,
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
