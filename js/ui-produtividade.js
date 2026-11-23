@@ -199,7 +199,13 @@ ERP.produtividade = (function () {
     confirmado: { t: 'aguardando autorização do órgão', c: 'sit-parcial' },
     autorizado: { t: 'autorizado — aguardando liberação', c: 'sit-parcial' },
     liberado: { t: 'liberado para emissão de NF', c: 'sit-pago' },
-    faturado: { t: 'faturado', c: 'sit-pago' }
+    faturado: { t: 'faturado', c: 'sit-pago' },
+    /* Faltava esta. Um projeto marcado "Não tem faturamento" na
+       competência (há um em outubro) fazia `ETAPA_TXT[...]` dar
+       undefined, a tela inteira quebrava no meio do desenho e a
+       Cobertura ficava parada na competência anterior — parecia
+       travada. Não era lentidão: era erro. */
+    sem_faturamento: { t: 'sem faturamento no mês', c: 'sit-cancelado' }
   };
 
   /* A etapa de cada projeto vem de UMA esteira da competência,
@@ -216,7 +222,10 @@ ERP.produtividade = (function () {
       etapasCache = { comp: comp, mapa: mapa };
     }
     const linha = etapasCache.mapa[centro];
-    const e = ETAPA_TXT[(linha || {}).etapa || 'previsao'];
+    /* Etapa que a tela não conhece (uma nova, no futuro) aparece pelo
+       próprio nome — nunca derruba a lista inteira. */
+    const etapa = (linha || {}).etapa || 'previsao';
+    const e = ETAPA_TXT[etapa] || { t: String(etapa).replace(/_/g, ' '), c: 'sit-lancado' };
     return '<span class="badge ' + e.c + '">' + e.t + '</span>' +
       (linha && linha.protocolo ? '<div class="sub">' + U.esc(linha.protocolo) + '</div>' : '');
   }
