@@ -15755,8 +15755,29 @@ ERP.store = (function () {
      situação "previsto": ele já entra no fluxo e aparece na lista, com
      a etiqueta certa, em vez de existir só numa tela paralela.
      Encerrar cancela o que sobrou de previsto. */
-  function marcarPrevisoes(comp, status, centro, motivo) {
-    if (!pode('faturar') && !pode('lancar')) return { erro: 'Seu perfil não marca previsões.' };
+  /* "SEM FATURAMENTO" DITO NA HORA DE LANÇAR A PRODUTIVIDADE.
+
+     No GHC há setor cuja produtividade é paga e NÃO fatura no mês. A
+     janela que aparece depois do lançamento só aceitava valor maior
+     que zero — o setor ficava sem resposta e a pendência ia para a
+     esteira. Quem lança a produtividade (mesma alçada de confirmar o
+     valor ali) diz que não tem, com o motivo; é a mesma marca do
+     "Não tem faturamento" da esteira. */
+  function semFaturamentoDaProdutividade(centro, comp, motivo) {
+    if (!pode('faturar') && !pode('lancar') && !podeMover('produtividade')) {
+      return { erro: 'Seu perfil não confirma valor de faturamento.' };
+    }
+    if (!String(motivo || '').trim()) return { erro: 'Diga por que este lançamento não tem faturamento.' };
+    const jaNota = st.receber.some(function (r) {
+      return r.centro === centro && r.competencia === comp && ['nota', 'fatura'].indexOf(r.origem) > -1 &&
+        ['cancelado', 'substituido'].indexOf(r.status) < 0;
+    });
+    if (jaNota) return { erro: 'Este projeto já tem nota emitida em ' + U.fComp(comp) + '.' };
+    return marcarPrevisoes(comp, 'encerrada', centro, String(motivo).trim(), { interno: true });
+  }
+
+  function marcarPrevisoes(comp, status, centro, motivo, opcoes) {
+    if (!(opcoes && opcoes.interno) && !pode('faturar') && !pode('lancar')) return { erro: 'Seu perfil não marca previsões.' };
     let alvo = st.previsoes.filter(function (p) {
       return p.tipo !== 'despesa' && p.competencia === comp && (!centro || p.centro === centro);
     });
@@ -16730,8 +16751,17 @@ ERP.store = (function () {
       });
     }
 
+    /* Com competência pedida, só ela é montada. Antes a esteira
+       montava TODAS as competências da história (cada linha varrendo
+       notas, previsões e fechamentos) e só no fim jogava fora as
+       outras — e a Cobertura da produtividade pedia isso uma vez POR
+       PROJETO: em outubro, com quase tudo lançado, a tela parava.
+       O resultado é o mesmo: o filtro de competência lá embaixo
+       descartaria as outras de qualquer jeito, e os grupos se formam
+       dentro da mesma competência. */
     Object.keys(comps).forEach(function (k) {
       const partes = k.split('|');
+      if (f.competencia && partes[1] !== f.competencia) return;
       add(partes[0], partes[1]);
     });
 
@@ -16821,6 +16851,16 @@ ERP.store = (function () {
            especialidade concentra a nota, é ela; senão, a soma. */
         g.valor = Math.round(esp.reduce(function (t, e) { return t + (e.valor || 0); }, 0) * 100) / 100;
         g.documentos = esp.reduce(function (t, e) { return t.concat(e.documentos || []); }, []);
+        /* OS DOCUMENTOS ANEXADOS (AF, escala, medição) do grupo. Cada
+           setor já os lê da previsão-âncora do grupo, mas a linha do
+           grupo não copiava nada disso — o GHC tinha anexo e a esteira
+           não mostrava a etiqueta "Doc.", nem o "Falta doc." quando
+           faltava. O maior número entre os setores, não a soma: é o
+           mesmo conjunto de arquivos visto por cada setor. */
+        g.anexos = esp.reduce(function (t, e) { return Math.max(t, e.anexos || 0); }, 0);
+        g.documento_dispensado = esp.some(function (e) { return e.documento_dispensado; });
+        g.sem_documento = !g.anexos && !g.documento_dispensado &&
+          contam.some(function (e) { return e.sem_documento; });
         g.centro = (comValor[0] || esp[0]).centro;
         g.previsao = (comValor[0] || esp[0]).previsao;
         g.parado_desde = contam.reduce(function (t, e) {
@@ -21910,7 +21950,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
-    medicoSemPagamento, desfazerSemPagamento, salvarContaBancaria, extratosDaConta, moverExtrato, CODIGO_BANCO,
+    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,

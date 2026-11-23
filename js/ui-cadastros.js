@@ -1411,10 +1411,17 @@ ERP.cadastros = (function () {
               (t || '—') + '</option>';
           }).join('') + '</select></div></div>' +
         '<label>Chave PIX</label><input id="cd-pix"' + trava + ' value="' + U.esc(c ? (c.pix || '') : '') + '">' +
+        /* Os campos continuam travados aqui (digitar chave solta,
+           sem conferir o tipo, é como se paga a pessoa errada) — mas
+           EXISTE caminho: o mesmo formulário conferido que a
+           produtividade usa, que valida a chave contra o tipo e deixa
+           o valor anterior na trilha. Sem ele, chave errada no
+           cadastro só se corrigia reimportando um fechamento. */
         (travaPagamento
-          ? '<div class="ajuda">Chave PIX, forma de pagamento e tipo do cadastro do médico vêm da ' +
-            'importação do fechamento de produtividade, que confere o que o arquivo traz contra o ' +
-            'cadastro e aponta as divergências. Por isso não se digitam aqui.</div>'
+          ? '<div class="ajuda">Chave PIX, forma de pagamento e tipo se alteram pelo botão abaixo, que ' +
+            'confere a chave e guarda o valor anterior na trilha.</div>' +
+            ((S.podeMover('produtividade') || S.pode('lancar'))
+              ? '<button type="button" class="btn-sm" id="cd-banco">Alterar dados bancários</button>' : '')
           : '') +
         '<div class="row2" style="margin-top:8px">' +
           '<div><label>E-mail</label><input id="cd-email" type="email" placeholder="usado no envio do pedido de compra" value="' +
@@ -1425,6 +1432,21 @@ ERP.cadastros = (function () {
         '<div class="ajuda">Sem chave, o pagamento por PIX fica travado e o favorecido não entra na remessa.</div>' +
         (c ? '<label style="display:flex;gap:7px;align-items:center;margin-top:10px;font-weight:400">' +
              '<input type="checkbox" id="cd-ativo" style="width:auto"' + (c.ativo !== false ? ' checked' : '') + '> ativo</label>' : ''),
+      aoAbrir: function () {
+        if (!U.el('cd-banco')) return;
+        U.el('cd-banco').addEventListener('click', function () {
+          ERP.produtividade.formularioBancario({
+            nome: c.nome, credor: c,
+            ajuda: 'O que for gravado aqui vale para a remessa e para os próximos fechamentos, ' +
+              'e fica na trilha com o valor anterior.',
+            aoGravar: function (dados) {
+              const r = S.informarDadosBancarios(c.id, dados);
+              if (!r.erro) { render(); if (ERP.contas && ERP.contas.render) ERP.contas.render(); }
+              return r;
+            }
+          });
+        });
+      },
       acoes: [{ txt: c ? 'Salvar' : 'Cadastrar', cls: 'btn-aprovar', fn: function () {
         const nome = U.val('cd-nome');
         if (!nome) return ERP.app.aviso('Informe o nome.', 'erro');

@@ -73,6 +73,10 @@ const ACAO_PARA_MODULO = {
 
 /* CRUZAMENTOS DECLARADOS — cada um com o motivo. */
 const permitido = {
+  'ui-cadastros.js': {
+    produtividade: 'O botão "Alterar dados bancários" do cadastro do médico grava pela mesma regra da produtividade (informarDadosBancarios exige produtividade M ou lançar): chave PIX de médico é dado de pagamento, não cadastro solto. Quem tem só Cadastros vê o aviso e a quem pedir.',
+    lancar: 'Idem: quem lança no financeiro também altera os dados bancários do médico, pela mesma função do store.'
+  },
   'ui-ativos.js': {
     faturar: 'Locação de ativo gera receita: quem fatura precisa poder abrir a tela de locação mesmo sem movimentar o inventário.',
     lancar: 'Fechar uma OS lança o custo dela no contas a pagar — é trabalho de quem lança, não de quem mexe no inventário.'
