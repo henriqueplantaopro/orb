@@ -132,7 +132,7 @@ ERP.receber = (function () {
       vs.map(function (v) {
         const cp = D.centro(v.previsto.centro) || {};
         const cn = D.centro(v.nota.centro) || {};
-        const mesmoProjeto = v.previsto.centro === v.nota.centro;
+        const mesmoProjeto = v.previsto.centro === v.nota.centro || !!v.cobre_projeto;
         const mesmaComp = v.previsto.competencia === v.nota.competencia;
         const lado = function (c, r, alerta) {
           return '<td><b>' + U.esc(c.curto || c.nome || '— sem projeto —') + '</b>' +
@@ -146,8 +146,13 @@ ERP.receber = (function () {
              lado da NOTA: é o sinal de que a sugestão pode estar
              errada, e é a hora de trocar a previsão em vez de
              aceitar. */
-          lado(cn, v.nota, !mesmoProjeto || !mesmaComp) +
-          '<td class="num">' + U.brl(v.nota.valor_liquido) + '</td>' +
+          (v.do_grupo
+            ? '<td><b>' + U.esc(v.nota.grupo_faturamento || cn.curto || '') + '</b>' +
+              '<div class="sub' + (mesmaComp ? '' : ' erro') + '">' + U.fComp(v.nota.competencia) +
+              (v.nota.numero ? ' · ' + U.esc(v.nota.numero) : '') + ' · parte de ' + U.esc(cp.curto || '') +
+              ' na nota de ' + U.brl(v.nota.valor_bruto) + '</div></td>'
+            : lado(cn, v.nota, !mesmoProjeto || !mesmaComp)) +
+          '<td class="num">' + U.brl(v.do_grupo ? v.nota_liquido : v.nota.valor_liquido) + '</td>' +
           '<td class="num"' + (Math.abs(v.diferenca) > 0.05 ? ' style="color:var(--amber)"' : '') + '>' +
             (v.diferenca ? U.brl(v.diferenca) : '—') + '</td>' +
           '<td class="acoes">' +

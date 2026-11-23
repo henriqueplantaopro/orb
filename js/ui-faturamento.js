@@ -1268,7 +1268,18 @@ ERP.faturamento = (function () {
                 ? '<div class="sub">soma de ' + (l.total_especialidades || l.especialidades.length) +
                   ' setores</div>'
                 : '') +
-              (l.documentos.length ? '<div class="sub">' + U.esc(l.documentos.join(', ')) + '</div>' : '') + '</td>' +
+              (l.documentos.length ? '<div class="sub">' + U.esc(l.documentos.join(', ')) + '</div>' : '') +
+              /* O MESMO NÚMERO DUAS VEZES é a mesma nota lançada em
+                 dobro — e o valor da linha dobra junto. Dizer na linha
+                 é o que leva alguém a cancelar a repetida. */
+              (function () {
+                const rep = l.documentos.filter(function (n, i) { return n && l.documentos.indexOf(n) !== i; });
+                return rep.length
+                  ? '<div class="erro" data-est-dup="1" title="Cancele a repetida em Contas a receber (ação Cancelar). ' +
+                    'O valor desta linha está contando a nota duas vezes.">NF ' + U.esc(rep.join(', ')) +
+                    ' lançada em dobro</div>'
+                  : '';
+              })() + '</td>' +
             passo(l, 'confirmado') + passo(l, 'autorizado') + passo(l, 'liberado') + passo(l, 'faturado') +
             '<td class="num' + (atrasado ? ' erro' : ' sub') + '">' +
               (l.etapa === 'faturado' ? '—' : l.dias + ' dias') + '</td>' +
