@@ -21865,6 +21865,30 @@ ERP.store = (function () {
     };
   }
 
+  /* Natureza, centro e projeto de uma parcela em texto, do jeito que
+     a planilha lê: rateada, cada parte com o seu nome. */
+  function naturezaDaParcela(p) {
+    if (p.contas_rateio && p.contas_rateio.length > 1) {
+      return p.contas_rateio.map(function (x) {
+        return x.conta + ' ' + ((D.conta(x.conta) || {}).nome || '') + ' ' + U.brl(x.valor);
+      }).join(' + ');
+    }
+    return (D.conta(p.conta) || {}).nome || '';
+  }
+  function rateioDaParcela(p) {
+    return (p.rateio && p.rateio.length) ? p.rateio : [{ centro: p.centro, pct: 100 }];
+  }
+  function centrosDaParcela(p) {
+    const rt = rateioDaParcela(p);
+    return rt.map(function (x) {
+      return ((D.centro(x.centro) || {}).curto || '') + (rt.length > 1 ? ' ' + U.num(x.pct || 0) + '%' : '');
+    }).join(' + ');
+  }
+  function projetosDaParcela(p) {
+    return rateioDaParcela(p).map(function (x) { return (D.centro(x.centro) || {}).unidade || ''; })
+      .filter(function (u, i, a) { return u && a.indexOf(u) === i; }).join(' + ');
+  }
+
   function contasPagasERecebidas(de, ate, f) {
     f = f || {};
     const linhas = [];
@@ -21885,12 +21909,29 @@ ERP.store = (function () {
         /* Três valores, para bater com o extrato e para saber quanto
            foi de encargo: o principal (o que quitou do título), os
            juros/multa, e o que saiu do banco (a soma). */
-        principal: Math.round(pg.valor * 100) / 100,
+        /* O título quitado inclui o desconto (o que ele abateu sem sair
+           do banco); o pago é o que saiu: principal − desconto + juros. */
+        principal: Math.round((pg.valor + (pg.desconto || 0)) * 100) / 100,
         valor: Math.round((pg.valor + (pg.juros || 0) + (pg.multa || 0)) * 100) / 100,
         juros: Math.round(((pg.juros || 0) + (pg.multa || 0)) * 100) / 100,
+        desconto: Math.round((pg.desconto || 0) * 100) / 100,
         banco: (D.banco(pg.banco) || {}).apelido || '',
         banco_id: pg.banco || null,
-        empresa: (D.empresaPor(pg.banco ? empresaDaConta(pg.banco) : empresaDaParcela(p)) || {}).apelido || ''
+        empresa: (D.empresaPor(pg.banco ? empresaDaConta(pg.banco) : empresaDaParcela(p)) || {}).apelido || '',
+        /* O MESMO DETALHE DO CONTAS PAGAS (v191): quem recebe este
+           arquivo no fim do mês precisa saber de quem, de que natureza
+           e de que centro foi cada saída — não só quanto e quando. */
+        parcela_id: p.id,
+        cnpj: tituloSigiloso(p) ? '' : ((D.credor(p.credor) || {}).documento || ''),
+        tipo_titulo: p.tipo_titulo || '',
+        natureza: naturezaDaParcela(p),
+        conta: (p.contas_rateio && p.contas_rateio.length > 1)
+          ? p.contas_rateio.map(function (x) { return x.conta; }).join('+') : (p.conta || ''),
+        centro: centrosDaParcela(p),
+        projeto: projetosDaParcela(p),
+        aprovacao: p.aprovacao || '',
+        nf: p.arquivo ? 'arquivo anexado' : p.doc ? 'nº informado' : (p.sem_nf ? 'sem NF' : '—'),
+        situacao: p.status || ''
       });
     });
 
@@ -21920,11 +21961,21 @@ ERP.store = (function () {
           baixa: b.data, parcela: (i + 1) + '/' + lista.length,
           principal: Math.round((b.valor || 0) * 100) / 100,
           valor: Math.round((b.valor || 0) * 100) / 100,
-          juros: 0,
+          juros: 0, desconto: 0,
           banco: (D.banco(b.banco) || {}).apelido || '',
           banco_id: b.banco || null,
           empresa: (D.empresaPor(b.banco
-            ? empresaDaConta(b.banco) : empresaDoCentro(r.centro)) || {}).apelido || ''
+            ? empresaDaConta(b.banco) : empresaDoCentro(r.centro)) || {}).apelido || '',
+          receber_id: r.id,
+          cnpj: r.cliente_doc || r.cliente_documento || '',
+          tipo_titulo: r.origem === 'fatura' ? 'fatura' : r.origem === 'nota' ? 'nf' : (r.origem || ''),
+          natureza: (D.conta(r.conta || '1.01') || {}).nome || 'Receita',
+          conta: r.conta || '1.01',
+          centro: (D.centro(r.centro) || {}).curto || '',
+          projeto: r.grupo_faturamento || (D.centro(r.centro) || {}).unidade || '',
+          aprovacao: '',
+          nf: r.arquivo ? 'arquivo anexado' : r.numero ? 'nº informado' : '—',
+          situacao: r.status || ''
         });
       });
     });

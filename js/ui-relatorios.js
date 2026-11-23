@@ -747,29 +747,52 @@ ERP.relatorios = (function () {
     { titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => l.emissao ? U.fData(l.emissao) : '' },
     { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => U.fData(l.vencimento) },
     { titulo: 'Parcela', largura: 9, valor: l => l.parcela },
-    { titulo: 'Valor do título', largura: 16, tipo: 'numero', valor: l => l.principal },
-    { titulo: 'Juros/multa', largura: 16, tipo: 'numero', valor: l => l.juros || 0 },
-    { titulo: 'Valor pago', largura: 16, tipo: 'numero', valor: l => l.valor },
+    /* A v182 pôs aqui as colunas de juros — por engano: este é o
+       relatório do que ainda VAI ser pago e recebido, as linhas não
+       têm título/juros/pago, e as colunas saíam em branco. Elas são
+       do relatório de pagas e recebidas, logo abaixo. */
+    { titulo: 'Valor da parcela', largura: 16, tipo: 'numero', valor: l => l.valor },
     { titulo: 'Saldo', largura: 16, tipo: 'numero', valor: l => l.saldo }
   ];
 
+  /* AS MESMAS COLUNAS DO CONTAS PAGAS (v191), na mesma ordem: um
+     arquivo se lê pelo outro. As datas ficam juntas — vencimento e
+     pagamento lado a lado — logo antes dos valores; e os valores são
+     três, que é o que bate com o extrato e diz quanto foi de encargo
+     no mês: o título, os juros/multa e o que saiu do banco.
+
+     A emissão saiu: quem confere caixa olha vencimento e pagamento. */
   const COLS_REALIZADO = [
-    { titulo: 'Tipo', largura: 10, valor: l => l.tipo },
+    { titulo: 'Tipo', largura: 9, valor: l => l.tipo },
     { titulo: 'Documento', largura: 16, valor: l => l.documento },
-    { titulo: 'Forma', largura: 16, valor: l => l.forma },
-    { titulo: 'Fornecedor', largura: 30, valor: l => l.contraparte },
     { titulo: 'Descrição', largura: 38, valor: l => l.descricao },
+    { titulo: 'Fornecedor / cliente', largura: 30, valor: l => l.contraparte },
+    { titulo: 'CNPJ/CPF', largura: 18, valor: l => l.cnpj ? U.cnpj(l.cnpj) : '' },
+    { titulo: 'Tipo do título', largura: 12, valor: l => l.tipo_titulo || '' },
+    { titulo: 'Natureza', largura: 30, valor: l => l.natureza || '' },
+    { titulo: 'Conta', largura: 10, valor: l => l.conta || '' },
+    { titulo: 'Centro de custo', largura: 22, valor: l => l.centro || '' },
+    { titulo: 'Projeto', largura: 22, valor: l => l.projeto || '' },
+    /* Competência é data: sai 10/2026, não 2026-10. */
     { titulo: 'Competência', largura: 12, valor: l => U.fComp(l.competencia) },
-    { titulo: 'Emissão', largura: 12, tipo: 'data', valor: l => l.emissao ? U.fData(l.emissao) : '' },
-    { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => l.vencimento ? U.fData(l.vencimento) : '' },
-    { titulo: 'Data baixa', largura: 12, tipo: 'data', valor: l => U.fData(l.baixa) },
     { titulo: 'Parcela', largura: 9, valor: l => l.parcela },
-    { titulo: 'Valor da parcela', largura: 16, tipo: 'numero', valor: l => l.valor },
+    { titulo: 'Forma PG', largura: 16, valor: l => l.forma },
     /* Banco e empresa em coluna: é o que a contabilidade usa para
        separar o movimento por conta e por CNPJ. */
     { titulo: 'Banco', largura: 22, valor: l => l.banco || '' },
-    { titulo: 'Empresa', largura: 18, valor: l => l.empresa || '' }
+    { titulo: 'Empresa', largura: 18, valor: l => l.empresa || '' },
+    { titulo: 'Aprovação', largura: 12, valor: l => l.aprovacao || '' },
+    { titulo: 'NF', largura: 14, valor: l => l.nf || '' },
+    { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => l.vencimento ? U.fData(l.vencimento) : '' },
+    { titulo: 'Data do PG', largura: 12, tipo: 'data', valor: l => U.fData(l.baixa) },
+    { titulo: 'Valor do título', largura: 15, tipo: 'numero', valor: l => l.principal },
+    { titulo: 'Juros/multa', largura: 15, tipo: 'numero', valor: l => l.juros || 0 },
+    { titulo: 'Desconto', largura: 15, tipo: 'numero', valor: l => l.desconto || 0 },
+    { titulo: 'Valor pago', largura: 15, tipo: 'numero', valor: l => l.valor },
+    { titulo: 'Dias de atraso', largura: 12, tipo: 'numero',
+      valor: l => l.vencimento && l.baixa > l.vencimento ? U.diasEntre(l.vencimento, l.baixa) : 0 }
   ];
+
 
   /* Conta escolhida no relatório de pagas e recebidas. Vazio = todas,
      com o banco aparecendo em coluna. */
@@ -951,9 +974,9 @@ ERP.relatorios = (function () {
     { t: 'Documento', h: l => '<td class="mono">' + U.esc(l.documento || '—') + '</td>' },
     { t: 'Fornecedor', h: l => '<td class="desc">' + U.esc(l.contraparte) +
       '<div class="sub">' + U.esc(l.descricao || '') + '</div></td>' },
-    { t: 'Vencimento', h: l => '<td class="mono">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' },
-    { t: 'Data baixa', h: l => '<td class="mono">' + U.fData(l.baixa) + '</td>' },
     { t: 'Parcela', h: l => '<td class="sub">' + l.parcela + '</td>' },
+    { t: 'Vencimento', h: l => '<td class="mono">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' },
+    { t: 'Data do PG', h: l => '<td class="mono">' + U.fData(l.baixa) + '</td>' },
     { t: 'Valor do título', num: true, h: l => '<td class="num">' + U.num(l.principal) + '</td>' },
     { t: 'Juros/multa', num: true, h: l => '<td class="num' + (l.juros > 0 ? '' : ' sub') + '">' +
       (l.juros > 0 ? U.num(l.juros) : '—') + '</td>' },
