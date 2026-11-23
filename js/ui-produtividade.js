@@ -127,6 +127,7 @@ ERP.produtividade = (function () {
 
   function desenharCobertura() {
     const comp = U.val('pr-cob-comp');
+    etapasCache = null;   // dados podem ter mudado desde o último desenho
     const todasLinhas = S.coberturaProdutividade(comp, cobTodos);
     const linhas = todasLinhas.filter(function (x) {
       if (cobStatus === 'lancado') return !!x.lote;
@@ -201,8 +202,20 @@ ERP.produtividade = (function () {
     faturado: { t: 'faturado', c: 'sit-pago' }
   };
 
+  /* A etapa de cada projeto vem de UMA esteira da competência,
+     montada uma vez por desenho da tela. Era uma esteira inteira POR
+     LINHA — sessenta projetos, sessenta esteiras — e a tela travava
+     na competência com mais movimento. */
+  let etapasCache = null;
   function etapaFat(centro, comp) {
-    const linha = S.esteiraFaturamento({ centro: centro, competencia: comp })[0];
+    if (!etapasCache || etapasCache.comp !== comp) {
+      const mapa = {};
+      S.esteiraFaturamento({ competencia: comp, incluir_inativos: true }).forEach(function (l) {
+        (l.eh_grupo ? l.especialidades : [l]).forEach(function (e) { mapa[e.centro] = l; });
+      });
+      etapasCache = { comp: comp, mapa: mapa };
+    }
+    const linha = etapasCache.mapa[centro];
     const e = ETAPA_TXT[(linha || {}).etapa || 'previsao'];
     return '<span class="badge ' + e.c + '">' + e.t + '</span>' +
       (linha && linha.protocolo ? '<div class="sub">' + U.esc(linha.protocolo) + '</div>' : '');
@@ -2645,10 +2658,24 @@ ERP.produtividade = (function () {
         (globalAtual ? '<div class="ajuda">' +
           (grupo ? 'Já confirmado no grupo neste mês: ' + U.brl(globalAtual) + ' (somando as especialidades).'
                  : 'Previsão atual do mês: ' + U.brl(globalAtual) + '.') + '</div>' : '') +
-        '<label>Observação (opcional)</label><input id="pr-fat-obs" placeholder="glosa, mês parcial, acordo…">',
+        '<label>Observação <span class="sub">(obrigatória para "Sem faturamento")</span></label>' +
+        '<input id="pr-fat-obs" placeholder="glosa, mês parcial, acordo… ou por que não fatura">',
       /* "Confirmar valor" e nada mais: aqui não se fatura nada, e o
          botão antigo dava a entender que sim. */
-      acoes: [{ txt: 'Confirmar valor', cls: 'btn-aprovar', fn: function () {
+      acoes: [{ txt: 'Sem faturamento', cls: 'btn-sm', fn: function () {
+        /* Setor que é pago e não fatura no mês (há vários no GHC). O
+           motivo é a observação — sem ela, daqui a três meses "sem
+           faturamento" não se distingue de esquecimento. */
+        const r = S.semFaturamentoDaProdutividade(centro, comp, U.val('pr-fat-obs'));
+        if (r.erro) {
+          U.el('pr-fat-obs').focus();
+          return ERP.app.aviso(r.erro + (/Diga por que/.test(r.erro) ? ' Escreva no campo Observação.' : ''), 'erro');
+        }
+        ERP.app.fecharModal();
+        ERP.app.atualizarContadores();
+        ERP.app.aviso((c.curto || '') + ' marcado sem faturamento em ' + U.fComp(comp) +
+          (grupo ? ' — não entra na nota única do grupo.' : '.'), 'ok');
+      } }, { txt: 'Confirmar valor', cls: 'btn-aprovar', fn: function () {
         const valor = U.parseValor(U.val('pr-fat-valor'));
         /* Valor desta especialidade: as do grupo somam para formar o
            faturamento do HGB, que sai em nota única. */
@@ -3084,62 +3111,77 @@ ERP.produtividade = (function () {
     'regime (PJ/SCP)': 'regime'
   };
 
+  /* A DECISÃO É DE QUEM CONFERE, COM DOIS BOTÕES QUE FECHAM.
+
+     Antes: "Usar a do arquivo" no MEIO da tabela, que trocava e
+     deixava a janela aberta, e embaixo — onde fica o "OK" de toda
+     janela — "Manter o cadastro atual". Quem clicou no meio, viu a
+     janela parada e clicou embaixo para fechar, achou que tinha
+     confirmado o contrário do que fez (e quem só clicou embaixo
+     manteve a chave velha sem perceber). Agora cada linha tem a
+     caixa "trocar" e a decisão sai nos dois botões do rodapé, que
+     fecham a janela. */
   function avisarDivergencias(depois) {
+    const copiaveis = divergencias.map(function (d) { return !!CAMPO_DA_DIVERGENCIA[d.campo]; });
+    const aplicar = function () {
+      let n = 0;
+      divergencias.forEach(function (d, ix) {
+        const chk = document.querySelector('[data-div-usar="' + ix + '"]');
+        if (!chk || !chk.checked) return;
+        const c = D.credores.find(function (x) { return x.nome === d.medico; });
+        const alvo = CAMPO_DA_DIVERGENCIA[d.campo];
+        if (!c || !alvo) return;
+        if (alvo === 'pix') {
+          /* Chave nova leva o TIPO junto: chave aleatória gravada
+             com o tipo "CPF" de antes é remessa recusada. */
+          const r = S.informarDadosBancarios(c.id, { forma_pagamento: 'pix', pix: d.arquivo,
+            tipo_chave: tipoDaChavePix(d.arquivo) });
+          if (r.erro) { ERP.app.aviso(d.medico + ': ' + r.erro, 'erro'); return; }
+        } else {
+          c[alvo] = d.campo === 'regime (PJ/SCP)' ? S.regimeDeTexto(d.arquivo) : d.arquivo;
+          S.logarCadastro('credor', c.id, 'trocou ' + d.campo + ' pela do arquivo',
+            d.cadastro + ' → ' + d.arquivo);
+        }
+        n++;
+      });
+      return n;
+    };
     ERP.app.modal({
       aoFechar: depois || null,
       titulo: divergencias.length + ' divergência(s) de cadastro',
+      /* O "Fechar" padrão sai: com ele ao lado, eram três botões para
+         duas respostas. Fechar pelo X ou Esc mantém o cadastro. */
+      aoAbrir: function () { if (copiaveis.some(Boolean) && U.el('modal-fechar')) U.el('modal-fechar').style.display = 'none'; },
       corpo:
-        '<div class="ajuda erro">O arquivo discorda do cadastro em alguns pontos. O sistema ' +
-        '<b>não sobrescreveu nada</b> — o repasse vai sair pelo cadastro atual. Confira antes ' +
-        'de gerar a remessa.</div>' +
+        '<div class="ajuda erro">O arquivo discorda do cadastro nestes pontos. Escolha qual vale — o ' +
+        'repasse sai pelo que ficar no cadastro.</div>' +
         '<table><thead><tr><th>Médico</th><th>Campo</th><th>No cadastro</th><th>No arquivo</th>' +
-        '<th></th></tr></thead><tbody>' +
+        '<th>Trocar?</th></tr></thead><tbody>' +
         divergencias.map(function (d, ix) {
           return '<tr><td class="desc">' + U.esc(d.medico) + '</td>' +
             '<td>' + U.esc(d.campo) + '</td>' +
             '<td class="mono">' + U.esc(d.cadastro) + '</td>' +
             '<td class="mono">' + U.esc(d.arquivo) + '</td>' +
-            /* SEM BOTÃO no que não é um valor para copiar.
-
-               "regime x documento" não compara duas versões do mesmo
-               campo: é um aviso de que o regime cadastrado não
-               combina com o tipo de documento. Não existe "usar a do
-               arquivo" para isso, e o botão genérico que existia
-               aqui gravaria o texto da observação dentro do campo de
-               CPF/CNPJ. */
-            '<td class="acoes">' + (CAMPO_DA_DIVERGENCIA[d.campo]
-              ? '<button class="btn-sm" data-div="' + ix + '">Usar a do arquivo</button>'
+            /* SEM CAIXA no que não é um valor para copiar ("regime x
+               documento" é aviso, não duas versões do mesmo campo). */
+            '<td>' + (copiaveis[ix]
+              ? '<input type="checkbox" data-div-usar="' + ix + '" checked style="width:auto" title="marcado: usa a do arquivo">'
               : '<span class="sub">confira o cadastro</span>') + '</td></tr>';
-        }).join('') + '</tbody></table>',
-      aoAbrir: function () {
-        document.querySelectorAll('[data-div]').forEach(function (b) {
-          b.addEventListener('click', function () {
-            const d = divergencias[+this.dataset.div];
-            const c = D.credores.find(function (x) { return x.nome === d.medico; });
-            if (!c) return;
-            /* CADA CAMPO NO SEU LUGAR.
-
-               Isto era `if (chave PIX) c.pix = …; else c.documento = …`
-               — um "senão" que recebia tudo o que não fosse PIX. Com
-               a divergência de regime passando a existir, clicar no
-               botão dela gravaria "PJ" dentro do CPF/CNPJ do médico,
-               e o repasse sairia para um documento inválido.
-
-               O mapa resolve a classe inteira: campo que não está
-               nele não tem botão e não grava nada. */
-            const alvo = CAMPO_DA_DIVERGENCIA[d.campo];
-            if (!alvo) return;
-            c[alvo] = d.campo === 'regime (PJ/SCP)'
-              ? S.regimeDeTexto(d.arquivo)   // o rótulo volta a ser o código
-              : d.arquivo;
-            S.logarCadastro('credor', c.id, 'trocou ' + d.campo + ' pela do arquivo',
-              d.cadastro + ' → ' + d.arquivo);
-            this.textContent = 'trocado';
-            this.disabled = true;
-          });
-        });
-      },
-      acoes: [{ txt: 'Manter o cadastro atual', cls: 'btn-aprovar', fn: ERP.app.fecharModal }]
+        }).join('') + '</tbody></table>' +
+        (copiaveis.some(Boolean)
+          ? '<div class="ajuda">Desmarque a linha que deve continuar como está no cadastro.</div>' : ''),
+      acoes: (copiaveis.some(Boolean) ? [
+        { txt: 'Usar a do cadastro', cls: 'btn-sm', fn: function () {
+          ERP.app.fecharModal();
+          ERP.app.aviso('Mantido o cadastro — nada foi trocado.', 'ok');
+        } },
+        { txt: 'Usar a do arquivo', cls: 'btn-aprovar', fn: function () {
+          const n = aplicar();
+          ERP.app.fecharModal();
+          ERP.app.aviso(n ? n + ' dado(s) trocado(s) pelo do arquivo — fica na trilha do cadastro.'
+            : 'Nenhuma linha marcada — nada foi trocado.', 'ok');
+        } }
+      ] : [{ txt: 'Entendi', cls: 'btn-aprovar', fn: ERP.app.fecharModal }])
     });
   }
 
@@ -3301,5 +3343,5 @@ ERP.produtividade = (function () {
     return aplicarDigitado(id);
   }
 
-  return { montar: montar, ler: ler };
+  return { montar: montar, ler: ler, formularioBancario: function (o) { return formularioBancario(o); } };
 })();
