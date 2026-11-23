@@ -3956,10 +3956,14 @@ function liberarParaFaturar(centro, competencia) {
 
   // ordem: mais adiantado primeiro
   S.autorizarFaturamento('pj01', comp, { protocolo: 'OF QA125' });
-  const ordem = S.esteiraFaturamento({ competencia: comp }).map(l => l.etapa);
-  verificar('a esteira traz o mais adiantado primeiro',
-    ordem.indexOf('liberado') <= ordem.indexOf('confirmado') || ordem.indexOf('confirmado') < 0,
-    ordem.join(','));
+  /* A ordem por etapa saiu da esteira (ela embaralhava a lista); a
+     regra hoje é alfabética pelo nome mostrado. Esta verificação
+     passava por acaso enquanto nenhum grupo saía de "previsão" — o
+     GHC com setores zerados ficava preso nela até a v185. */
+  const est = S.esteiraFaturamento({ competencia: comp });
+  const nomes = est.map(l => String(l.projeto.curto || l.projeto.nome || ''));
+  verificar('a esteira vem em ordem alfabética pelo nome mostrado',
+    nomes.every((n, i) => i === 0 || nomes[i - 1].localeCompare(n, 'pt-BR') <= 0), nomes.join(' | ').slice(0, 300));
 
   // aba Status
   const st = S.statusFaturamento({ competencia: comp });
