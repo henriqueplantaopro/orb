@@ -13337,8 +13337,15 @@ ERP.store = (function () {
       return { erro: conc.length + ' linha(s) deste extrato já estão conciliadas na conta atual. ' +
         'Desfaça essas conciliações antes de mover.' };
     }
+    /* Já na conta certa = a mesma linha pelo conteúdo (v193), não só
+       pelo FITID, que o Bradesco repete entre arquivos. */
+    const usadasDest = new Set();
     const ja = ls.filter(function (l) {
-      return st.linhas.some(function (x) { return x.chave === destino.id + '|' + l.fitid; });
+      const x = st.linhas.find(function (y) {
+        return y.banco === destino.id && !usadasDest.has(y.id) && mesmaLinhaDeExtrato(y, l);
+      });
+      if (x) usadasDest.add(x.id);
+      return !!x;
     });
     if (ja.length && ja.length === ls.length) {
       return { erro: 'Este extrato já foi importado também na ' + destino.apelido + '. ' +
@@ -13354,7 +13361,7 @@ ERP.store = (function () {
         return;
       }
       l.banco = destino.id;
-      l.chave = destino.id + '|' + l.fitid;
+      l.chave = destino.id + '|' + (l.fitid || '') + '|' + l.data + '|' + Math.round((Number(l.valor) || 0) * 100);
       if (ehLinhaDeSaldo(l.memo) && l.situacao === 'pendente') {
         l.situacao = 'ignorado';
         l.observacao = 'linha de saldo do extrato — não é movimento';
@@ -13367,6 +13374,22 @@ ERP.store = (function () {
       ((D.bancos.find(function (b) { return b.id === origem; }) || {}).apelido || origem) + ' → ' + destino.apelido +
       ' · ' + movidas + ' linha(s)');
     return { ok: true, movidas: movidas, saldos: saldos, ignoradas_duplicadas: ja.length };
+  }
+
+  /* A mesma linha de extrato: mesma data, mesmo valor e o mesmo
+     histórico — ou o mesmo FITID com a mesma data e valor. */
+  function mesmaLinhaDeExtrato(a, b) {
+    if (a.data !== b.data) return false;
+    if (Math.round((Number(a.valor) || 0) * 100) !== Math.round((Number(b.valor) || 0) * 100)) return false;
+    return (a.fitid && a.fitid === b.fitid) || historicoComparavel(a.memo) === historicoComparavel(b.memo);
+  }
+  /* O histórico para comparar duas linhas: só as palavras sem acento.
+     O mesmo arquivo lido com a codificação errada vira "JosÃ©" em vez
+     de "José" — palavra com acento fica de fora dos dois lados, e a
+     linha continua sendo reconhecida como a mesma. */
+  function historicoComparavel(m) {
+    return String(m || '').toUpperCase().split(/\s+/)
+      .filter(function (w) { return w && /^[\x20-\x7e]+$/.test(w); }).join(' ');
   }
 
   function importarExtrato(bancoId, lido, nomeArquivo) {
@@ -13405,11 +13428,50 @@ ERP.store = (function () {
       periodo_ini: lido.periodo.ini, periodo_fim: lido.periodo.fim,
       saldo: lido.saldo.valor, qtd: 0, criado_em: new Date(), usuario: usuario().nome, usuario_id: (usuario() || {}).id || null
     };
-    let novos = 0, repetidos = 0, saldosIgnorados = 0;
+    /* O QUE JÁ ESTÁ NO SISTEMA — pelo CONTEÚDO, não pelo FITID.
+
+       Até a v192 a linha era "repetida" se o FITID já existisse na
+       conta. O Bradesco não dá FITID fixo por lançamento: numera as
+       linhas de cada arquivo que gera (N10131, N10147, N1015D…), e o
+       arquivo de amanhã recomeça na mesma sequência. Resultado: o
+       extrato de 24/11 da HJM entrou com 2 linhas e 26 "já estavam no
+       sistema" — eram lançamentos novos com o número de linhas de
+       arquivos anteriores.
+
+       Agora a linha é a mesma quando bate data, valor e histórico (ou
+       FITID com a mesma data e o mesmo valor, para quando o banco muda
+       o texto do histórico). Cada linha do sistema só "explica" uma do
+       arquivo: dois PIX iguais no mesmo dia são dois, e reimportar o
+       arquivo não duplica nenhum. */
+    const centavos = function (v) { return Math.round((Number(v) || 0) * 100); };
+    const assinatura = function (l) { return l.data + '|' + centavos(l.valor) + '|' + historicoComparavel(l.memo); };
+    const porFitid = function (l) { return l.fitid ? l.fitid + '|' + l.data + '|' + centavos(l.valor) : null; };
+    const jaTem = { ass: {}, fit: {} };
+    st.linhas.forEach(function (x) {
+      if (x.banco !== bancoId) return;
+      (jaTem.ass[assinatura(x)] = jaTem.ass[assinatura(x)] || []).push(x.id);
+      const f = porFitid(x);
+      if (f) (jaTem.fit[f] = jaTem.fit[f] || []).push(x.id);
+    });
+    const usadas = new Set();
+    const tirar = function (lista) {
+      const id = (lista || []).find(function (i) { return !usadas.has(i); });
+      if (id) usadas.add(id);
+      return id;
+    };
+    /* Agendamento: o Bradesco põe no OFX débitos com data futura
+       (DARF de 30/11, boletos de 10/12). Ainda não aconteceram — se
+       entrassem, apareceriam como saída para conciliar e no saldo.
+       Ficam de fora e entram no extrato do dia em que acontecerem. */
+    const hojeL = U.hoje();
+    let novos = 0, repetidos = 0, saldosIgnorados = 0, futuros = 0;
+    const datas = [];
     lido.lancamentos.forEach(function (l) {
       if (ehLinhaDeSaldo(l.memo)) { saldosIgnorados++; return; }
-      const chave = bancoId + '|' + l.fitid;
-      if (st.linhas.some(function (x) { return x.chave === chave; })) { repetidos++; return; }
+      if (l.data && l.data > hojeL) { futuros++; return; }
+      if (tirar(jaTem.fit[porFitid(l)]) || tirar(jaTem.ass[assinatura(l)])) { repetidos++; return; }
+      const chave = bancoId + '|' + (l.fitid || '') + '|' + l.data + '|' + centavos(l.valor);
+      if (l.data) datas.push(l.data);
       st.linhas.push({
         id: novoId('lx'), chave: chave, extrato_id: ext.id, banco: bancoId,
         data: l.data, valor: l.valor, entrada: l.entrada, saida: l.saida,
@@ -13420,13 +13482,21 @@ ERP.store = (function () {
       novos++;
     });
     ext.qtd = novos;
+    /* O período do arquivo é o das linhas que ele trouxe: o Bradesco
+       manda DTSTART = DTEND = dia da exportação (24/11 a 24/11) com
+       lançamentos de 23/11 dentro. */
+    datas.sort();
+    if (datas.length) {
+      if (!ext.periodo_ini || datas[0] < ext.periodo_ini) ext.periodo_ini = datas[0];
+      if (!ext.periodo_fim || datas[datas.length - 1] > ext.periodo_fim) ext.periodo_fim = datas[datas.length - 1];
+    }
     /* Extrato que não trouxe nenhum lançamento novo NÃO é gravado:
        reimportar o mesmo arquivo criava um extrato com qtd 0 e o
        mesmo saldo final, e como saldoAtual pega o último, a
        divergência apurada no primeiro desaparecia. A trava de
        conferência de saldo caía com dois cliques. */
     if (!novos) {
-      return { ok: true, novos: 0, repetidos: repetidos, saldos_ignorados: saldosIgnorados, extrato: null,
+      return { ok: true, novos: 0, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros, extrato: null,
         aviso: 'Este extrato já tinha sido importado: nenhum lançamento novo. ' +
           'A conferência de saldo anterior continua valendo.' };
     }
@@ -13434,7 +13504,7 @@ ERP.store = (function () {
     logar('extrato', ext.id, 'importou extrato',
       novos + ' lançamento(s)' + (repetidos ? ', ' + repetidos + ' já existiam' : '') +
       ' · ' + (D.banco ? '' : '') + U.fData(lido.periodo.ini));
-    return { ok: true, novos: novos, repetidos: repetidos, saldos_ignorados: saldosIgnorados, extrato: ext };
+    return { ok: true, novos: novos, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros, extrato: ext };
   }
 
   const linhasExtrato = f => st.linhas.slice().filter(function (l) {

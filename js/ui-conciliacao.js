@@ -61,7 +61,14 @@ ERP.conciliacao = (function () {
          acentos do histórico. */
       const bytes = new Uint8Array(fr.result);
       const amostra = String.fromCharCode.apply(null, bytes.subarray(0, 2000));
-      const enc = ERP.ofx.codificacao(amostra);
+      let enc = ERP.ofx.codificacao(amostra);
+      /* O CABEÇALHO NEM SEMPRE DIZ A VERDADE: o Bradesco declara
+         CHARSET:1252 e manda o arquivo em UTF-8 — "José" virava
+         "JosÃ©". Se os bytes formam UTF-8 válido com acento, é UTF-8:
+         um arquivo 1252 com acento quase nunca passa nessa leitura. */
+      if (enc !== 'utf-8' && bytes.some(function (b) { return b > 0x7f; })) {
+        try { new TextDecoder('utf-8', { fatal: true }).decode(bytes); enc = 'utf-8'; } catch (err) { /* é 1252 mesmo */ }
+      }
       let texto;
       try { texto = new TextDecoder(enc).decode(bytes); }
       catch (err) { texto = new TextDecoder('windows-1252').decode(bytes); }
@@ -112,6 +119,7 @@ ERP.conciliacao = (function () {
     ERP.app.aviso(r.novos + ' lançamento(s) importado(s)' +
       (r.repetidos ? ', ' + r.repetidos + ' já estavam no sistema' : '') +
       (r.saldos_ignorados ? ', ' + r.saldos_ignorados + ' linha(s) de saldo ignorada(s) (não são movimento)' : '') +
+      (r.futuros ? ', ' + r.futuros + ' agendamento(s) com data futura ficaram de fora (entram no extrato do dia em que acontecerem)' : '') +
       '. Saldo do extrato: ' + U.brl(lido.saldo.valor) + '.' +
       (lido.aviso_conta ? ' ' + lido.aviso_conta : ''),
       lido.aviso_conta ? 'erro' : 'ok');
