@@ -60,7 +60,9 @@ ERP.dadosRemoto = (function () {
   async function carregarFuncionarios(c, D) {
     const completo = ERP.store.pode('ver_dados_pessoais');
     const fonte = completo ? 'funcionarios' : 'funcionarios_publico';
-    const { data, error } = await c.from(fonte).select('*');
+    const { data, error } = await ERP.util.lerTudo(function () {
+      return c.from(fonte).select('*', { count: 'exact' }).order('id');
+    }, fonte);
     if (error) {
       /* Sem a visão no banco (SQL antigo), esvazia em vez de cair
          na semente: mostrar dado de demonstração como se fosse da
@@ -332,7 +334,11 @@ ERP.dadosRemoto = (function () {
     diz('carregando os cadastros', 0, MAPA.length);
     let prontas = 0;
     const respostas = await Promise.all(MAPA.map(function (item) {
-      return comPrazo(c.from(item.tabela).select('*').order(item.ordem), item.tabela)
+      /* Paginado (ver `lerTudo`): os credores já passam de 850 —
+         na milésima linha o cadastro novo deixaria de aparecer. */
+      return ERP.util.lerTudo(function () {
+        return c.from(item.tabela).select('*', { count: 'exact' }).order(item.ordem);
+      }, item.tabela)
         .then(function (r) {
           diz('carregando os cadastros', ++prontas, MAPA.length);
           return r;

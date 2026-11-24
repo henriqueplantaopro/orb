@@ -10634,10 +10634,17 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     (util.match(/clearTimeout\(relogio\)/g) || []).length >= 2, '');
   verificar('v121 — e o prazo pode ser encurtado por configuração, para a prova medir',
     /ERP\.config && ERP\.config\.prazoCarga/.test(util), '');
+  /* v197: as duas cargas passaram a ler em páginas (`lerTudo`), e
+     cada página passa pelo prazo. */
   verificar('v121 — quem carrega os cadastros usa o prazo',
-    /comPrazo\(c\.from\(item\.tabela\)/.test(rem), '');
+    /lerTudo\(function \(\) \{\s*return c\.from\(item\.tabela\)/.test(rem) &&
+    /comPrazo\(montar\(\)\.range\(/.test(require('fs').readFileSync(__dirname + '/js/util.js', 'utf8')), '');
   verificar('v121 — e quem carrega o movimento também',
-    /comPrazo\(c\.from\(fonte\)\.select/.test(per), '');
+    /lerTudo\(function \(\) \{\s*return c\.from\(fonte\)\.select\('\*', \{ count: 'exact' \}\)\.order\('id'\)/.test(per), '');
+  verificar('v197 — nenhuma carga de tabela inteira sem paginação (o banco corta em 1.000 linhas)',
+    !/comPrazo\(c\.from\([a-z.]+\)\.select\('\*'\)(\.order\([^)]*\))?, /.test(per + rem) &&
+    !/await c\.from\(def\.tabela\)\.select\('\*'\);/.test(per) &&
+    !/await c\.from\(fonte\)\.select\('\*'\);/.test(rem), '');
   verificar('v121 — a matriz de acesso e os parâmetros também têm prazo',
     /comPrazo\(c\.from\('matriz_acesso'\)/.test(rem) &&
     /comPrazo\(c\.from\('parametros'\)/.test(rem), '');
