@@ -514,9 +514,10 @@ ERP.produtividade = (function () {
   const VOC = {
     plantao: { sing: 'plantão', plur: 'plantões', Plur: 'Plantões', colA: 'Setor', colB: 'Tipo' },
     procedimento: { sing: 'procedimento', plur: 'procedimentos', Plur: 'Procedimentos', colA: 'Especialidade', colB: 'Procedimento' },
-    laudo: { sing: 'laudo', plur: 'laudos', Plur: 'Laudos', colA: 'Projeto', colB: 'Prioridade' }
+    laudo: { sing: 'laudo', plur: 'laudos', Plur: 'Laudos', colA: 'Projeto', colB: 'Prioridade' },
+    atendimento: { sing: 'item', plur: 'itens', Plur: 'Itens', colA: 'Projeto', colB: 'Composição' }
   };
-  const UNIDADE_DO_FORMATO = { procedimentos: 'procedimento', laudos: 'laudo' };
+  const UNIDADE_DO_FORMATO = { procedimentos: 'procedimento', laudos: 'laudo', repasse: 'atendimento' };
   const vocDoArquivo = function (L) { return VOC[UNIDADE_DO_FORMATO[(L || {}).formato] || 'plantao']; };
   const unidadeDa = function (p) {
     const it = (p && p.itens) || [];
@@ -1744,7 +1745,156 @@ ERP.produtividade = (function () {
     };
   }
 
+  /* ══ REPASSE CALCULADO POR PROFISSIONAL (Cálculo Iron) — v194 ═══
+
+     O arquivo já vem com a conta feita, em duas abas que importam:
+       • CÁLCULOS — uma linha por profissional: atendimentos de dia de
+         semana e de fim de semana (quantidade e valor), plantões
+         noturnos (quantidade e valor), FUP, APS, Coordenação e o
+         "Valor repasse";
+       • FINANCEIRO — CPF, tipo e chave PIX e o valor a transferir.
+
+     SÓ ESSAS DUAS ABAS SÃO LIDAS. As outras (PA, FUP, APS…) são o
+     relatório atendimento a atendimento, com o código de cada
+     paciente — não entram no sistema, nem para conferir.
+
+     A composição de cada profissional vira os itens do título (como os
+     plantões e os procedimentos), e o que as colunas não explicam vira
+     uma linha de AJUSTE à vista, em vez de sumir na soma. */
+  const cabRepasse = function (linha) {
+    const c = (linha || []).map(semAc);
+    return c.indexOf('profissional') > -1 && c.indexOf('valor repasse') > -1 && c.indexOf('chave pix') < 0;
+  };
+  const cabFinRepasse = function (linha) {
+    const c = (linha || []).map(semAc);
+    return c.indexOf('profissional') > -1 && c.indexOf('chave pix') > -1 && c.indexOf('valor repasse') > -1;
+  };
+  function ehRepasse(wb) {
+    const tem = function (f) {
+      return wb.SheetNames.some(function (n) { return linhasDe(wb, n).slice(0, 10).some(f); });
+    };
+    return tem(cabRepasse) && tem(cabFinRepasse);
+  }
+  const MESES_ABREV = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+  /* "Cálculo Iron - Out 26.xlsx" → 2026-10. O arquivo não escreve o
+     período em lugar nenhum (as células de primeiro e último registro
+     vêm com erro de fórmula); o nome é o que ele diz. A tela ainda
+     mostra a competência para conferir. */
+  function competenciaDoNome(arquivo) {
+    const t = semAcento(String(arquivo || '')).toLowerCase();
+    const m = t.match(/\b(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*[\s_.\-\/]*(\d{4}|\d{2})\b/);
+    if (!m) return '';
+    const ano = m[2].length === 2 ? '20' + m[2] : m[2];
+    return ano + '-' + doisDig(MESES_ABREV.indexOf(m[1]) + 1);
+  }
+  function lerRepasse(wb, arquivo) {
+    const abaCalc = wb.SheetNames.find(function (n) { return linhasDe(wb, n).slice(0, 10).some(cabRepasse); });
+    const abaFin = wb.SheetNames.find(function (n) { return linhasDe(wb, n).slice(0, 10).some(cabFinRepasse); });
+    const projeto = String(arquivo || '').replace(/\.[a-z0-9]+$/i, '')
+      .replace(/[\s_\-]*(jan|fev|mar|abr|mai|jun|jul|ago|set|out|nov|dez)[a-z]*[\s_.\-\/]*(\d{4}|\d{2})\s*$/i, '')
+      .replace(/_/g, ' ').replace(/\s+/g, ' ').trim() || 'Repasse';
+    const competencia = competenciaDoNome(arquivo);
+    const limpo = function (v) { return txt(v).replace(/\s+/g, ' ').trim(); };
+
+    /* ── CÁLCULOS ── */
+    const l = linhasDe(wb, abaCalc);
+    const iCab = l.findIndex(cabRepasse);
+    const cab = l[iCab].map(function (v) { return limpo(v); });
+    const cabN = l[iCab].map(semAc);
+    const super_ = iCab > 0 ? (l[iCab - 1] || []).map(function (v) { return limpo(v); }) : [];
+    const cNome = cabN.indexOf('profissional'), cTotal = cabN.indexOf('valor repasse');
+    /* Cada componente: uma coluna com título. Se a coluna da direita
+       não tem título, a do título é a QUANTIDADE e a da direita o
+       VALOR (atendimentos e plantões); senão, é só o valor (FUP, APS,
+       Coordenação). O título da linha de cima (Atendimentos,
+       Plantões) entra no nome só dos pares. */
+    const comps = [];
+    for (let j = cNome + 1; j < cTotal; j++) {
+      if (!cab[j]) continue;
+      const par = j + 1 < cTotal && !cab[j + 1];
+      let grupoAcima = '';
+      if (par) for (let k = j; k > cNome; k--) { if (super_[k]) { grupoAcima = super_[k]; break; } }
+      comps.push({ nome: (grupoAcima ? grupoAcima + ' · ' : '') + cab[j], qtd: par ? j : -1, val: par ? j + 1 : j,
+        coordenacao: /^coordenacao/.test(cabN[j]) });
+    }
+    const grupos = {}, medicos = {}, pagto = {}, notas = [];
+    let totalArquivo = 0, qtdLida = 0;
+    for (let i = iCab + 1; i < l.length; i++) {
+      const r = l[i] || [];
+      const nome = limpo(r[cNome]);
+      if (!nome) continue;
+      if (/^total/i.test(semAcento(nome))) { totalArquivo = valorNum(r[cTotal]) || totalArquivo; break; }
+      const repasse = valorNum(r[cTotal]);
+      const md = medicos[chaveNome(nome)] = medicos[chaveNome(nome)] || { nome: nome, crm: '', total: 0, plantoes: 0 };
+      md.total = Math.round((md.total + repasse) * 100) / 100;
+      let explicado = 0;
+      comps.forEach(function (c) {
+        const v = valorNum(r[c.val]);
+        const q = c.qtd > -1 ? valorNum(r[c.qtd]) : 0;
+        if (!v && !q) return;
+        const k = nome + '||' + c.nome;
+        const g = grupos[k] = grupos[k] || { medico: nome, crm: '', setor: projeto, tipo: c.nome,
+          linhas_origem: 0, plantoes: 0, minutos: 0, valor: 0, coordenacao: c.coordenacao, coordenacao_sugerida: false };
+        g.linhas_origem += c.qtd > -1 ? q : (v ? 1 : 0);
+        g.valor = Math.round((g.valor + v) * 100) / 100;
+        explicado += v;
+        if (c.qtd > -1) qtdLida += q;
+      });
+      const dif = Math.round((repasse - explicado) * 100) / 100;
+      if (Math.abs(dif) > 0.004) {
+        const k = nome + '||Ajuste';
+        const g = grupos[k] = grupos[k] || { medico: nome, crm: '', setor: projeto, tipo: 'Ajuste',
+          linhas_origem: 0, plantoes: 0, minutos: 0, valor: 0, coordenacao: false, coordenacao_sugerida: false };
+        g.valor = Math.round((g.valor + dif) * 100) / 100;
+        notas.push(nome + ': as colunas somam ' + U.brl(explicado) + ' e o repasse é ' + U.brl(repasse) +
+          ' — a diferença entrou como Ajuste.');
+      }
+    }
+    aplicarClasse(grupos, medicos);
+
+    /* ── FINANCEIRO ── */
+    const f = linhasDe(wb, abaFin);
+    const iF = f.findIndex(cabFinRepasse);
+    const cf = f[iF].map(semAc);
+    const col = function (n) { return cf.indexOf(n); };
+    const m = { nome: col('profissional'), cpf: col('cpf'), tipo: col('tipo pix'), pix: col('chave pix'), valor: col('valor repasse') };
+    for (let i = iF + 1; i < f.length; i++) {
+      const r = f[i] || [];
+      const nome = limpo(r[m.nome]);
+      if (!nome || /^total/i.test(semAcento(nome))) continue;
+      const tipo = m.tipo > -1 ? limpo(r[m.tipo]) : '';
+      let pix = m.pix > -1 ? limpo(r[m.pix]) : '';
+      /* Chave que é CPF e veio como NÚMERO perdeu o zero da frente no
+         Excel (05725993310 virou 5725993310): completa para 11. */
+      if (/^cpf$/i.test(semAcento(tipo)) && /^\d{9,10}$/.test(pix)) pix = pix.padStart(11, '0');
+      if (/^e-?mail$/i.test(semAcento(tipo)) && pix && !/@[^@\s]+\.[^@\s]+$/.test(pix)) {
+        notas.push(nome + ': a chave PIX de e-mail "' + pix + '" está sem o ponto depois do @ — confira no cadastro antes de pagar.');
+      }
+      const doc = m.cpf > -1 ? limpo(r[m.cpf]) : '';
+      if (!doc) notas.push(nome + ': sem CPF no arquivo — o cadastro é criado assim e o CPF entra depois.');
+      const valor = valorNum(r[m.valor]);
+      const ja = pagto[chaveNome(nome)];
+      if (ja) { ja.valor = Math.round((ja.valor + valor) * 100) / 100; continue; }
+      pagto[chaveNome(nome)] = { observacao: '', regime: S.regimeDeTexto(''), razao_social: '', crm: '',
+        documento: doc, tipo_chave: tipo, pix: pix, valor: valor };
+    }
+
+    const linhas = Object.keys(grupos).map(function (k) { return grupos[k]; })
+      .sort(function (a, b) { return a.medico.localeCompare(b.medico) || a.tipo.localeCompare(b.tipo); });
+    const soma = Math.round(linhas.reduce(function (t, x) { return t + x.valor; }, 0) * 100) / 100;
+    const somaFin = Math.round(Object.keys(pagto).reduce(function (t, k) { return t + pagto[k].valor; }, 0) * 100) / 100;
+    return {
+      formato: 'repasse', arquivo: arquivo, projeto: projeto, especialidade: '', ref_projeto: projeto,
+      unidade: projeto, periodo: competencia ? U.fComp(competencia) : '', competencia: competencia,
+      linhas: linhas, medicos: medicos, pagto: pagto, abasPlantoes: [abaCalc],
+      periodo_ausente: !competencia,
+      soma: soma, somaFin: somaFin, totalArquivo: totalArquivo,
+      conferencias: [], qtd_procedimentos: qtdLida, fora_do_mes: 0, notas: notas
+    };
+  }
+
   function ler(wb, arquivo) {
+    if (ehRepasse(wb)) return lerRepasse(wb, arquivo);
     if (ehLaudos(wb)) return lerLaudos(wb, arquivo);
     if (ehProcedimentos(wb)) return lerProcedimentos(wb, arquivo);
     const abas = acharAbas(wb);
@@ -2290,10 +2440,15 @@ ERP.produtividade = (function () {
     const ted = (d.banco && d.agencia && d.conta_bancaria) ? 'digitado'
       : (cad && cad.banco && cad.agencia && cad.conta_bancaria) ? 'cadastro' : '';
     const doc = fonte('documento', (pg || {}).documento);
-    const falta = [];
+    const falta = [], completar = [];
     if (!pix && !ted) falta.push('como recebe (PIX ou banco/agência/conta)');
-    if (!doc) falta.push('CPF/CNPJ');
-    return { falta: falta, pix: pix, ted: ted, doc: doc, chave: npx.pix,
+    /* SEM CPF COM PIX NÃO É "SEM COMO PAGAR". O PIX por chave de
+       telefone, e-mail ou aleatória não leva o CPF; quem trava sem
+       documento é a TED (a remessa volta). Com chave, o cadastro é
+       criado e o CPF fica como pendência à vista, para completar
+       depois — foi o caso de quatro profissionais do Cálculo Iron. */
+    if (!doc) (pix && !ted ? completar : falta).push('CPF/CNPJ');
+    return { falta: falta, completar: completar, pix: pix, ted: ted, doc: doc, chave: npx.pix,
              tipo_chave: npx.tipo_chave, divergente: npx.divergente, declarado: npx.declarado };
   }
 
@@ -2523,6 +2678,10 @@ ERP.produtividade = (function () {
                     : '<span class="badge b-pendente">médico novo</span>') +
                   (comoRecebe ? '<div class="sub">' + comoRecebe +
                     (deOnde ? ' <span class="ajuda">(' + deOnde + ')</span>' : '') + '</div>' : '') +
+                  (f.completar.length
+                    ? '<div class="sub erro">sem ' + U.esc(f.completar.join(' e ')) +
+                      ' — paga pelo PIX; complete o cadastro depois</div>'
+                    : '') +
                   (f.divergente
                     ? '<div class="erro">planilha diz ' + U.esc(f.declarado) + ', a chave é ' +
                       U.esc(NOME_TIPO_PIX[f.tipo_chave] || f.tipo_chave) + ' — vale a chave</div>'
