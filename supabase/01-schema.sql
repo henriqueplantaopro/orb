@@ -376,7 +376,7 @@ create table linhas_extrato (
   observacao    text
 );
 create index on linhas_extrato (banco, situacao);
-create unique index on linhas_extrato (banco, fitid) where fitid is not null;
+create index on linhas_extrato (banco, fitid);   -- v193: não é único (o Bradesco repete FITID entre arquivos)
 
 create table saldos_informados (
   id            text primary key,
