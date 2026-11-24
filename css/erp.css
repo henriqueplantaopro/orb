@@ -399,6 +399,7 @@ td.acoes > :first-child{margin-left:0;}
   background:#f7f8f9;border:1px solid var(--line);border-radius:3px;font-size:12px;color:var(--ink2);}
 .pr-confere b{color:var(--ink);font-variant-numeric:tabular-nums;margin-left:5px;}
 .pr-confere b.erro{color:var(--red);}
+.pr-confere b.ok-conf{color:var(--green, #1a7f37);font-weight:600;}
 
 .itens-sub{font-size:10.5px;color:var(--ink3);margin-top:2px;line-height:1.35;}
 .ajuda.erro{color:var(--red);}

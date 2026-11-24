@@ -1394,6 +1394,34 @@ ERP.produtividade = (function () {
      cada grupo. Uma implementação só, usada na leitura e de novo a
      cada reclassificação na tela — contagem que se soma em dois
      lugares diverge no primeiro clique. */
+  /* ── O TOTAL IMPRESSO É UM SÓ, MESMO QUANDO APARECE DUAS VEZES ──
+
+     Os rodapés eram SOMADOS: certo quando cada aba imprime o total da
+     sua especialidade, errado quando o arquivo imprime o mesmo total
+     duas vezes ("Total da produtividade" e "Total geral", ou o total
+     de cada bloco e o geral embaixo). Uma produtividade de R$ 100 mil
+     aparecia com "total impresso" de R$ 200 mil, ao lado da soma e do
+     financeiro de R$ 100 mil — e quem lançava achava que eram 200.
+
+     Regra: se a soma dos rodapés bate com o que foi lido, vale a
+     soma (abas de especialidade); senão, se um rodapé sozinho bate,
+     vale ele (é o total geral); senão, se todos os rodapés são o
+     mesmo número, ele é o total repetido; só sobrando divergência
+     de verdade é que a soma aparece — em vermelho. */
+  function totalDosRodapes(lista, soma) {
+    const r2 = v => Math.round(v * 100) / 100;
+    if (!lista.length) return 0;
+    const somaR = r2(lista.reduce(function (t, v) { return t + v; }, 0));
+    if (Math.abs(somaR - soma) <= 0.01) return somaR;
+    const igual = lista.find(function (v) { return Math.abs(v - soma) <= 0.01; });
+    if (igual !== undefined) return r2(igual);
+    if (lista.every(function (v) { return Math.abs(v - lista[0]) <= 0.01; })) return r2(lista[0]);
+    /* Blocos + total geral que não batem com o lido: o maior é o geral. */
+    const maior = Math.max.apply(null, lista);
+    if (Math.abs(r2(somaR - maior) - maior) <= 0.01) return r2(maior);
+    return somaR;
+  }
+
   function aplicarClasse(grupos, medicos) {
     const lista = Array.isArray(grupos)
       ? grupos : Object.keys(grupos).map(function (k) { return grupos[k]; });
@@ -1439,6 +1467,7 @@ ERP.produtividade = (function () {
   function lerProcedimentos(wb, arquivo) {
     let projeto = '', especialidade = '', periodo = '', competenciaLida = '';
     let totalArquivo = 0, totalResumo = 0, procResumo = 0;
+    const totaisProc = [];
     const grupos = {}, medicos = {}, pagto = {}, abasLidas = [];
     const compsDasDatas = {};
 
@@ -1479,6 +1508,7 @@ ERP.produtividade = (function () {
         if (/^TOTAL GERAL$/i.test(semAcento(primeira))) {
           let v = cols && cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
           if (!v) for (let k = linha.length - 1; k >= 0; k--) { v = valorNum(linha[k]); if (v) break; }
+          if (v) totaisProc.push(v);
           totalArquivo = Math.round((totalArquivo + v) * 100) / 100;
           return;
         }
@@ -1561,6 +1591,7 @@ ERP.produtividade = (function () {
     const soma = Math.round(linhas.reduce(function (s, l) { return s + l.valor; }, 0) * 100) / 100;
     const somaFin = Math.round(Object.keys(pagto).reduce(function (s, k) { return s + pagto[k].valor; }, 0) * 100) / 100;
     const qtdLida = linhas.reduce(function (s, l) { return s + l.linhas_origem; }, 0);
+    totalArquivo = totalDosRodapes(totaisProc, soma);
 
     /* Sem período no cabeçalho, a competência sai das DATAS dos
        atendimentos — é o arquivo dizendo, não um palpite. */
@@ -1948,6 +1979,7 @@ ERP.produtividade = (function () {
        quê. Agora a busca é uma varredura à parte, aceita as formas
        conhecidas, e NÃO ACHAR É MOTIVO DE RECUSA — não de silêncio. */
     let projeto = '', unidade = '', periodo = '', competenciaLida = '', totalArquivo = 0;
+    const totaisImpressos = [];
     for (let i = 0; i < prod.length && !periodo; i++) {
       const linha = prod[i] || [];
       for (let j = 0; j < linha.length; j++) {
@@ -2047,6 +2079,7 @@ ERP.produtividade = (function () {
       });
       if (ehTotalGeral) {
         const vt = cols && cols.valor > -1 ? valorNum(linha[cols.valor]) : 0;
+        if (vt) totaisImpressos.push(vt);
         totalArquivo = Math.round((totalArquivo + vt) * 100) / 100;
         return;
       }
@@ -2265,6 +2298,7 @@ ERP.produtividade = (function () {
     /* O total impresso na aba FINANCEIRO manda sobre a soma dos
        rodapés das abas de plantão, pelo motivo acima. */
     if (totalFinanceiro > 0) totalArquivo = totalFinanceiro;
+    else totalArquivo = totalDosRodapes(totaisImpressos, soma);
 
     return {
       arquivo: arquivo, projeto: projeto, unidade: unidade, periodo: periodo, competencia: competencia,
@@ -2522,11 +2556,22 @@ ERP.produtividade = (function () {
         '<div><label for="pr-doc">Nº do título</label><input id="pr-doc" value="' + U.esc(refPadrao(L)) + '"></div>' +
       '</div>' +
 
-      '<div class="pr-confere">' +
-        '<span>Soma dos ' + voc.plur + ' <b>' + U.brl(L.soma) + '</b></span>' +
-        '<span>Aba FINANCEIRO <b class="' + (divergeFin ? 'erro' : '') + '">' + U.brl(L.somaFin) + '</b></span>' +
-        '<span>Total impresso no arquivo <b class="' + (divergeArquivo ? 'erro' : '') + '">' +
-          (temTotalImpresso ? U.brl(L.totalArquivo) : '<span class="sub">não vem no arquivo</span>') + '</b></span>' +
+      /* UM TOTAL SÓ, E AS CONFERÊNCIAS COMO CONFERÊNCIA.
+
+         Eram três valores lado a lado — soma, aba Financeiro, total
+         impresso —, cada um com "R$ 100.000,00": parecia uma conta de
+         somar, e com o rodapé duplicado ainda aparecia R$ 200 mil. O
+         que se lança é UM número; os outros dois só dizem se batem,
+         e o valor deles aparece só quando não batem. */
+      '<div class="pr-confere" id="pr-totais">' +
+        '<span>Total a lançar <b>' + U.brl(L.soma) + '</b></span>' +
+        '<span>Aba Financeiro ' + (divergeFin
+          ? '<b class="erro">' + U.brl(L.somaFin) + ' — diferença ' + U.brl(L.somaFin - L.soma) + '</b>'
+          : '<b class="ok-conf">confere ✓</b>') + '</span>' +
+        '<span>Total impresso no arquivo ' + (!temTotalImpresso ? '<span class="sub">não vem no arquivo</span>'
+          : divergeArquivo
+            ? '<b class="erro">' + U.brl(L.totalArquivo) + ' — diferença ' + U.brl(L.totalArquivo - L.soma) + '</b>'
+            : '<b class="ok-conf">confere ✓</b>') + '</span>' +
         extras.map(function (c) {
           return '<span>' + U.esc(c.rotulo) + ' <b class="' + (c.diverge ? 'erro' : '') + '">' +
             (c.dinheiro ? U.brl(c.valor) : c.valor) + '</b></span>';

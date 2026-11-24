@@ -652,7 +652,10 @@ ERP.conciliacao = (function () {
       '</div>' +
       '<div class="pr-confere"><span>Arquivos <b>' + r.grupos.length + '</b></span>' +
         '<span>Entradas <b>' + U.brl(r.entradas) + '</b></span>' +
-        '<span>Saídas <b>' + U.brl(r.saidas) + '</b></span></div>' +
+        '<span>Saídas <b>' + U.brl(r.saidas) + '</b></span>' +
+        /* Ignoradas à vista: nada sai da conciliação em silêncio. */
+        '<span' + (r.ignoradas ? ' class="erro"' : '') + '>Ignoradas <b>' + r.ignoradas + '</b>' +
+          (r.ignoradas ? ' (' + U.brl(r.valor_ignorado) + ')' : '') + '</span></div>' +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel" id="cf-tabela"><thead><tr>' +
         '<th style="width:22px"></th><th>Arquivo</th><th>Empresa</th><th>Banco</th><th>Período</th>' +
         '<th class="num" ' + NUM + '>Entradas</th><th class="num" ' + NUM + '>Saídas</th>' +
@@ -1333,6 +1336,64 @@ ERP.conciliacao = (function () {
       '</tbody></table></div>';
   }
 
+  /* ── IGNORAR: SÓ COM MOTIVO QUE SE PROVA (v195) ────────
+     Era um prompt com "Transferência entre contas próprias" já
+     escrito — um Enter e um lançamento real saía da conciliação sem
+     ninguém saber. Agora a pessoa escolhe o motivo, e o sistema
+     confere: cópia precisa ter a original; crédito por engano só sai
+     amarrado à devolução; "outro" pede justificativa escrita. Nada
+     vem marcado. */
+  function perguntarIgnorar(ids) {
+    const todas = S.linhasExtrato({});
+    const linhas = ids.map(function (id) { return todas.find(function (x) { return x.id === id; }); }).filter(Boolean);
+    if (!linhas.length) return;
+    const uma = linhas.length === 1 ? linhas[0] : null;
+    const cands = uma ? S.candidatosDevolucao(uma.id) : [];
+    const op = function (v, titulo, ajuda, extra, desabilitada) {
+      return '<label class="ig-op" style="display:block;border:1px solid var(--line);border-radius:6px;padding:8px 10px;margin:6px 0' +
+        (desabilitada ? ';opacity:.55' : '') + '"><input type="radio" name="ig-tipo" value="' + v + '" style="width:auto"' +
+        (desabilitada ? ' disabled' : '') + '> <b>' + titulo + '</b><div class="sub">' + ajuda + '</div>' + (extra || '') + '</label>';
+    };
+    ERP.app.modal({
+      titulo: uma ? 'Ignorar linha · ' + U.fData(uma.data) + ' · ' + (uma.valor > 0 ? '+' : '−') + U.brl(Math.abs(uma.valor))
+        : 'Ignorar ' + linhas.length + ' linhas',
+      fecharTxt: 'Cancelar',
+      corpo:
+        '<div class="ajuda">Linha ignorada sai da conciliação e de toda conferência. Use só quando ela <b>não</b> ' +
+        'é um movimento a explicar. Transferência entre contas ou empresas não se ignora: use Mútuo ou ' +
+        'Transferência. Na dúvida, deixe pendente.</div>' +
+        op('copia', 'Cópia de uma linha que já está no sistema',
+          'A mesma data e o mesmo valor já existem nesta conta. O sistema confere antes de ignorar.') +
+        (uma ? op('engano', uma.valor > 0 ? 'Recebido por engano — e já devolvido' : 'Devolução de valor recebido por engano',
+          cands.length ? 'Escolha a linha ' + (uma.valor > 0 ? 'da devolução' : 'do crédito') + '. As duas saem juntas, amarradas.'
+            : 'Não há ' + (uma.valor > 0 ? 'devolução' : 'crédito') + ' do mesmo valor pendente nesta empresa. ' +
+              'Deixe a linha pendente até ' + (uma.valor > 0 ? 'a devolução aparecer no extrato.' : 'o crédito aparecer.'),
+          cands.length ? '<select id="ig-par" style="margin-top:6px">' + cands.map(function (c) {
+            return '<option value="' + c.id + '">' + U.fData(c.data) + ' · ' + (c.valor > 0 ? '+' : '−') + U.brl(Math.abs(c.valor)) +
+              ' · ' + U.esc(c.banco) + ' · ' + U.esc((c.memo || '').slice(0, 40)) + '</option>';
+          }).join('') + '</select>' : '', !cands.length) : '') +
+        op('outro', 'Outro motivo', 'Escreva qual é. Fica gravado na linha e no histórico.') +
+        '<label for="ig-motivo" style="margin-top:6px">Observação' + ' <span class="sub">(obrigatória em "Outro motivo")</span></label>' +
+        '<input id="ig-motivo" maxlength="200" placeholder="ex.: lançamento informativo do banco, sem movimento">',
+      acoes: [{ txt: 'Ignorar', cls: 'btn-cancelar', fn: function () {
+        const marc = document.querySelector('input[name="ig-tipo"]:checked');
+        if (!marc) return ERP.app.aviso('Escolha o motivo.', 'erro');
+        const motivo = U.val('ig-motivo').trim();
+        let n = 0; const erros = [];
+        linhas.forEach(function (l) {
+          const r = S.ignorarLinha(l.id, motivo, { tipo: marc.value, par: U.val('ig-par'), tela: true });
+          if (r.ok) n++; else erros.push(U.fData(l.data) + ' ' + U.brl(Math.abs(l.valor)) + ': ' + r.erro);
+        });
+        if (!n) return ERP.app.aviso(erros[0] || 'Nada ignorado.', 'erro');
+        ERP.app.fecharModal();
+        sel.clear(); abertaLinha = null;
+        render(); ERP.app.atualizarContadores();
+        ERP.app.aviso(n + ' linha(s) ignorada(s)' + (marc.value === 'engano' ? ' junto com o par' : '') +
+          (erros.length ? '. ' + erros.length + ' não: ' + erros.join(' · ') : '.'), erros.length ? 'erro' : 'ok');
+      } }]
+    });
+  }
+
   function ligar() {
     const box = U.el('cn-saida');
     box.querySelectorAll('[data-cn-dir]').forEach(function (b) {
@@ -1380,14 +1441,7 @@ ERP.conciliacao = (function () {
     }
     if (U.el('cn-ign-lote')) {
       U.el('cn-ign-lote').addEventListener('click', function () {
-        const motivo = window.prompt('Por que ignorar estas ' + sel.size + ' linhas?',
-          'Transferência entre contas próprias');
-        if (motivo === null) return;
-        let n = 0;
-        Array.from(sel).forEach(function (id) { if (S.ignorarLinha(id, motivo).ok) n++; });
-        sel.clear();
-        render();
-        ERP.app.aviso(n + ' linha(s) ignorada(s).', 'ok');
+        perguntarIgnorar(Array.from(sel));
       });
     }
     if (U.el('cn-lancar-lote')) {
@@ -1513,12 +1567,7 @@ ERP.conciliacao = (function () {
     });
     box.querySelectorAll('[data-cn-ign]').forEach(function (b) {
       b.addEventListener('click', function () {
-        const motivo = window.prompt('Por que ignorar esta linha?', 'Transferência entre contas próprias');
-        if (motivo === null) return;
-        S.ignorarLinha(this.dataset.cnIgn, motivo);
-        abertaLinha = null;
-        render();
-        ERP.app.aviso('Linha ignorada.', 'ok');
+        perguntarIgnorar([this.dataset.cnIgn]);
       });
     });
     box.querySelectorAll('[data-cn-prod]').forEach(function (b) {
