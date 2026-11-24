@@ -29,4 +29,4 @@
    mentir sobre o que está no ar. */
 window.ERP = window.ERP || {};
 ERP.config = ERP.config || {};
-ERP.config.versao = 'v196 · 24/11/2026';
+ERP.config.versao = 'v197 · 24/11/2026';

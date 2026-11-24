@@ -547,6 +547,41 @@ ERP.util = (function () {
       function (e) { clearTimeout(relogio); throw e; });
   }
 
+  /* ── LER A TABELA INTEIRA, NÃO SÓ AS PRIMEIRAS MIL LINHAS ──
+
+     O banco (Supabase/PostgREST) devolve no MÁXIMO 1.000 linhas por
+     pedido, sem erro e sem aviso. Com 1.068 títulos e 1.171
+     parcelas, os mais novos simplesmente não chegavam à tela: a
+     produtividade da Iron foi gravada inteira, mas apareceu com 6
+     dos 18 médicos; reimportada, virou um segundo fechamento com
+     12 títulos repetidos, também invisíveis.
+
+     Agora a leitura vem em páginas, até completar a contagem que o
+     próprio banco informa — e com ordem fixa, senão a paginação
+     pode pular ou repetir linhas. `montar` devolve a consulta já
+     com select (com count: 'exact') e order. */
+  const PAGINA = 1000;
+  async function lerTudo(montar, oQue) {
+    let todos = [], total = null;
+    /* Avança pelo que CHEGOU, não pelo tamanho pedido: se o banco
+       estiver configurado para devolver menos que mil por vez, pular
+       de mil em mil deixaria buracos (e pedir além do fim dá 416). */
+    for (let volta = 0; volta < 100000; volta++) {
+      const de = todos.length;
+      const r = await comPrazo(montar().range(de, de + PAGINA - 1), oQue);
+      if (r.error) {
+        if (de > 0 && (r.status === 416 || /range not satisfiable/i.test(r.error.message || ''))) break;
+        return { data: null, error: r.error };
+      }
+      const d = r.data || [];
+      if (total === null && typeof r.count === 'number') total = r.count;
+      todos = todos.concat(d);
+      if (!d.length) break;
+      if (total !== null ? todos.length >= total : d.length < PAGINA) break;
+    }
+    return { data: todos, error: null, count: total };
+  }
+
   /* Um assinante só: a tela de entrada. Evento seria cerimônia
      para um ouvinte. */
   let ouvinteCarga = null;
@@ -719,7 +754,7 @@ ERP.util = (function () {
     ligarData: ligarData,
     ajustarColunas: ajustarColunas,
     PRAZO_CARGA: PRAZO_CARGA,
-    comPrazo: comPrazo, avisarCarga: avisarCarga, andamento: andamento,
+    comPrazo: comPrazo, lerTudo: lerTudo, avisarCarga: avisarCarga, andamento: andamento,
     slug,
     porNome: porNome, emOrdemDeNome: emOrdemDeNome,
     mesesEntre,

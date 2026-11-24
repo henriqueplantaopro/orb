@@ -288,7 +288,9 @@ ERP.persistencia = (function () {
 
   async function lerIndexado(def) {
     const c = cliente();
-    const { data, error } = await c.from(def.tabela).select('*');
+    const { data, error } = await ERP.util.lerTudo(function () {
+      return c.from(def.tabela).select('*', { count: 'exact' }).order('produto').order('armazem');
+    }, def.tabela);
     if (error) return;
     const obj = ERP.store.st[def.estado];
     if (!obj) return;
@@ -1125,7 +1127,9 @@ ERP.persistencia = (function () {
     const respostas = await Promise.all(nomes.map(function (nome) {
       const fonte = fonteDeLeitura(nome, MAPA[nome].tabela);
       const conta = function () { diz('carregando os cadastros', ++feitos, nomes.length); };
-      return comPrazo(c.from(fonte).select('*'), fonte).then(function (r) {
+      return ERP.util.lerTudo(function () {
+        return c.from(fonte).select('*', { count: 'exact' }).order('id');
+      }, fonte).then(function (r) {
         conta();
         return { nome: nome, fonte: fonte, data: r.data, error: r.error };
       }, function (e) {
@@ -1181,7 +1185,12 @@ ERP.persistencia = (function () {
     eventosEnviados = {};
     diz('conferindo a trilha de auditoria', nomes.length, nomes.length + 4);
     await tentar('eventos', 'eventos', async function () {
-      const { data: evs } = await c.from('eventos').select('app_id').not('app_id', 'is', null);
+      /* Paginado: com mais de mil eventos, os que passavam da
+         primeira página pareciam "não enviados" e iam de novo —
+         duplicate key a cada gravação. */
+      const { data: evs } = await ERP.util.lerTudo(function () {
+        return c.from('eventos').select('app_id', { count: 'exact' }).not('app_id', 'is', null).order('app_id');
+      }, 'eventos');
       (evs || []).forEach(function (e) { if (e.app_id) eventosEnviados[e.app_id] = true; });
     });
 
