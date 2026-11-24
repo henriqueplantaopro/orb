@@ -1915,7 +1915,7 @@ ERP.produtividade = (function () {
     const soma = Math.round(linhas.reduce(function (t, x) { return t + x.valor; }, 0) * 100) / 100;
     const somaFin = Math.round(Object.keys(pagto).reduce(function (t, k) { return t + pagto[k].valor; }, 0) * 100) / 100;
     return {
-      formato: 'repasse', arquivo: arquivo, projeto: projeto, especialidade: '', ref_projeto: projeto,
+      formato: 'repasse', titulo_unico: true, arquivo: arquivo, projeto: projeto, especialidade: '', ref_projeto: projeto,
       unidade: projeto, periodo: competencia ? U.fComp(competencia) : '', competencia: competencia,
       linhas: linhas, medicos: medicos, pagto: pagto, abasPlantoes: [abaCalc],
       periodo_ausente: !competencia,
@@ -2330,7 +2330,13 @@ ERP.produtividade = (function () {
   function porMedico(L) {
     const mapa = {};
     L.linhas.forEach(function (l) {
-      const classe = l.coordenacao ? 'coordenacao' : 'plantao';
+      /* TÍTULO ÚNICO quando o arquivo paga por pessoa: no Cálculo Iron
+         a aba Financeiro traz UM valor por profissional (Thairiny,
+         R$ 5.265,00 = R$ 15,00 de atendimentos + R$ 5.250,00 de
+         coordenação) e é esse o PIX que sai. Dois títulos não batiam
+         com a planilha nem com o extrato. A coordenação continua
+         marcada no item, na composição. */
+      const classe = l.coordenacao && !L.titulo_unico ? 'coordenacao' : 'plantao';
       const k = chaveNome(l.medico) + '||' + classe;
       const m = mapa[k] = mapa[k] || {
         medico: l.medico, crm: l.crm, classe: classe, itens: [], plantoes: 0, minutos: 0, valor: 0
