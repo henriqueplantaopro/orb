@@ -13241,7 +13241,11 @@ ERP.store = (function () {
      O período filtra pelo que o arquivo cobre: entra o extrato cujo
      intervalo encosta no período pedido. */
   function descreverVinculo(l) {
-    if (l.situacao === 'ignorado') return 'Ignorada';
+    if (l.situacao === 'ignorado') {
+      return l.ignorado_tipo === 'engano' ? (l.valor > 0 ? 'Recebido por engano (devolvido)' : 'Devolução de valor recebido por engano')
+        : l.ignorado_tipo === 'copia' ? 'Ignorada · cópia de outra linha'
+        : 'Ignorada';
+    }
     if (l.situacao !== 'conciliado') return '';
     const credorDe = function (p) { return p ? nomeCredorVisivel(p, (D.credor(p.credor) || {}).nome || '') : ''; };
     const titulo = function (p) {
@@ -13320,6 +13324,11 @@ ERP.store = (function () {
         String(b2.importado_em || '').localeCompare(String(a.importado_em || ''));
     });
     return { de: de, ate: ate, grupos: grupos,
+      ignoradas: grupos.reduce(function (t, g) { return t + g.ignoradas; }, 0),
+      valor_ignorado: Math.round(grupos.reduce(function (t, g) {
+        return t + g.itens.filter(function (l) { return l.situacao === 'ignorado'; })
+          .reduce(function (a, l) { return a + Math.abs(Number(l.valor) || 0); }, 0);
+      }, 0) * 100) / 100,
       entradas: Math.round(grupos.reduce(function (t, g) { return t + g.entradas; }, 0) * 100) / 100,
       saidas: Math.round(grupos.reduce(function (t, g) { return t + g.saidas; }, 0) * 100) / 100 };
   }
@@ -14776,10 +14785,15 @@ ERP.store = (function () {
     if (l.situacao !== 'ignorado') {
       return { erro: 'Só linha ignorada é reaberta — esta está como ' + l.situacao + '.' };
     }
-    l.situacao = 'pendente';
-    l.observacao = ((l.observacao || '') + ' · reaberta' + (motivo ? ': ' + motivo : '')).trim();
-    logar('extrato', l.id, 'reabriu linha ignorada', U.brl(l.valor) + (motivo ? ' — ' + motivo : ''));
-    return { ok: true, linha: l };
+    /* Par de crédito por engano e devolução volta junto: um sem o
+       outro deixaria a devolução "explicada" por nada. */
+    const par = l.par_id ? st.linhas.find(function (x) { return x.id === l.par_id; }) : null;
+    [l].concat(par && par.situacao === 'ignorado' && par.par_id === l.id ? [par] : []).forEach(function (x) {
+      x.situacao = 'pendente'; x.par_id = null; x.copia_de = null; x.ignorado_tipo = null;
+      x.observacao = ((x.observacao || '') + ' · reaberta' + (motivo ? ': ' + motivo : '')).trim();
+      logar('extrato', x.id, 'reabriu linha ignorada', U.brl(x.valor) + (motivo ? ' — ' + motivo : ''));
+    });
+    return { ok: true, linha: l, par: par ? par.id : null };
   }
 
   /* Trocar a linha do extrato que comprova um pagamento, sem
@@ -14893,7 +14907,86 @@ ERP.store = (function () {
     return { ok: true, linha: l };
   }
 
-  function ignorarLinha(linhaId, motivo) {
+  /* ── IGNORAR COM MOTIVO DE VERDADE (v195) ──────────────
+
+     Ignorar tira a linha da fila de conciliação e de toda conferência.
+     Era um prompt com "Transferência entre contas próprias" já
+     escrito: um Enter e um lançamento real sumia sem ninguém saber.
+     Agora são três motivos, e cada um se prova:
+       · 'copia'  — a MESMA linha já está na conta (mesma data e
+                    valor). Sem a outra, não é cópia.
+       · 'engano' — dinheiro recebido por engano e DEVOLVIDO: a
+                    linha só sai junto com a da devolução (sentido
+                    oposto, mesmo valor, mesma empresa), amarradas.
+                    Enquanto a devolução não aparece no extrato, a
+                    linha fica pendente — à vista.
+       · 'outro'  — com justificativa escrita (10 letras ou mais).
+     Transferência entre contas tem caminho próprio (Mútuo /
+     Transferência), não é mais motivo para ignorar. */
+  const centavosDe = v => Math.round((Number(v) || 0) * 100);
+  function originalDaCopia(l) {
+    return st.linhas.find(function (x) {
+      return x.id !== l.id && x.banco === l.banco && x.data === l.data &&
+        centavosDe(x.valor) === centavosDe(l.valor) && x.situacao !== 'ignorado';
+    }) || null;
+  }
+  function candidatosDevolucao(linhaId) {
+    const l = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (!l) return [];
+    const emp = empresaDaConta(l.banco);
+    return st.linhas.filter(function (x) {
+      return x.id !== l.id && x.situacao === 'pendente' &&
+        centavosDe(x.valor) === -centavosDe(l.valor) &&
+        empresaDaConta(x.banco) === emp;
+    }).sort(function (a, b) { return (a.data + a.id).localeCompare(b.data + b.id); })
+      .map(function (x) {
+        return { id: x.id, data: x.data, valor: x.valor, memo: x.memo,
+          banco: (D.banco(x.banco) || {}).apelido || '' };
+      });
+  }
+
+  function ignorarLinha(linhaId, motivo, op) {
+    op = op || {};
+    const tipo = op.tipo || 'outro';
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const l0 = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (l0 && l0.situacao === 'pendente') {
+      if (tipo === 'outro' && String(motivo || '').trim().length < (op.tela ? 10 : 1)) {
+        return { erro: 'Escreva por que esta linha não é movimento a conciliar (10 letras ou mais).' };
+      }
+      if (tipo === 'copia') {
+        const orig = originalDaCopia(l0);
+        if (!orig) {
+          return { erro: 'Não há outra linha de ' + U.fData(l0.data) + ' com ' + U.brl(Math.abs(l0.valor)) +
+            ' nesta conta — então esta não é cópia. Se for movimento real, concilie.' };
+        }
+        motivo = 'Cópia da linha de ' + U.fData(orig.data) + ' (' + (orig.memo || '').slice(0, 40) + ')' +
+          (motivo ? ' · ' + motivo : '');
+        l0.copia_de = orig.id;
+      }
+      if (tipo === 'engano') {
+        const par = st.linhas.find(function (x) { return x.id === op.par; });
+        if (!par) return { erro: 'Escolha a linha da devolução. Se ela ainda não saiu, deixe esta pendente.' };
+        if (candidatosDevolucao(l0.id).every(function (c) { return c.id !== par.id; })) {
+          return { erro: 'A linha escolhida não devolve esta: precisa ser do sentido oposto, do mesmo valor, ' +
+            'da mesma empresa e estar pendente.' };
+        }
+        const credito = l0.valor > 0 ? l0 : par, devol = l0.valor > 0 ? par : l0;
+        const txtC = 'Recebido por engano · devolvido em ' + U.fData(devol.data) + (motivo ? ' · ' + motivo : '');
+        const txtD = 'Devolução do valor recebido por engano em ' + U.fData(credito.data) + (motivo ? ' · ' + motivo : '');
+        [credito, devol].forEach(function (x) {
+          x.situacao = 'ignorado'; x.ignorado_tipo = 'engano';
+          x.par_id = x === credito ? devol.id : credito.id;
+          x.observacao = x === credito ? txtC : txtD;
+          logar('extrato', x.id, 'ignorou linha', x.observacao + ' · ' + U.brl(Math.abs(x.valor)));
+        });
+        return { ok: true, par: par.id };
+      }
+    }
+    return ignorarSimples(linhaId, motivo, tipo);
+  }
+
+  function ignorarSimples(linhaId, motivo, tipo) {
     /* Sumir com uma linha do extrato é ato de conciliação: mesma
        guarda de `conciliar`. Esta função não tinha nenhuma. */
     if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
@@ -14909,6 +15002,7 @@ ERP.store = (function () {
         : 'Esta linha já está como ' + l.situacao + '.' };
     }
     l.situacao = 'ignorado';
+    l.ignorado_tipo = tipo || 'outro';
     l.observacao = motivo || 'Ignorado na conciliação';
     logar('extrato', l.id, 'ignorou linha', (motivo || '') + ' · ' + U.brl(Math.abs(l.valor)));
     return { ok: true };
@@ -22357,7 +22451,7 @@ ERP.store = (function () {
     inativarCliente, excluirCliente, clientePreso, salvarArmazem,
     dispensarDocumentoFaturamento, marcarEnvioAoCliente, faltaEnviarAoCliente,
     clienteExigeBoleto, clienteSoFatura, nomeCurtoCliente, substituirNotaFaturamento, faltaBoleto, competenciaDeslocada, faltaDocumento,
-    bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, reapontarConciliacao,
+    bancoDaParcela, bancoDoRecebimento, desconciliar, reabrirLinha, candidatosDevolucao, reapontarConciliacao,
     ajusteInventario, custoDeAquisicao, ratearDespesasNota, cadastrarMaterial,
     materiaisPadraoDe, salvarMaterialPadrao, estoquePorFamilia, proximoIdProduto,
     completarCadastroPelaNota, materiaisSemNCM, proximoIdCredor, proximoId,
