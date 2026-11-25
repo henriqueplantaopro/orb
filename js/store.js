@@ -13271,6 +13271,8 @@ ERP.store = (function () {
       const t = (st.transferenciasBanco || []).find(function (x) { return x.id === l.alvo_id; });
       return t && t.mutuo ? 'Mútuo entre empresas' : 'Transferência entre contas';
     }
+    if (l.alvo_tipo === 'aplicacao') return 'Aplicação financeira';
+    if (l.alvo_tipo === 'resgate') return 'Resgate de aplicação';
     return l.alvo_tipo ? String(l.alvo_tipo) : 'Conciliada';
   }
 
@@ -13301,7 +13303,7 @@ ERP.store = (function () {
       const n = function (sit) { return ls.filter(function (l) { return l.situacao === sit; }).length; };
       return {
         id: k, extrato: e ? e.id : null,
-        arquivo: e ? (e.arquivo || '—') : 'Lançamentos sem arquivo de origem',
+        arquivo: e ? (e.arquivo || '—') : (ls.every(ehLinhaManual) ? 'Lançamentos incluídos à mão' : 'Lançamentos sem arquivo de origem'),
         banco_id: bancoId, banco: b.apelido || '', empresa: (D.empresaPor(b.empresa) || {}).apelido || '',
         periodo_ini: ini, periodo_fim: fim,
         importado_em: e ? diaDe(e.criado_em) : '', importado_por: e ? (e.usuario || '') : '',
@@ -13462,6 +13464,16 @@ ERP.store = (function () {
       const f = porFitid(x);
       if (f) (jaTem.fit[f] = jaTem.fit[f] || []).push(x.id);
     });
+    /* Linha incluída à mão (v200) porque um arquivo anterior não a
+       trouxe: se ESTE arquivo traz o lançamento (mesma data e valor), é
+       ele — a linha manual fica, com a classificação que já tem, e
+       registra que o banco confirmou. Sem isso entraria em dobro. */
+    jaTem.man = {};
+    st.linhas.forEach(function (x) {
+      if (x.banco !== bancoId || !ehLinhaManual(x) || x.situacao === 'ignorado') return;
+      const k = x.data + '|' + centavos(x.valor);
+      (jaTem.man[k] = jaTem.man[k] || []).push(x.id);
+    });
     const usadas = new Set();
     const tirar = function (lista) {
       const id = (lista || []).find(function (i) { return !usadas.has(i); });
@@ -13473,12 +13485,19 @@ ERP.store = (function () {
        entrassem, apareceriam como saída para conciliar e no saldo.
        Ficam de fora e entram no extrato do dia em que acontecerem. */
     const hojeL = U.hoje();
-    let novos = 0, repetidos = 0, saldosIgnorados = 0, futuros = 0;
+    let novos = 0, repetidos = 0, saldosIgnorados = 0, futuros = 0, manuaisConfirmadas = 0;
     const datas = [];
     lido.lancamentos.forEach(function (l) {
       if (ehLinhaDeSaldo(l.memo)) { saldosIgnorados++; return; }
       if (l.data && l.data > hojeL) { futuros++; return; }
       if (tirar(jaTem.fit[porFitid(l)]) || tirar(jaTem.ass[assinatura(l)])) { repetidos++; return; }
+      const manual = tirar(jaTem.man[l.data + '|' + centavos(l.valor)]);
+      if (manual) {
+        const m = st.linhas.find(function (x) { return x.id === manual; });
+        m.confirmada_no_arquivo = nomeArquivo || 'arquivo';
+        m.memo_banco = l.memo;
+        repetidos++; manuaisConfirmadas++; return;
+      }
       const chave = bancoId + '|' + (l.fitid || '') + '|' + l.data + '|' + centavos(l.valor);
       if (l.data) datas.push(l.data);
       st.linhas.push({
@@ -13505,7 +13524,7 @@ ERP.store = (function () {
        divergência apurada no primeiro desaparecia. A trava de
        conferência de saldo caía com dois cliques. */
     if (!novos) {
-      return { ok: true, novos: 0, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros, extrato: null,
+      return { ok: true, novos: 0, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros, manuais_confirmadas: manuaisConfirmadas, extrato: null,
         aviso: 'Este extrato já tinha sido importado: nenhum lançamento novo. ' +
           'A conferência de saldo anterior continua valendo.' };
     }
@@ -13513,7 +13532,8 @@ ERP.store = (function () {
     logar('extrato', ext.id, 'importou extrato',
       novos + ' lançamento(s)' + (repetidos ? ', ' + repetidos + ' já existiam' : '') +
       ' · ' + (D.banco ? '' : '') + U.fData(lido.periodo.ini));
-    return { ok: true, novos: novos, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros, extrato: ext };
+    return { ok: true, novos: novos, repetidos: repetidos, saldos_ignorados: saldosIgnorados, futuros: futuros,
+      manuais_confirmadas: manuaisConfirmadas, extrato: ext };
   }
 
   const linhasExtrato = f => st.linhas.slice().filter(function (l) {
@@ -13998,6 +14018,10 @@ ERP.store = (function () {
       const certo = cands.find(function (c) { return c.certeza; });
       if (certo) {
         concretos.push({ linha: l, alvo: certo, cands: cands, regra: regra });
+      } else if (!cands.length && !regra && ehAplicacaoPeloHistorico(l)) {
+        /* "RESGATE INVEST FACIL", "APLIC.INVEST FACIL": o histórico do
+           banco já diz o que é (v200). */
+        concretos.push({ linha: l, alvo: null, cands: cands, regra: regra, porAplicacao: true });
       } else if (regra && l.saida > 0) {
         // regra manda lançar direto na natureza aprendida
         concretos.push({ linha: l, alvo: null, regra: regra, cands: cands, porRegra: true });
@@ -14029,7 +14053,8 @@ ERP.store = (function () {
   function conciliarLote(pares) {
     let n = 0, erros = [];
     (pares || []).forEach(function (p) {
-      const r = p.alvo ? conciliar(p.linha, p.alvo)
+      const r = p.aplicacao ? conciliarAplicacao(p.linha)
+              : p.alvo ? conciliar(p.linha, p.alvo)
                        : aplicarRegra(p.linha);
       if (r.ok) n++; else erros.push(r.erro);
     });
@@ -14494,6 +14519,82 @@ ERP.store = (function () {
     return { ok: true, transferencia: t, outro_lado: achou, propria: propria };
   }
 
+  /* ── APLICAÇÃO E RESGATE (v200) ───────────────────────
+     Dinheiro que vai para a aplicação (Invest Fácil e afins) ou volta
+     dela não é despesa nem receita: é a empresa mudando o dinheiro de
+     lugar. A linha fica conciliada como "Aplicação" (saída) ou
+     "Resgate de aplicação" (entrada) — sem título, sem natureza — e
+     aparece com esses nomes na movimentação bancária e nos totais. */
+  const ehAplicacaoPeloHistorico = l => /RESGATE|APLIC|INVEST\s*FACIL|INVESTIMENTO|CDB|POUPAN/i.test(String(l.memo || ''));
+  function conciliarAplicacao(linhaId, obs) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const l = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (!l) return { erro: 'Lançamento do extrato não encontrado.' };
+    if (l.situacao !== 'pendente') {
+      return { erro: l.situacao === 'conciliado' ? 'Esta linha já está conciliada.'
+        : 'Esta linha está como ' + l.situacao + ' — reabra antes de conciliar.' };
+    }
+    const entrada = l.valor > 0 || l.entrada > 0;
+    l.situacao = 'conciliado';
+    l.alvo_tipo = entrada ? 'resgate' : 'aplicacao';
+    l.alvo_id = null; l.alvo_ids = null;
+    l.conciliado_em = new Date();
+    l.conciliado_por = usuario().nome;
+    l.observacao = (entrada ? 'Resgate de aplicação' : 'Aplicação financeira') + (obs ? ' · ' + obs : '');
+    logar('extrato', l.id, entrada ? 'conciliou como resgate de aplicação' : 'conciliou como aplicação',
+      U.brl(Math.abs(l.valor)) + ' · ' + (l.memo || ''));
+    return { ok: true, tipo: l.alvo_tipo };
+  }
+
+  /* ── LANÇAMENTO QUE O ARQUIVO NÃO TROUXE (v200) ────────
+     O OFX do Bradesco não traz tudo o que está no extrato em tela (a
+     aplicação automática do Invest Fácil, por exemplo). Sem a linha,
+     não há o que conciliar e o saldo não fecha. Aqui ela entra à mão,
+     com motivo, marcada como manual em todo lugar; se um arquivo
+     posterior trouxer o mesmo lançamento (data e valor), o arquivo
+     confirma esta linha em vez de criar outra. */
+  const ehLinhaManual = l => /^MANUAL-/.test(String(l.fitid || '')) || !!l.incluida_manual;
+  function incluirLinhaManual(bancoId, d) {
+    d = d || {};
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const b = D.banco(bancoId);
+    if (!b) return { erro: 'Escolha a conta.' };
+    if (!d.data) return { erro: 'Informe a data do lançamento.' };
+    if (d.data > U.hoje()) return { erro: 'Data no futuro: lançamento agendado entra quando acontecer.' };
+    const v = Math.round((typeof d.valor === 'number' ? d.valor : U.parseValor(d.valor)) * 100) / 100;
+    if (!(v > 0)) return { erro: 'Informe o valor.' };
+    if (d.sentido !== 'entrada' && d.sentido !== 'saida') return { erro: 'Diga se é entrada ou saída.' };
+    const memo = String(d.memo || '').trim();
+    if (memo.length < 3) return { erro: 'Escreva o histórico como está no extrato do banco.' };
+    const motivo = String(d.motivo || '').trim();
+    if (motivo.length < 10) return { erro: 'Diga por que a linha entra à mão (10 letras ou mais).' };
+    const valor = d.sentido === 'entrada' ? v : -v;
+    const id = novoId('lx');
+    const l = {
+      id: id, chave: bancoId + '|MANUAL-' + id + '|' + d.data + '|' + Math.round(valor * 100),
+      extrato_id: null, banco: bancoId, data: d.data, valor: valor,
+      entrada: valor > 0 ? v : 0, saida: valor < 0 ? v : 0,
+      fitid: 'MANUAL-' + id, documento: '', memo: memo, meio: '', contraparte: '', tarifa: false,
+      situacao: 'pendente', alvo_tipo: null, alvo_id: null, observacao: 'Incluída à mão: ' + motivo,
+      incluida_manual: { motivo: motivo, usuario: usuario().nome, em: new Date().toISOString() }
+    };
+    st.linhas.push(l);
+    logar('extrato', id, 'incluiu linha à mão', U.brl(valor) + ' em ' + U.fData(d.data) + ' · ' + memo + ' — ' + motivo);
+    return { ok: true, linha: l };
+  }
+  /* Inclusão errada: a linha não some (fica a trilha), deixa de contar. */
+  function desfazerLinhaManual(linhaId, motivo) {
+    if (!pode('pagar')) return { erro: 'Seu perfil não faz conciliação.' };
+    const l = st.linhas.find(function (x) { return x.id === linhaId; });
+    if (!l || !ehLinhaManual(l)) return { erro: 'Só linha incluída à mão pode ser desfeita aqui.' };
+    if (l.situacao !== 'pendente') return { erro: 'Desfaça a conciliação dela antes.' };
+    if (!motivo) return { erro: 'Diga por que.' };
+    l.situacao = 'ignorado'; l.ignorado_tipo = 'manual_desfeita';
+    l.observacao = (l.observacao || '') + ' · inclusão desfeita: ' + motivo;
+    logar('extrato', l.id, 'desfez linha incluída à mão', U.brl(l.valor) + ' — ' + motivo);
+    return { ok: true };
+  }
+
   /* ── MOVIMENTAÇÃO BANCÁRIA (v199) ─────────────────────
 
      O contas pagas e recebidas mostra TÍTULO baixado — por isso não
@@ -14516,12 +14617,15 @@ ERP.store = (function () {
     (/linha de saldo/i.test(l.observacao || '') || ehLinhaDeSaldo(l.memo));
   const copiaGuardada = l => l.situacao === 'ignorado' &&
     (l.ignorado_tipo === 'copia' || !!l.copia_de || /^cópia de linha/i.test(l.observacao || ''));
-  const naoSoma = l => linhaDeSaldoGuardada(l) || copiaGuardada(l);
+  const manualDesfeita = l => ehLinhaManual(l) && l.situacao === 'ignorado';
+  const naoSoma = l => linhaDeSaldoGuardada(l) || copiaGuardada(l) || manualDesfeita(l);
   function tipoDaLinha(l) {
     if (copiaGuardada(l)) return 'Cópia (não soma)';
     if (l.situacao === 'pendente') return 'Pendente';
     if (l.situacao === 'ignorado') return 'Ignorada';
     if (l.alvo_tipo === 'receber') return 'Recebimento';
+    if (l.alvo_tipo === 'aplicacao') return 'Aplicação';
+    if (l.alvo_tipo === 'resgate') return 'Resgate de aplicação';
     if (['pagamento', 'parcela', 'parcelas'].indexOf(l.alvo_tipo) > -1) return 'Pagamento';
     if (l.alvo_tipo === 'transferencia') {
       const t = (st.transferenciasBanco || []).find(function (x) { return x.id === l.alvo_id; });
@@ -14560,7 +14664,9 @@ ERP.store = (function () {
         const e = st.extratos.find(function (x) { return x.id === l.extrato_id; });
         return { id: l.id, data: l.data, memo: l.memo || '', documento: l.documento || '',
           entrada: r2(l.entrada || 0), saida: r2(l.saida || 0), saldo: corre,
-          tipo: tipoDaLinha(l), situacao: l.situacao, nao_soma: naoSoma(l), vinculo: descreverVinculo(l), observacao: l.observacao || '',
+          tipo: manualDesfeita(l) ? 'Inclusão desfeita (não soma)' : tipoDaLinha(l), situacao: l.situacao, nao_soma: naoSoma(l),
+          manual: ehLinhaManual(l) ? { motivo: (l.incluida_manual || {}).motivo || '', por: (l.incluida_manual || {}).usuario || '',
+            confirmada: l.confirmada_no_arquivo || '' } : null, vinculo: descreverVinculo(l), observacao: l.observacao || '',
           arquivo: e ? e.arquivo : '' };
       });
       const porTipo = {};
@@ -14569,19 +14675,43 @@ ERP.store = (function () {
         const k = porTipo[l.tipo] = porTipo[l.tipo] || { tipo: l.tipo, n: 0, entradas: 0, saidas: 0 };
         k.n++; k.entradas = r2(k.entradas + l.entrada); k.saidas = r2(k.saidas + l.saida);
       });
-      /* Conferência dos arquivos do período, cada um contra o anterior. */
-      const arquivos = exts.map(function (e, i) {
-        const ls = st.linhas.filter(function (l) { return l.extrato_id === e.id && l.banco === b.id && !naoSoma(l); });
-        const ant = i > 0 ? exts[i - 1] : null;
-        const base = ant && typeof ant.saldo === 'number' ? ant.saldo : null;
-        const mov = r2(ls.reduce(function (t, l) { return t + (l.entrada || 0) - (l.saida || 0); }, 0));
-        const calc = base === null ? null : r2(base + mov);
-        return { arquivo: e.arquivo, periodo_ini: e.periodo_ini, periodo_fim: e.periodo_fim,
-          saldo_anterior: base, entradas: r2(ls.reduce(function (t, l) { return t + (l.entrada || 0); }, 0)),
-          saidas: r2(ls.reduce(function (t, l) { return t + (l.saida || 0); }, 0)),
-          calculado: calc, saldo_banco: typeof e.saldo === 'number' ? e.saldo : null,
-          diferenca: calc === null || typeof e.saldo !== 'number' ? null : r2(e.saldo - calc) };
-      }).filter(function (a) { return (a.periodo_fim || '') >= de && (a.periodo_ini || '') <= ate; });
+      /* CONFERÊNCIA COM O SALDO DO BANCO (v200).
+         Cada arquivo traz o saldo do banco no dia em que foi baixado.
+         Entre dois saldos de dias diferentes, o que mudou tem de ser a
+         soma de TODAS as linhas da conta nesse intervalo — venham de
+         que arquivo vierem. A v199 somava só as linhas novas de cada
+         arquivo contra o arquivo anterior; com arquivos que se
+         sobrepõem (o Bradesco manda o mês inteiro a cada download),
+         isso dava diferença onde não havia. Dois arquivos do mesmo dia:
+         vale o último importado. */
+      const pontosPorDia = {};
+      exts.forEach(function (e) {
+        if (typeof e.saldo !== 'number' || !e.periodo_fim) return;
+        const atual = pontosPorDia[e.periodo_fim];
+        if (!atual || quando(e.criado_em) >= quando(atual.criado_em)) pontosPorDia[e.periodo_fim] = e;
+      });
+      const dias = Object.keys(pontosPorDia).sort();
+      const movEntre = function (d0, d1) {
+        let ent = 0, sai = 0;
+        todas.forEach(function (l) {
+          if (naoSoma(l) || l.data <= d0 || l.data > d1) return;
+          ent += l.entrada || 0; sai += l.saida || 0;
+        });
+        return { ent: r2(ent), sai: r2(sai) };
+      };
+      const arquivos = dias.map(function (d, i) {
+        const e = pontosPorDia[d];
+        const ant = i > 0 ? pontosPorDia[dias[i - 1]] : null;
+        const m = ant ? movEntre(dias[i - 1], d) : null;
+        const calc = ant ? r2(ant.saldo + m.ent - m.sai) : null;
+        return { arquivo: e.arquivo, data_saldo: d, periodo_ini: e.periodo_ini, periodo_fim: e.periodo_fim,
+          data_anterior: ant ? dias[i - 1] : null, saldo_anterior: ant ? ant.saldo : null,
+          entradas: m ? m.ent : null, saidas: m ? m.sai : null,
+          calculado: calc, saldo_banco: e.saldo,
+          diferenca: calc === null ? null : r2(e.saldo - calc) };
+      }).filter(function (a) { return a.data_saldo >= de && a.data_saldo <= ate; });
+      const somaTipo = t => r2(somam.filter(function (l) { return l.tipo === t; })
+        .reduce(function (x, l) { return x + l.entrada + l.saida; }, 0));
       const emp = D.empresaPor(b.empresa) || {};
       return { banco: b.id, conta: b.apelido || b.nome || b.id, empresa: emp.apelido || '',
         saldo_inicial: inicial,
@@ -14591,6 +14721,8 @@ ERP.store = (function () {
         por_tipo: Object.keys(porTipo).map(function (k) { return porTipo[k]; }),
         pendentes: linhas.filter(function (l) { return l.situacao === 'pendente'; }).length,
         arquivos: arquivos,
+        aplicado: somaTipo('Aplicação'), resgatado: somaTipo('Resgate de aplicação'),
+        manuais: linhas.filter(function (l) { return l.manual && !l.nao_soma; }).length,
         arquivos_com_diferenca: arquivos.filter(function (a) { return a.diferenca !== null && Math.abs(a.diferenca) > 0.01; }).length };
     });
   }
@@ -22617,7 +22749,8 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
-    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, movimentacaoBancaria, painelMutuos, moverExtrato, CODIGO_BANCO,
+    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, movimentacaoBancaria, painelMutuos,
+    conciliarAplicacao, incluirLinhaManual, desfazerLinhaManual, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,

@@ -12638,4 +12638,14 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v199 — painel de mútuos roda', pm && Array.isArray(pm.operacoes) && Array.isArray(pm.saldos), '');
 })();
 
+/* ── v200 — aplicação/resgate, lançamento que o arquivo não trouxe ── */
+(function () {
+  const S2 = sandbox.window.ERP.store;
+  ['conciliarAplicacao', 'incluirLinhaManual', 'desfazerLinhaManual'].forEach(function (fn) {
+    verificar('v200 — store exporta ' + fn, typeof S2[fn] === 'function', '');
+  });
+  const st = require('fs').readFileSync(__dirname + '/js/store.js', 'utf8');
+  verificar('v200 — conferência de saldo por dia de saldo do banco, não por arquivo', /pontosPorDia/.test(st), '');
+})();
+
 concluir();
