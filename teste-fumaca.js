@@ -12619,4 +12619,23 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
     /'Valor do título'/.test(srcR) && /'Juros\/multa'/.test(srcR) && /'Valor pago'/.test(srcR), '');
 })();
 
+/* ── v199 — movimentação bancária, transferência entre contas, aba Mútuos ── */
+(function () {
+  const S2 = sandbox.window.ERP.store;
+  ['movimentacaoBancaria', 'painelMutuos'].forEach(function (fn) {
+    verificar('v199 — store exporta ' + fn, typeof S2[fn] === 'function', '');
+  });
+  const fs9 = require('fs');
+  const html = fs9.readFileSync(__dirname + '/index.html', 'utf8');
+  verificar('v199 — relatório "Movimentação bancária" na lista', /<option value="movBancaria">/.test(html), '');
+  verificar('v199 — aba "Mútuos" na conciliação', /data-cn="mutuos"/.test(html), '');
+  const st = fs9.readFileSync(__dirname + '/js/store.js', 'utf8');
+  verificar('v199 — conciliação aceita transferência entre contas da mesma empresa',
+    !/isso é remanejo de caixa, não mútuo/.test(st) && /mutuo: propria \? null/.test(st), '');
+  const m = S2.movimentacaoBancaria({ de: '2000-01-01', ate: '2099-12-31' });
+  verificar('v199 — movimentação bancária roda e devolve contas', Array.isArray(m), '');
+  const pm = S2.painelMutuos('2000-01-01', '2099-12-31');
+  verificar('v199 — painel de mútuos roda', pm && Array.isArray(pm.operacoes) && Array.isArray(pm.saldos), '');
+})();
+
 concluir();

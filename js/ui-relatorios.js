@@ -15,6 +15,7 @@ ERP.relatorios = (function () {
       if (atual === 'faturamento') return exportarFaturamento();
       if (atual === 'aPagarReceber' || atual === 'pagasRecebidas') return exportarPeriodo();
       if (atual === 'mutuos') return exportarMutuos();
+      if (atual === 'movBancaria') return exportarMovBancaria();
       /* LEGENDA EM TODO RELATÓRIO: nome, empresa e período. Os dois
          relatórios de contas já tinham; os outros saíam como uma
          tabela solta, e quem recebia não sabia de que empresa nem de
@@ -51,6 +52,8 @@ ERP.relatorios = (function () {
       atual === 'fluxoDiario' ? timbrado('os próximos dias, com o saldo andando dia a dia') + fluxoDiario() :
       atual === 'aPagarReceber' ? timbrado('o que vence no período, com saldo corrido') + aPagarReceber() :
       atual === 'pagasRecebidas' ? timbrado('o que foi baixado no período') + pagasRecebidas() :
+      atual === 'movBancaria' ? timbrado('tudo o que passou pela conta, linha a linha do extrato, para bater com o banco') +
+        filtrosPeriodo(filtroBancoRel()) + movBancaria() :
       atual === 'mutuos' ? timbrado('quanto uma empresa do grupo deve à outra, e o que mudou no período') +
         filtrosPeriodo() + mutuos() :
       atual === 'faturamento' ? timbrado('quais projetos foram faturados, quais não, e quanto deu') +
@@ -127,6 +130,7 @@ ERP.relatorios = (function () {
      de que empresa nem de que período era. */
   const NOMES = {
     aPagarReceber: 'Contas a pagar e a receber', pagasRecebidas: 'Contas pagas e recebidas', mutuos: 'Mútuo entre empresas',
+    movBancaria: 'Movimentação bancária',
     fluxoDiario: 'Fluxo de caixa diário',
     gerencial: 'DRE gerencial',
     dre: 'DRE por competência', empresas: 'Resultado por empresa', centro: 'Total por centro de custo',
@@ -673,7 +677,7 @@ ERP.relatorios = (function () {
 
   function filtrosPeriodo(extra) {
     const olhaParaFrente = atual === 'aPagarReceber';
-    const olhaParaTras = atual === 'pagasRecebidas';
+    const olhaParaTras = atual === 'pagasRecebidas' || atual === 'movBancaria';
     return '<div class="filtros">' +
       '<div class="f"><label for="rp-de">De</label><input type="date" id="rp-de" value="' + per.de + '"></div>' +
       '<div class="f"><label for="rp-ate">Até</label><input type="date" id="rp-ate" value="' + per.ate + '"></div>' +
@@ -1015,6 +1019,97 @@ ERP.relatorios = (function () {
      pelo extrato e nota de uma empresa paga pela conta da outra. */
   const ORIGEM_MUTUO = l => l.origem_registro === 'extrato' ? 'conciliação'
     : l.tipo === 'transferencia' ? 'transferência' : 'baixa manual';
+  /* ── MOVIMENTAÇÃO BANCÁRIA (v199) ──────────────────────
+     O "Contas pagas e recebidas" lista título baixado; resgate de
+     aplicação, mútuo, transferência e tarifa ignorada não são título e
+     não aparecem lá. Este lista o EXTRATO: cada linha que o banco
+     mandou, com o saldo correndo e o que foi feito com ela — é o que
+     se põe ao lado do extrato do banco para bater. */
+  const TIPOS_MOV = ['Recebimento', 'Pagamento', 'Mútuo', 'Transferência entre contas', 'Ignorada', 'Pendente', 'Conciliada'];
+  function movBancaria() {
+    const contas = S.movimentacaoBancaria({ de: per.de, ate: per.ate, banco: relBanco || null });
+    if (!contas.length) {
+      return '<div class="vazio"><strong>Nenhum extrato importado' + (relBanco ? ' nesta conta' : '') + '.</strong> ' +
+        'A movimentação bancária sai dos extratos importados na Conciliação.</div>';
+    }
+    const NUM = 'style="width:120px"';
+    return contas.map(function (c) {
+      const difs = c.arquivos.filter(function (a) { return a.diferenca !== null && Math.abs(a.diferenca) > 0.01; });
+      return '<h3 style="margin:16px 0 4px">' + U.esc(c.conta) + (c.empresa ? ' <span class="sub">· ' + U.esc(c.empresa) + '</span>' : '') + '</h3>' +
+        '<div class="pr-confere"><span>Saldo em ' + U.fData(U.addDias(per.de, -1)) + ' <b>' + U.brl(c.saldo_inicial) + '</b></span>' +
+          '<span>Entradas <b>' + U.brl(c.entradas) + '</b></span><span>Saídas <b>' + U.brl(c.saidas) + '</b></span>' +
+          '<span>Saldo em ' + U.fData(per.ate) + ' <b>' + U.brl(c.saldo_final) + '</b></span>' +
+          '<span' + (c.pendentes ? ' class="erro"' : '') + '>Pendentes de conciliar <b>' + c.pendentes + '</b></span></div>' +
+        (c.por_tipo.length ? '<div class="pr-confere" style="font-size:12px">' +
+          TIPOS_MOV.map(function (t) {
+            const k = c.por_tipo.find(function (x) { return x.tipo === t; });
+            if (!k) return '';
+            return '<span>' + t + ' (' + k.n + ')' + (k.entradas ? ' <b>+' + U.num(k.entradas) + '</b>' : '') +
+              (k.saidas ? ' <b>−' + U.num(k.saidas) + '</b>' : '') + '</span>';
+          }).join('') + '</div>' : '') +
+        (difs.length ? '<div class="aviso-linha erro">' + difs.map(function (a) {
+          return 'O arquivo ' + U.esc(a.arquivo) + ' (' + U.fData(a.periodo_ini) + ' a ' + U.fData(a.periodo_fim) +
+            ') não fecha: saldo do arquivo anterior ' + U.brl(a.saldo_anterior) + ' + entradas ' + U.brl(a.entradas) +
+            ' − saídas ' + U.brl(a.saidas) + ' = ' + U.brl(a.calculado) + ', mas o banco informou ' + U.brl(a.saldo_banco) +
+            ' (diferença de ' + U.brl(a.diferenca) + '). Falta linha nesse arquivo — confira no extrato do banco.';
+        }).join('<br>') + '</div>' : '') +
+        '<table class="rel mov-banc" data-conta="' + U.esc(c.banco) + '"><thead><tr><th style="width:90px">Data</th><th>Histórico</th>' +
+          '<th>Classificação</th><th class="num" ' + NUM + '>Entrada</th><th class="num" ' + NUM + '>Saída</th>' +
+          '<th class="num" ' + NUM + '>Saldo</th></tr></thead><tbody>' +
+        (c.linhas.length ? c.linhas.map(function (l) {
+          return '<tr><td class="mono">' + U.fData(l.data) + '</td>' +
+            '<td class="desc">' + U.esc(l.memo) + (l.documento ? '<div class="sub">doc ' + U.esc(l.documento) + '</div>' : '') + '</td>' +
+            '<td class="' + (l.situacao === 'pendente' ? 'erro' : '') + '">' + U.esc(l.tipo) +
+              (l.vinculo && l.vinculo !== l.tipo ? '<div class="sub">' + U.esc(l.vinculo) + '</div>' : '') + '</td>' +
+            '<td class="num">' + (l.entrada ? U.num(l.entrada) : '') + '</td>' +
+            '<td class="num">' + (l.saida ? U.num(l.saida) : '') + '</td>' +
+            '<td class="num">' + U.num(l.saldo) + '</td></tr>';
+        }).join('') : '<tr><td colspan="6" class="vazio">Sem movimento no período.</td></tr>') +
+        '</tbody></table>';
+    }).join('') +
+    '<div class="ajuda">Saldo de partida: o saldo informado pelo banco no último arquivo que terminou antes do período, ' +
+      'mais as linhas entre ele e o início do período. Linha "Pendente" ainda não foi classificada na Conciliação ' +
+      '(por isso não aparece no Contas pagas e recebidas).</div>';
+  }
+
+  function exportarMovBancaria() {
+    const contas = S.movimentacaoBancaria({ de: per.de, ate: per.ate, banco: relBanco || null });
+    if (!contas.length) return ERP.app.aviso('Nenhum extrato importado para exportar.', 'erro');
+    const linhas = [];
+    contas.forEach(function (c) {
+      linhas.push({ conta: c.conta, empresa: c.empresa, data: '', memo: 'Saldo anterior', tipo: '', vinculo: '',
+        documento: '', entrada: null, saida: null, saldo: c.saldo_inicial });
+      c.linhas.forEach(function (l) {
+        linhas.push({ conta: c.conta, empresa: c.empresa, data: l.data, memo: l.memo, tipo: l.tipo,
+          vinculo: l.vinculo && l.vinculo !== l.tipo ? l.vinculo : '', documento: l.documento,
+          entrada: l.entrada || null, saida: l.saida || null, saldo: l.saldo });
+      });
+    });
+    const conta = relBanco ? (D.banco(relBanco) || {}) : null;
+    ERP.exportar.abrir({
+      nome: 'movimentacao-bancaria-' + (conta ? U.slug(conta.apelido) + '-' : '') + per.de + '-a-' + per.ate,
+      titulo: 'Movimentação bancária' + (conta ? ' — ' + conta.apelido : ''),
+      colunas: [
+        { titulo: 'Conta', largura: 24, valor: l => l.conta },
+        { titulo: 'Empresa', largura: 16, valor: l => l.empresa },
+        { titulo: 'Data', largura: 12, tipo: 'data', valor: l => l.data ? U.fData(l.data) : '' },
+        { titulo: 'Histórico', largura: 44, valor: l => l.memo },
+        { titulo: 'Documento', largura: 14, valor: l => l.documento },
+        { titulo: 'Classificação', largura: 22, valor: l => l.tipo },
+        { titulo: 'Detalhe', largura: 40, valor: l => l.vinculo },
+        { titulo: 'Entrada', largura: 15, tipo: 'numero', valor: l => l.entrada },
+        { titulo: 'Saída', largura: 15, tipo: 'numero', valor: l => l.saida },
+        { titulo: 'Saldo', largura: 16, tipo: 'numero', valor: l => l.saldo }
+      ],
+      linhas: linhas,
+      cabecalho: [['Movimentação bancária' + (conta ? ' — ' + conta.apelido : '')],
+        ['Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate)]],
+      rodape: [[]].concat(contas.map(function (c) {
+        return [c.conta + ' — entradas', c.entradas, 'saídas', c.saidas, 'saldo final', c.saldo_final];
+      }))
+    });
+  }
+
   function mutuos() {
     const r = S.relatorioMutuos(per.de, per.ate);
     const total = r.saldos.reduce(function (a, x) { return a + x.saldo; }, 0);
