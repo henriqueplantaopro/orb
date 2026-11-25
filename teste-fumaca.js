@@ -1393,7 +1393,7 @@ function cpfValido(seed) {
   verificar('setup NF com PIS/COFINS/CSLL/ISS', t.ok, JSON.stringify(t.erro));
   const res = S.resumoRetencoesPendentes();
   const csrf = res.find(r => r.tributo === 'CSRF' && r.competencia === '2061-03');
-  verificar('PIS+COFINS+CSLL aparecem juntos como CSRF (R$465) na competência da NF (03/2061), mesmo vencendo em abril', csrf && csrf.total === 465 && csrf.qtd === 3, JSON.stringify(csrf));
+  verificar('PIS+COFINS+CSLL aparecem juntos como CSRF (R$465) na competência da NF (03/2061), mesmo vencendo em abril — 1 nota, 3 registros', csrf && csrf.total === 465 && csrf.qtd === 1 && csrf.registros === 3, JSON.stringify(csrf));
   const iss = res.find(r => r.tributo === 'ISS' && r.competencia === '2061-03');
   verificar('ISS também fica na competência da NF (03/2061)', iss && iss.total === 500, JSON.stringify(iss));
   const g = S.fecharGuiaRetencao('CSRF', '2061-03', '2061-04-20');
@@ -12646,6 +12646,18 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   });
   const st = require('fs').readFileSync(__dirname + '/js/store.js', 'utf8');
   verificar('v200 — conferência de saldo por dia de saldo do banco, não por arquivo', /pontosPorDia/.test(st), '');
+})();
+
+/* ── v201 — retenções por nota; relatório com retenções e nº da NF ── */
+(function () {
+  const S2 = sandbox.window.ERP.store;
+  ['detalheRetencoes', 'tirarRetencaoRepetida'].forEach(function (fn) {
+    verificar('v201 — store exporta ' + fn, typeof S2[fn] === 'function', '');
+  });
+  const r = S2.contasPagasERecebidas('2000-01-01', '2099-12-31');
+  verificar('v201 — pagas e recebidas traz o retido dos dois lados', r.retido_recebido && r.retido_pago, '');
+  const rel = require('fs').readFileSync(__dirname + '/js/ui-relatorios.js', 'utf8');
+  verificar('v201 — exportação com Nº da NF e retenções', /'Nº da NF'/.test(rel) && /'Total retido'/.test(rel), '');
 })();
 
 concluir();

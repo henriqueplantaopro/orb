@@ -766,6 +766,7 @@ ERP.relatorios = (function () {
      no mês: o título, os juros/multa e o que saiu do banco.
 
      A emissão saiu: quem confere caixa olha vencimento e pagamento. */
+  const retDe = (l, t) => l.ret && l.ret.por[t] ? l.ret.por[t] : 0;
   const COLS_REALIZADO = [
     { titulo: 'Tipo', largura: 9, valor: l => l.tipo },
     { titulo: 'Documento', largura: 16, valor: l => l.documento },
@@ -786,9 +787,23 @@ ERP.relatorios = (function () {
     { titulo: 'Banco', largura: 22, valor: l => l.banco || '' },
     { titulo: 'Empresa', largura: 18, valor: l => l.empresa || '' },
     { titulo: 'Aprovação', largura: 12, valor: l => l.aprovacao || '' },
-    { titulo: 'NF', largura: 14, valor: l => l.nf || '' },
+    /* v201: o NÚMERO da nota (antes dizia só "nº informado"). */
+    { titulo: 'Nº da NF', largura: 12, valor: l => l.nf || '' },
+    { titulo: 'NF', largura: 14, valor: l => l.nf_situacao || '' },
     { titulo: 'Vencimento', largura: 12, tipo: 'data', valor: l => l.vencimento ? U.fData(l.vencimento) : '' },
     { titulo: 'Data do PG', largura: 12, tipo: 'data', valor: l => U.fData(l.baixa) },
+    /* Retenções (v201): bruto da nota − retido = valor do título. Na
+       entrada é o que o cliente reteve; na saída, o que retivemos do
+       fornecedor e recolhemos por ele. */
+    { titulo: 'Valor bruto', largura: 15, tipo: 'numero', valor: l => l.ret ? l.ret.bruto : l.principal },
+    { titulo: 'ISS retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'ISS') },
+    { titulo: 'IRRF retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'IRRF') },
+    { titulo: 'PIS retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'PIS') },
+    { titulo: 'COFINS retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'COFINS') },
+    { titulo: 'CSLL retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'CSLL') },
+    { titulo: 'INSS retido', largura: 13, tipo: 'numero', valor: l => retDe(l, 'INSS') },
+    { titulo: 'Outras retenções', largura: 13, tipo: 'numero', valor: l => retDe(l, 'Outros') },
+    { titulo: 'Total retido', largura: 14, tipo: 'numero', valor: l => l.ret ? l.ret.total : 0 },
     { titulo: 'Valor do título', largura: 15, tipo: 'numero', valor: l => l.principal },
     { titulo: 'Juros/multa', largura: 15, tipo: 'numero', valor: l => l.juros || 0 },
     { titulo: 'Desconto', largura: 15, tipo: 'numero', valor: l => l.desconto || 0 },
@@ -975,12 +990,16 @@ ERP.relatorios = (function () {
      título, juros/multa e pago — que é o que bate com o extrato. */
   const COLS_TELA_REALIZADO = [
     { t: 'Tipo', h: l => '<td>' + l.tipo + '</td>' },
-    { t: 'Documento', h: l => '<td class="mono">' + U.esc(l.documento || '—') + '</td>' },
+    { t: 'NF / doc.', h: l => '<td class="mono">' + U.esc(l.nf || l.documento || '—') + '</td>' },
     { t: 'Fornecedor', h: l => '<td class="desc">' + U.esc(l.contraparte) +
       '<div class="sub">' + U.esc(l.descricao || '') + '</div></td>' },
     { t: 'Parcela', h: l => '<td class="sub">' + l.parcela + '</td>' },
     { t: 'Vencimento', h: l => '<td class="mono">' + (l.vencimento ? U.fData(l.vencimento) : '—') + '</td>' },
     { t: 'Data do PG', h: l => '<td class="mono">' + U.fData(l.baixa) + '</td>' },
+    { t: 'Bruto', num: true, h: l => '<td class="num">' + U.num(l.ret ? l.ret.bruto : l.principal) + '</td>' },
+    { t: 'Retido', num: true, h: l => '<td class="num' + (l.ret ? '' : ' sub') + '"' + (l.ret ? ' title="' +
+      Object.keys(l.ret.por).map(function (k) { return k + ' ' + U.num(l.ret.por[k]); }).join(' · ') + '"' : '') + '>' +
+      (l.ret ? U.num(l.ret.total) + '<div class="sub">' + Object.keys(l.ret.por).join(', ') + '</div>' : '—') + '</td>' },
     { t: 'Valor do título', num: true, h: l => '<td class="num">' + U.num(l.principal) + '</td>' },
     { t: 'Juros/multa', num: true, h: l => '<td class="num' + (l.juros > 0 ? '' : ' sub') + '">' +
       (l.juros > 0 ? U.num(l.juros) : '—') + '</td>' },
@@ -988,6 +1007,8 @@ ERP.relatorios = (function () {
     { t: 'Banco', h: l => '<td class="sub">' + U.esc(l.banco || '') + '</td>' }
   ];
 
+  const detRet = x => Object.keys(x.por).length ? ' <span class="sub">(' +
+    Object.keys(x.por).map(function (k) { return k + ' ' + U.num(x.por[k]); }).join(' · ') + ')</span>' : '';
   function pagasRecebidas() {
     const r = S.contasPagasERecebidas(per.de, per.ate, { banco: relBanco });
     return filtrosPeriodo(filtroBancoRel() +
@@ -1000,6 +1021,10 @@ ERP.relatorios = (function () {
         '<span>dos quais juros/multa <b>' + U.brl(r.total_juros) + '</b></span>' +
         '<span>Resultado do caixa <b class="' + (r.resultado < 0 ? 'erro' : '') + '">' + U.brl(r.resultado) + '</b></span>' +
       '</div>' +
+      ((r.retido_recebido.total || r.retido_pago.total) ? '<div class="pr-confere" style="font-size:12px">' +
+        '<span>Retido pelos clientes (recebimentos) <b>' + U.brl(r.retido_recebido.total) + '</b>' + detRet(r.retido_recebido) + '</span>' +
+        '<span>Retido dos fornecedores (pagamentos) <b>' + U.brl(r.retido_pago.total) + '</b>' + detRet(r.retido_pago) + '</span>' +
+      '</div>' : '') +
       '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel"><thead><tr>' +
         COLS_TELA_REALIZADO.map(function (c) {
           return '<th' + (c.num ? ' class="num"' : '') + '>' + c.t + '</th>';
@@ -1238,7 +1263,9 @@ ERP.relatorios = (function () {
       cabecalho: [['Relatório contas pagas e recebidas' + (conta ? ' — ' + conta.apelido : '')],
         conta ? [periodo, '', 'Empresa', (emp.apelido || '') + ' · ' + (emp.cnpj || '')] : [periodo]],
       rodape: [[], ['Recebido', r.total_recebido], ['Pago', r.total_pago], ['dos quais juros/multa', r.total_juros],
-        ['Resultado do caixa', r.resultado]]
+        ['Resultado do caixa', r.resultado],
+        ['Retido pelos clientes (recebimentos)', r.retido_recebido.total],
+        ['Retido dos fornecedores (pagamentos)', r.retido_pago.total]]
     });
   }
 

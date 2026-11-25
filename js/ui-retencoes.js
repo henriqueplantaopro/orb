@@ -31,10 +31,15 @@ ERP.retencoes = (function () {
         'agrupados numa guia por tributo e competência</span></h2>' +
       '<h3 style="font-size:13px;margin:4px 0 6px">Pendente de fechar guia</h3>' +
       (pendentes.length
-        ? '<table class="parcelas"><thead><tr><th>Tributo</th><th>Competência</th><th>Município</th>' +
+        ? '<table class="parcelas"><thead><tr><th>Tributo</th><th>Competência</th><th>Vence</th><th>Município</th>' +
             '<th class="num">NF(s)</th><th class="num">Total retido</th><th></th></tr></thead><tbody>' +
             pendentes.map(function (r) {
-              return '<tr><td>' + U.esc(NOMES[r.tributo] || r.tributo) + '</td><td>' + U.fComp(r.competencia) + '</td><td>' + U.esc(r.tributo === 'ISS' ? (r.municipio || 'sede (não informado)') : '—') + '</td>' +
+              return '<tr><td>' + U.esc(NOMES[r.tributo] || r.tributo) +
+                  (r.problemas ? ' <span class="badge b-reprovado" title="Nota repetida ou com título cancelado — veja em Ver NFs">' +
+                    r.problemas + ' a conferir</span>' : '') + '</td>' +
+                '<td>' + U.fComp(r.competencia) + '</td>' +
+                '<td class="mono">' + (r.vencimento ? U.fData(r.vencimento) + (r.vencida ? ' <span class="badge b-reprovado">vencida</span>' : '') : '—') + '</td>' +
+                '<td>' + U.esc(r.tributo === 'ISS' ? (r.municipio || 'sede (não informado)') : '—') + '</td>' +
                 '<td class="num">' + r.qtd + '</td><td class="num">' + U.brl(r.total) + '</td>' +
                 '<td>' + (podeFechar()
                   ? '<button class="btn-sm" data-ver-pendente="' + r.tributo + '|' + r.competencia + '|' + (r.municipio || '') + '">Ver NFs</button> ' +
@@ -77,18 +82,63 @@ ERP.retencoes = (function () {
     });
   }
 
+  /* Uma linha por NOTA (v201): situação do pagamento, os tributos da
+     nota em colunas, e os botões para abrir a nota e o título. */
+  const SIT = { pago: ['pago', 'b-pago'], parcial: ['pago em parte', 'b-aguardando'], aberto: ['em aberto', 'b-aguardando'],
+    titulo_cancelado: ['título cancelado', 'b-reprovado'] };
+  function tabelaNotas(det, tributo) {
+    const cols = tributo === 'CSRF' ? ['PIS', 'COFINS', 'CSLL'] : [tributo];
+    const NUM = 'style="width:100px"';
+    return '<div class="tabela-rolagem"><table class="parcelas" id="rt-notas"><thead><tr><th>NF</th><th>Fornecedor</th>' +
+        '<th>Emissão</th><th>Vencimento</th><th>Pagamento</th><th class="num" ' + NUM + '>Bruto da NF</th>' +
+        cols.map(function (c) { return '<th class="num" ' + NUM + '>' + c + '</th>'; }).join('') +
+        (cols.length > 1 ? '<th class="num" ' + NUM + '>Total</th>' : '') + '<th></th></tr></thead><tbody>' +
+      det.linhas.map(function (l) {
+        const sit = SIT[l.situacao] || [l.situacao, ''];
+        const avisos = (l.repetidos.length ? '<div class="erro">registro repetido neste título ' +
+            l.repetidos.map(function (id) { return '<button class="btn-sm" data-rt-repetida="' + id + '">Tirar o repetido</button>'; }).join(' ') + '</div>' : '') +
+          (l.nf_em_dois_titulos ? '<div class="erro">mesma NF lançada em outro título — cancele o título repetido no Contas a pagar</div>' : '');
+        return '<tr data-rt-titulo="' + U.esc(l.titulo_id || '') + '"><td class="mono">' + U.esc(l.nf || '—') + '</td>' +
+          '<td class="desc">' + U.esc(l.credor) + avisos + '</td>' +
+          '<td class="mono">' + (l.emissao ? U.fData(l.emissao) : '—') + '</td>' +
+          '<td class="mono">' + (l.vencimentos.length ? l.vencimentos.map(U.fData).join('<br>') : '—') + '</td>' +
+          '<td><span class="badge ' + sit[1] + '">' + sit[0] + '</span>' +
+            (l.pago_em ? '<div class="sub">' + U.fData(l.pago_em) + (l.banco ? ' · ' + U.esc(l.banco) : '') + '</div>' : '') + '</td>' +
+          '<td class="num">' + U.num(l.bruto) + '</td>' +
+          cols.map(function (c) { return '<td class="num">' + (l.por_tributo[c] ? U.num(l.por_tributo[c]) : '—') + '</td>'; }).join('') +
+          (cols.length > 1 ? '<td class="num"><b>' + U.num(l.total) + '</b></td>' : '') +
+          '<td class="acoes">' + (l.parcela_id ? (l.tem_anexo ? '<button class="btn-sm" data-rt-nota="' + l.parcela_id + '">Nota</button>' : '') +
+            '<button class="btn-sm" data-rt-tit="' + l.parcela_id + '">Título</button>' : '') + '</td></tr>';
+      }).join('') +
+      '<tr><td colspan="' + (6 + cols.length) + '"><b>Total</b></td>' +
+        (cols.length > 1 ? '<td class="num"><b>' + U.num(det.total) + '</b></td>' : '') + '<td></td></tr>' +
+      '</tbody></table></div>';
+  }
+  function ligarNotas(reabrir) {
+    document.querySelectorAll('[data-rt-nota]').forEach(function (b) {
+      b.addEventListener('click', function () { ERP.contas.verNota(S.parcela(this.dataset.rtNota)); });
+    });
+    document.querySelectorAll('[data-rt-tit]').forEach(function (b) {
+      b.addEventListener('click', function () { ERP.contas.verDetalhe(this.dataset.rtTit); });
+    });
+    document.querySelectorAll('[data-rt-repetida]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const r = S.tirarRetencaoRepetida(this.dataset.rtRepetida, 'registro repetido no mesmo título');
+        if (ERP.app.erroDoRetorno(r)) return;
+        render(); reabrir(); ERP.app.aviso('Registro repetido tirado da fila.', 'ok');
+      });
+    });
+  }
+
   function abrirDetalhePendente(tributo, competencia, municipio) {
-    const itens = S.retencoesPendentes({ tributo: tributo, competencia: competencia, municipio: tributo === 'ISS' ? (municipio || '') : undefined });
+    const det = S.detalheRetencoes({ tributo: tributo, competencia: competencia, municipio: tributo === 'ISS' ? (municipio || '') : undefined });
     ERP.app.modal({
-      titulo: NOMES[tributo] + ' pendente — ' + U.fComp(competencia),
-      corpo: '<table class="parcelas"><thead><tr><th>NF</th><th>Fornecedor</th><th>Conta</th>' +
-          '<th class="num">Valor retido</th></tr></thead><tbody>' +
-        itens.map(function (r) {
-          return '<tr><td>' + U.esc(r.nf_documento || '—') + '</td><td>' + U.esc((D.credor(r.credor) || {}).nome || '') + '</td>' +
-            '<td>' + U.esc(r.conta) + '</td><td class="num">' + U.brl(r.valor) + '</td></tr>';
-        }).join('') +
-        '<tr><td colspan="3"><b>Total</b></td><td class="num"><b>' + U.brl(itens.reduce(function (s, r) { return s + r.valor; }, 0)) + '</b></td></tr>' +
-      '</tbody></table>'
+      titulo: NOMES[tributo] + ' pendente — ' + U.fComp(competencia), largo: true,
+      corpo: (det.problemas ? '<div class="aviso-linha erro">' + det.problemas + ' nota(s) a conferir antes de fechar a guia.</div>' : '') +
+        tabelaNotas(det, tributo) +
+        '<div class="ajuda">Competência da retenção = a da nota (critério da contabilidade). "Em aberto" quer dizer que o ' +
+          'fornecedor ainda não foi pago — por isso a nota não aparece no Contas pagas.</div>',
+      aoAbrir: function () { ligarNotas(function () { abrirDetalhePendente(tributo, competencia, municipio); }); }
     });
   }
 
@@ -140,15 +190,18 @@ ERP.retencoes = (function () {
         '<div class="resumo-linha"><span>Vencimento</span><span class="v">' + (parcela ? U.fData(parcela.venc) : '—') + '</span></div>' +
         '<div class="resumo-linha"><span>Total</span><span class="v">' + U.brl(g.total) + '</span></div>' +
         '<h3 style="font-size:12px;margin:12px 0 6px">NFs que entraram nesta guia</h3>' +
-        '<table class="parcelas"><thead><tr><th>NF</th><th>Fornecedor</th><th class="num">Valor</th></tr></thead><tbody>' +
-          (g.retencao_ids || []).map(function (rid) {
-            const r = S.st.retencoesRegistradas.find(function (x) { return x.id === rid; });
-            if (!r) return '';
-            return '<tr><td>' + U.esc(r.nf_documento || '—') + '</td><td>' + U.esc((D.credor(r.credor) || {}).nome || '') +
-              '</td><td class="num">' + U.brl(r.valor) + '</td></tr>';
-          }).join('') +
-        '</tbody></table>' +
-        (g.cancelada ? '<div class="ajuda" style="margin-top:8px">Motivo do cancelamento: ' + U.esc(g.motivo_cancelamento || '') + '</div>' : '')
+        (g.cancelada
+          ? '<table class="parcelas"><thead><tr><th>NF</th><th>Fornecedor</th><th class="num">Valor</th></tr></thead><tbody>' +
+            (g.retencao_ids || []).map(function (rid) {
+              const r = S.st.retencoesRegistradas.find(function (x) { return x.id === rid; });
+              if (!r) return '';
+              return '<tr><td>' + U.esc(r.nf_documento || '—') + '</td><td>' + U.esc((D.credor(r.credor) || {}).nome || '') +
+                '</td><td class="num">' + U.brl(r.valor) + '</td></tr>';
+            }).join('') + '</tbody></table>'
+          : tabelaNotas(S.detalheRetencoes({ guia_id: g.id }), g.tributo)) +
+        (g.cancelada ? '<div class="ajuda" style="margin-top:8px">Motivo do cancelamento: ' + U.esc(g.motivo_cancelamento || '') + '</div>' : ''),
+      largo: !g.cancelada,
+      aoAbrir: function () { ligarNotas(function () { abrirDetalheGuia(id); }); }
     });
   }
 

@@ -2181,6 +2181,6 @@ ERP.contas = (function () {
   /* A produtividade abre a MESMA janela de nota fiscal, em vez de
      ter uma cópia sua. Duas janelas para o mesmo ato acabariam
      divergindo — e é nesta que a sugestão de retenção mora. */
-  return { montar, render, preFiltrar, verDetalhe: abrirDetalhe, saldoBancarioResumoHTML, abrirAba,
+  return { montar, render, preFiltrar, verDetalhe: abrirDetalhe, verNota, saldoBancarioResumoHTML, abrirAba,
            abrirNF: abrirNF, editar: abrirEditar };
 })();
