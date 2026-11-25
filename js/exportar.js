@@ -69,7 +69,34 @@ ERP.exportar = (function () {
     const wb = new ExcelJS.Workbook();
     /* Uma aba só, com o nome do relatório: o financeiro pediu um
        arquivo por relatório, não uma pasta com as duas abas. */
-    const ws = wb.addWorksheet((titulo || 'Dados').slice(0, 28).replace(/[\\/?*\[\]:]/g, '-'));
+    montarAba(wb, colunas, linhas, titulo, cabecalho, rodape, {});
+    baixarWb(wb, nome);
+  }
+
+  /* VÁRIAS ABAS NUM ARQUIVO (v202): a movimentação bancária sai com
+     uma aba de todos os bancos e uma por banco. Cada aba é montada
+     igual à aba única de sempre. */
+  function xlsxAbas(nome, abas) {
+    if (!window.ExcelJS) return ERP.app.aviso('A biblioteca de Excel não carregou.', 'erro');
+    const wb = new ExcelJS.Workbook();
+    const usados = {};
+    abas.forEach(function (a) {
+      montarAba(wb, a.colunas, a.linhas, a.titulo, a.cabecalho, a.rodape, usados);
+    });
+    baixarWb(wb, nome);
+  }
+
+  /* Nome de aba do Excel: até 31 letras, sem \ / ? * [ ] :, e único. */
+  function nomeAba(titulo, usados) {
+    let base = String(titulo || 'Dados').replace(/[\\/?*\[\]:]/g, '-').slice(0, 28);
+    let n = base, i = 2;
+    while (usados[n.toLowerCase()]) { n = base.slice(0, 25) + ' ' + i; i++; }
+    usados[n.toLowerCase()] = 1;
+    return n;
+  }
+
+  function montarAba(wb, colunas, linhas, titulo, cabecalho, rodape, usados) {
+    const ws = wb.addWorksheet(nomeAba(titulo, usados || {}));
     ws.columns = colunas.map(function (c) {
       return { key: c.titulo, width: c.largura || 18 };
     });
@@ -249,6 +276,9 @@ ERP.exportar = (function () {
         col.eachCell({ includeEmpty: false }, function (cell, n) { if (n > linhaTitulos) cell.numFmt = fmt; });
       }
     });
+  }
+
+  function baixarWb(wb, nome) {
     wb.xlsx.writeBuffer().then(function (buf) {
       const url = URL.createObjectURL(new Blob([buf],
         { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }));
@@ -408,12 +438,18 @@ ERP.exportar = (function () {
         '<button class="btn-linha" id="ex-xlsx">Excel (.xlsx)</button>' +
         '<button class="btn-sm" id="ex-pdf">PDF</button>' +
         '<button class="btn-sm" id="ex-csv">CSV</button></div>' +
+        (op.abas && op.abas.length > 1 ? '<div class="ajuda">No Excel: ' + op.abas.length + ' abas (' +
+          op.abas.map(function (a) { return a.titulo; }).join(', ') + '). PDF e CSV levam a primeira.</div>' : '') +
         '<div class="ajuda">Excel abre com filtro pronto e os valores como número; ' +
         'PDF é pra anexar e imprimir; CSV é pra importar em outro sistema.</div>',
       aoAbrir: function () {
         const fechar = function () { ERP.app.fecharModal(); };
         U().el('ex-xlsx').addEventListener('click', function () {
-          xlsx(op.nome, op.colunas, op.linhas, op.titulo, op.cabecalho, op.rodape); fechar();
+          if (op.abas && op.abas.length) xlsxAbas(op.nome, op.abas.map(function (a) {
+            return Object.assign({}, a, { colunas: (a.colunas || op.colunas).filter(function (c) { return !c.pular; }) });
+          }));
+          else xlsx(op.nome, op.colunas, op.linhas, op.titulo, op.cabecalho, op.rodape);
+          fechar();
         });
         U().el('ex-pdf').addEventListener('click', function () {
           pdf(op.nome, op.colunas, op.linhas, op.titulo, op.subtitulo, op.cabecalho, op.rodape); fechar();
@@ -425,5 +461,5 @@ ERP.exportar = (function () {
     });
   }
 
-  return { abrir: abrir, csv: csv, xlsx: xlsx, pdf: pdf, deTabela: deTabela };
+  return { abrir: abrir, csv: csv, xlsx: xlsx, xlsxAbas: xlsxAbas, pdf: pdf, deTabela: deTabela };
 })();

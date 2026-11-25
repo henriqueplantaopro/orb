@@ -12660,4 +12660,12 @@ verificar('v102 — periodo invertido é recusado', !!inv.erro, JSON.stringify(i
   verificar('v201 — exportação com Nº da NF e retenções', /'Nº da NF'/.test(rel) && /'Total retido'/.test(rel), '');
 })();
 
+/* ── v202 — movimentação bancária com as colunas do pagas e recebidas; Excel em abas ── */
+(function () {
+  const ex = require('fs').readFileSync(__dirname + '/js/exportar.js', 'utf8');
+  verificar('v202 — exportador monta várias abas num arquivo', /function xlsxAbas/.test(ex), '');
+  const m = sandbox.window.ERP.store.movimentacaoBancaria({ de: '2000-01-01', ate: '2099-12-31' });
+  verificar('v202 — cada linha da movimentação traz as linhas do relatório de caixa', m.every(function (c) { return c.linhas.every(function (l) { return Array.isArray(l.rel); }); }), '');
+})();
+
 concluir();
