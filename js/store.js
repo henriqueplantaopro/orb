@@ -1200,6 +1200,90 @@ ERP.store = (function () {
     });
   }
 
+  /* ── AS NOTAS POR TRÁS DE UMA GUIA (v201) ─────────────
+     A lista de "Ver NFs" mostrava só nome e valor — não dava para
+     saber se a nota já foi paga, quando, nem abrir o título. Aqui cada
+     NOTA vira uma linha (PIS, COFINS e CSLL da mesma nota juntos, cada
+     um na sua coluna), com a situação do pagamento e o que permite
+     abrir a nota e o título.
+
+     E duas conferências que travam o recolhimento em dobro:
+       · o mesmo tributo duas vezes no mesmo título (registro repetido);
+       · a mesma NF do mesmo fornecedor em dois títulos vivos (nota
+         lançada duas vezes). */
+  function detalheRetencoes(f) {
+    f = f || {};
+    const regs = f.guia_id
+      ? st.retencoesRegistradas.filter(function (r) { return r.guia_id === f.guia_id; })
+      : retencoesPendentes({ tributo: f.tributo, competencia: f.competencia, municipio: f.municipio });
+    const r2 = v => Math.round(v * 100) / 100;
+    const porTitulo = {};
+    regs.forEach(function (r) {
+      const k = r.titulo_id || ('sem|' + r.id);
+      (porTitulo[k] = porTitulo[k] || []).push(r);
+    });
+    const linhas = Object.keys(porTitulo).map(function (k) {
+      const rs = porTitulo[k];
+      const r0 = rs[0];
+      const t = st.titulos.find(function (x) { return x.id === r0.titulo_id; }) || null;
+      const ps = st.parcelas.filter(function (x) { return x.titulo_id === r0.titulo_id; })
+        .sort(function (a, b) { return (a.num || 0) - (b.num || 0); });
+      const vivas = ps.filter(function (x) { return ['cancelado', 'substituido'].indexOf(x.status) < 0; });
+      const pgs = st.pagamentos.filter(function (pg) {
+        return !pg.estornado && pg.situacao !== 'cancelado' && vivas.some(function (x) { return x.id === pg.parcela_id; });
+      }).sort(function (a, b) { return String(a.data).localeCompare(String(b.data)); });
+      const pagas = vivas.filter(function (x) { return x.status === 'pago'; }).length;
+      const situacao = !vivas.length ? 'titulo_cancelado'
+        : pagas === vivas.length ? 'pago' : pgs.length ? 'parcial' : 'aberto';
+      const por = {};
+      const repetidos = [];
+      rs.forEach(function (r) {
+        if (por[r.tributo] !== undefined) repetidos.push(r.id);
+        por[r.tributo] = r2((por[r.tributo] || 0) + r.valor);
+      });
+      const p0 = vivas[0] || ps[0] || {};
+      const liquido = r2(vivas.reduce(function (a, x) { return a + (x.valor || 0); }, 0));
+      const total = r2(rs.reduce(function (a, r) { return a + r.valor; }, 0));
+      return {
+        titulo_id: r0.titulo_id || null, parcela_id: p0.id || null,
+        nf: r0.nf_documento || p0.doc || '', credor: (D.credor(r0.credor) || {}).nome || '',
+        conta: r0.conta || '', competencia: r0.competencia,
+        emissao: p0.emissao || (t || {}).emissao || '',
+        vencimentos: vivas.map(function (x) { return x.venc; }).filter(Boolean),
+        situacao: situacao, pago_em: pgs.length ? pgs[pgs.length - 1].data : null,
+        banco: pgs.length ? ((D.banco(pgs[pgs.length - 1].banco) || {}).apelido || '') : '',
+        bruto: t && typeof t.valor_bruto === 'number' ? r2(t.valor_bruto) : r2(liquido + total),
+        liquido: liquido, por_tributo: por, total: total,
+        tem_anexo: !!anexoDaParcela(p0), registros: rs.map(function (r) { return r.id; }),
+        repetidos: repetidos
+      };
+    });
+    /* A mesma NF do mesmo fornecedor em títulos diferentes. */
+    const chaveNF = l => l.nf ? (l.credor + '|' + String(l.nf).replace(/^0+/, '')) : '';
+    const vezes = {};
+    linhas.forEach(function (l) { const k = chaveNF(l); if (k) vezes[k] = (vezes[k] || 0) + 1; });
+    linhas.forEach(function (l) { l.nf_em_dois_titulos = !!(chaveNF(l) && vezes[chaveNF(l)] > 1); });
+    linhas.sort(function (a, b) { return a.credor.localeCompare(b.credor) || String(a.nf).localeCompare(String(b.nf)); });
+    return { linhas: linhas, total: r2(linhas.reduce(function (a, l) { return a + l.total; }, 0)),
+      problemas: linhas.filter(function (l) { return l.repetidos.length || l.nf_em_dois_titulos || l.situacao === 'titulo_cancelado'; }).length };
+  }
+
+  /* Registro repetido (o mesmo tributo duas vezes no mesmo título):
+     sai da fila. Só o REPETIDO — o título fica como está. */
+  function tirarRetencaoRepetida(retId, motivo) {
+    if (!pode('lancar')) return { erro: 'Seu perfil não mexe em retenção.' };
+    const r = st.retencoesRegistradas.find(function (x) { return x.id === retId; });
+    if (!r || r.cancelada) return { erro: 'Retenção não encontrada.' };
+    if (r.guia_id) return { erro: 'Já está numa guia fechada — cancele a guia antes.' };
+    const igual = st.retencoesRegistradas.some(function (x) {
+      return x.id !== r.id && !x.cancelada && x.titulo_id === r.titulo_id && x.tributo === r.tributo;
+    });
+    if (!igual) return { erro: 'Esta retenção não é repetida: é a única de ' + r.tributo + ' neste título.' };
+    r.cancelada = true; r.cancelada_em = U.hoje(); r.motivo_cancelamento = motivo || 'registro repetido';
+    logar('parcela', r.titulo_id, 'tirou retenção repetida', r.tributo + ' ' + U.brl(r.valor) + ' · NF ' + (r.nf_documento || '—'));
+    return { ok: true };
+  }
+
   /* Visão geral pra tela: quanto tem pendente de cada tributo, em cada
      competência — é o que decide quais guias já dá pra fechar. */
   function resumoRetencoesPendentes() {
@@ -1208,9 +1292,22 @@ ERP.store = (function () {
       const mun = r.tributo === 'ISS' ? (r.municipio || '') : '';
       const grp = grupoTributo(r.tributo);
       const chave = grp + '|' + r.competencia + '|' + mun;
-      grupos[chave] = grupos[chave] || { tributo: grp, competencia: r.competencia, municipio: mun, total: 0, qtd: 0 };
+      grupos[chave] = grupos[chave] || { tributo: grp, competencia: r.competencia, municipio: mun, total: 0, qtd: 0, nfs: {} };
       grupos[chave].total = Math.round((grupos[chave].total + r.valor) * 100) / 100;
       grupos[chave].qtd++;
+      grupos[chave].nfs[r.titulo_id || r.id] = 1;
+    });
+    /* `qtd` contava REGISTROS: uma nota com PIS, COFINS e CSLL aparecia
+       como "3 NF(s)". Agora é nota; e cada grupo diz quando vence e se
+       tem nota repetida. */
+    Object.keys(grupos).forEach(function (k) {
+      const g = grupos[k];
+      g.registros = g.qtd;
+      g.qtd = Object.keys(g.nfs).length; delete g.nfs;
+      g.vencimento = g.tributo === 'ISS' ? null : dia20MesSeguinte(g.competencia + '-01');
+      g.vencida = !!(g.vencimento && g.vencimento < U.hoje());
+      g.problemas = detalheRetencoes({ tributo: g.tributo, competencia: g.competencia,
+        municipio: g.tributo === 'ISS' ? g.municipio : undefined }).problemas;
     });
     return Object.keys(grupos).map(function (k) { return grupos[k]; })
       .sort(function (a, b) { return b.competencia.localeCompare(a.competencia) || a.tributo.localeCompare(b.tributo); });
@@ -22420,6 +22517,55 @@ ERP.store = (function () {
       .filter(function (u, i, a) { return u && a.indexOf(u) === i; }).join(' + ');
   }
 
+  /* ── RETENÇÕES NO CAIXA (v201) ────────────────────────
+     A retenção é da NOTA; o pagamento (ou o recebimento) pode ser de
+     uma parte dela. Cada baixa leva a parte da retenção proporcional
+     ao que ela quitou do líquido — numa nota de parcela única, que é o
+     caso comum, é a retenção inteira. Bruto = quitado + retido. */
+  const TRIBUTOS_RET = ['ISS', 'IRRF', 'PIS', 'COFINS', 'CSLL', 'INSS'];
+  function repartirRetencoes(lista, retidoTotal, liquido, quitado) {
+    const r2 = v => Math.round(v * 100) / 100;
+    const fr = liquido > 0.004 ? Math.min(1, quitado / liquido) : 1;
+    const por = {};
+    let soma = 0;
+    (lista || []).forEach(function (x) {
+      const v = Number(x.valor) || 0;
+      if (!(v > 0)) return;
+      const t = TRIBUTOS_RET.indexOf(x.tributo) > -1 ? x.tributo : 'Outros';
+      por[t] = r2((por[t] || 0) + v * fr); soma += v;
+    });
+    /* Nota com o total retido e sem o detalhe por tributo. */
+    if (soma < 0.005 && retidoTotal > 0.004) por.Outros = r2(retidoTotal * fr);
+    const total = r2(Object.keys(por).reduce(function (a, k) { return a + por[k]; }, 0));
+    return { por: por, total: total, bruto: r2(quitado + total) };
+  }
+  function retencoesDoPagamento(p, quitado) {
+    const t = st.titulos.find(function (x) { return x.id === p.titulo_id; }) || {};
+    const lista = (t.retencoes && t.retencoes.length) ? t.retencoes : (p.retencoes || []);
+    const retido = Number(t.valor_retido || p.valor_retido || 0);
+    if (!lista.length && !(retido > 0.004)) return null;
+    const irmas = st.parcelas.filter(function (x) {
+      return x.titulo_id === p.titulo_id && ['cancelado', 'substituido'].indexOf(x.status) < 0;
+    });
+    const liquido = typeof t.valor_total === 'number' ? t.valor_total
+      : irmas.reduce(function (a, x) { return a + (x.valor || 0); }, 0);
+    return repartirRetencoes(lista, retido, liquido, quitado);
+  }
+  function retencoesDoRecebimento(r, quitado) {
+    const lista = r.retencoes || [];
+    const retido = Number(r.valor_retido || 0);
+    if (!lista.some(function (x) { return (x.valor || 0) > 0; }) && !(retido > 0.004)) return null;
+    return repartirRetencoes(lista, retido, Number(r.valor_liquido || 0) || (Number(r.valor_bruto || 0) - retido), quitado);
+  }
+  /* O número da NF do pagamento: o informado; sem ele, o que está na
+     chave de acesso da NF-e (posições 26 a 34). */
+  function numeroNF(p) {
+    if (p.doc) return String(p.doc);
+    const ch = String(p.chave || '').replace(/\D/g, '');
+    if (ch.length === 44) return String(parseInt(ch.slice(25, 34), 10));
+    return '';
+  }
+
   function contasPagasERecebidas(de, ate, f) {
     f = f || {};
     const linhas = [];
@@ -22461,8 +22607,10 @@ ERP.store = (function () {
         centro: centrosDaParcela(p),
         projeto: projetosDaParcela(p),
         aprovacao: p.aprovacao || '',
-        nf: p.arquivo ? 'arquivo anexado' : p.doc ? 'nº informado' : (p.sem_nf ? 'sem NF' : '—'),
-        situacao: p.status || ''
+        nf: numeroNF(p),
+        nf_situacao: p.arquivo ? 'arquivo anexado' : p.doc ? 'nº informado' : (p.sem_nf ? 'sem NF' : '—'),
+        situacao: p.status || '',
+        ret: retencoesDoPagamento(p, Math.round((pg.valor + (pg.desconto || 0)) * 100) / 100)
       });
     });
 
@@ -22505,8 +22653,10 @@ ERP.store = (function () {
           centro: (D.centro(r.centro) || {}).curto || '',
           projeto: r.grupo_faturamento || (D.centro(r.centro) || {}).unidade || '',
           aprovacao: '',
-          nf: r.arquivo ? 'arquivo anexado' : r.numero ? 'nº informado' : '—',
-          situacao: r.status || ''
+          nf: r.numero || '',
+          nf_situacao: r.arquivo ? 'arquivo anexado' : r.numero ? 'nº informado' : '—',
+          situacao: r.status || '',
+          ret: retencoesDoRecebimento(r, Math.round((b.valor || 0) * 100) / 100)
         });
       });
     });
@@ -22530,8 +22680,17 @@ ERP.store = (function () {
       .reduce(function (a2, l) { return a2 + l.valor; }, 0) * 100) / 100;
     const jurosPagos = Math.round(linhas.filter(function (l) { return l.tipo === 'Saída'; })
       .reduce(function (a2, l) { return a2 + (l.juros || 0); }, 0) * 100) / 100;
+    const somaRet = function (tipo) {
+      const por = {}; let tot = 0;
+      linhas.filter(function (l) { return l.tipo === tipo && l.ret; }).forEach(function (l) {
+        Object.keys(l.ret.por).forEach(function (k) { por[k] = Math.round(((por[k] || 0) + l.ret.por[k]) * 100) / 100; });
+        tot += l.ret.total;
+      });
+      return { por: por, total: Math.round(tot * 100) / 100 };
+    };
     return { de: de, ate: ate, linhas: linhas, total_recebido: recebido, total_pago: pago,
       total_juros: jurosPagos,
+      retido_recebido: somaRet('Entrada'), retido_pago: somaRet('Saída'),
       resultado: Math.round((recebido - pago) * 100) / 100 };
   }
 
@@ -22750,6 +22909,7 @@ ERP.store = (function () {
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
     medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, movimentacaoBancaria, painelMutuos,
+    detalheRetencoes, tirarRetencaoRepetida,
     conciliarAplicacao, incluirLinhaManual, desfazerLinhaManual, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
