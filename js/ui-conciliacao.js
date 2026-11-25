@@ -120,6 +120,7 @@ ERP.conciliacao = (function () {
       (r.repetidos ? ', ' + r.repetidos + ' já estavam no sistema' : '') +
       (r.saldos_ignorados ? ', ' + r.saldos_ignorados + ' linha(s) de saldo ignorada(s) (não são movimento)' : '') +
       (r.futuros ? ', ' + r.futuros + ' agendamento(s) com data futura ficaram de fora (entram no extrato do dia em que acontecerem)' : '') +
+      (r.manuais_confirmadas ? ', ' + r.manuais_confirmadas + ' linha(s) incluída(s) à mão confirmada(s) pelo arquivo' : '') +
       '. Saldo do extrato: ' + U.brl(lido.saldo.valor) + '.' +
       (lido.aviso_conta ? ' ' + lido.aviso_conta : ''),
       lido.aviso_conta ? 'erro' : 'ok');
@@ -152,7 +153,11 @@ ERP.conciliacao = (function () {
         '<span>Pendentes <b class="' + (res.pendentes ? 'erro' : '') + '">' + res.pendentes + '</b></span>' +
         '<span>A explicar — entradas <b>' + U.brl(res.pendenteEntrada) + '</b></span>' +
         '<span>saídas <b>' + U.brl(res.pendenteSaida) + '</b></span>' +
-      '</div>' + blocoExtratos(banco) + blocoConferencia(banco) +
+      '</div>' + blocoExtratos(banco) +
+      (banco ? '<div class="ap-acoes" style="margin:4px 0 8px"><button class="btn-sm" id="cn-incluir" title="Para quando o arquivo ' +
+        'do banco não traz um lançamento que está no extrato em tela (ex.: aplicação automática do Invest Fácil)">' +
+        'Incluir lançamento que o arquivo não trouxe</button></div>' : '') +
+      blocoConferencia(banco) +
       (aba === 'concretos'     ? telaConcretos(g.concretos) :
        aba === 'possiveis'     ? telaPossiveis(g.possiveis) :
        aba === 'sem'           ? telaSem(g.sem) :
@@ -187,6 +192,32 @@ ERP.conciliacao = (function () {
           '<td class="acoes">' + (x.conciliadas ? '' :
             '<button class="btn-sm" data-cn-mover="' + e.id + '">Mover para outra conta</button>') + '</td></tr>';
       }).join('') + '</tbody></table></details>';
+  }
+
+  /* O OFX nem sempre traz tudo o que está no extrato em tela. */
+  function incluirManual() {
+    const banco = U.val('cn-banco');
+    const b = D.banco(banco);
+    if (!b) return ERP.app.aviso('Escolha a conta.', 'erro');
+    ERP.app.modal({
+      titulo: 'Incluir lançamento · ' + (b.apelido || b.nome),
+      corpo: '<div class="ajuda">Use só para o que está no extrato do banco e o arquivo não trouxe. ' +
+          'A linha fica marcada como incluída à mão; se um arquivo depois trouxer o mesmo lançamento (mesma data e valor), ' +
+          'o arquivo confirma esta linha em vez de criar outra.</div>' +
+        '<div class="row2"><div><label for="im-data">Data</label><input type="date" id="im-data" max="' + U.hoje() + '"></div>' +
+        '<div><label for="im-sentido">Sentido</label><select id="im-sentido"><option value="">escolha…</option>' +
+          '<option value="saida">Saída (débito)</option><option value="entrada">Entrada (crédito)</option></select></div></div>' +
+        '<label for="im-valor">Valor</label><input id="im-valor" inputmode="decimal" placeholder="0,00">' +
+        '<label for="im-memo">Histórico (como está no extrato)</label><input id="im-memo" placeholder="ex.: APLIC.INVEST FACIL">' +
+        '<label for="im-motivo">Por que entra à mão</label><input id="im-motivo" placeholder="ex.: não veio no OFX do Bradesco">',
+      acoes: [{ txt: 'Incluir', cls: 'btn-aprovar', fn: function () {
+        const r = S.incluirLinhaManual(banco, { data: U.val('im-data'), sentido: U.val('im-sentido'), valor: U.val('im-valor'),
+          memo: U.val('im-memo'), motivo: U.val('im-motivo') });
+        if (ERP.app.erroDoRetorno(r)) return;
+        ERP.app.fecharModal(); aba = 'sem'; render(); ERP.app.atualizarContadores();
+        ERP.app.aviso('Lançamento incluído. Agora classifique-o (ex.: Aplicação).', 'ok');
+      } }]
+    });
   }
 
   function moverExtratoTela(id) {
@@ -352,9 +383,16 @@ ERP.conciliacao = (function () {
           (l.entrada > 0 ? '+' : '−') + U.brl(Math.abs(l.valor)) + '</b></div>' +
         '<div class="desc" title="' + U.esc(l.memo) + '">' + U.esc((desc || l.memo || '—').slice(0, 38)) + '</div>' +
         (desc ? '<div class="sub">' + U.esc(l.memo.slice(0, 44)) + '</div>' : '') +
+        (/^MANUAL-/.test(l.fitid || '') ? '<div class="sub erro" title="' + U.esc(l.observacao || '') + '">incluída à mão' +
+          (l.confirmada_no_arquivo ? ' · confirmada no arquivo' : '') + '</div>' : '') +
       '</td>';
   };
   const linhaBase = ladoExtrato;
+  /* Botão de aplicação/resgate: o nome diz o sentido. */
+  const botaoAplic = l => '<button class="btn-sm" data-cn-aplic="' + l.id + '" title="' +
+    (l.saida > 0 ? 'Dinheiro que foi da conta para a aplicação (não é despesa)'
+                 : 'Dinheiro que voltou da aplicação para a conta (não é receita)') + '">' +
+    (l.saida > 0 ? 'Aplicação' : 'Resgate de aplicação') + '</button>';
 
   /* Lado do SISTEMA: bruto e líquido explicados, e o nome do cadastro
      do lado do nome que veio no extrato — é a comparação que a pessoa
@@ -415,12 +453,16 @@ ERP.conciliacao = (function () {
         const l = i.linha;
         const vExtrato = Math.abs(l.valor);
         return '<tr class="' + (sel.has(l.id) ? 'sel' : '') + '">' + ladoExtrato(l, true) +
-          (i.porRegra
+          (i.porAplicacao
+            ? '<td class="cn-lado"><div class="desc">' + (l.saida > 0 ? 'Aplicação financeira' : 'Resgate de aplicação') +
+              '<div class="sub">não é ' + (l.saida > 0 ? 'despesa' : 'receita') + ' — dinheiro mudando de lugar</div></div></td>' +
+              '<td class="num sub">—</td>'
+            : i.porRegra
             ? '<td class="cn-lado"><div class="desc">Lançar em ' + U.esc(i.regra.conta) +
               (i.regra.descricao ? '<div class="sub">' + U.esc(i.regra.descricao) + '</div>' : '') + '</div></td>' +
               '<td class="num sub">—</td>'
             : ladoSistema(i.alvo, vExtrato) + difCelula(vExtrato, i.alvo)) +
-          '<td class="sub">' + U.esc((i.porRegra ? 'regra: ' + i.regra.chave : i.alvo.motivo || '').slice(0, 50)) + '</td>' +
+          '<td class="sub">' + U.esc((i.porAplicacao ? 'histórico do banco' : i.porRegra ? 'regra: ' + i.regra.chave : i.alvo.motivo || '').slice(0, 50)) + '</td>' +
           '<td class="acoes"><button class="btn-sm" data-cn-buscar="' + l.id + '">Trocar</button></td></tr>';
       }).join('')
         : '<tr><td colspan="7" class="vazio"><strong>Nada com certeza absoluta.</strong>' +
@@ -486,7 +528,9 @@ ERP.conciliacao = (function () {
               ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar</button>'
               : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
             '<button class="btn-sm" data-cn-mutuo="' + l.id + '" title="Transferência entre contas da mesma empresa ou mútuo entre empresas do grupo">Transferência / mútuo</button>' +
+            botaoAplic(l) +
             '<button class="btn-sm" data-cn-buscar="' + l.id + '">Buscar título</button>' +
+            (/^MANUAL-/.test(l.fitid || '') ? '<button class="btn-sm btn-cancelar" data-cn-desfaz-man="' + l.id + '">Desfazer inclusão</button>' : '') +
             '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
           '</td></tr>';
       }).join('')
@@ -971,7 +1015,7 @@ ERP.conciliacao = (function () {
         (l.saida > 0
           ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar como despesa</button>'
           : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
-        '<button class="btn-sm" data-cn-mutuo="' + l.id + '">Transferência / mútuo</button>' +
+        '<button class="btn-sm" data-cn-mutuo="' + l.id + '">Transferência / mútuo</button>' + botaoAplic(l) +
         '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
       '</div></td></tr>';
   }
@@ -1509,7 +1553,7 @@ ERP.conciliacao = (function () {
       U.el('cn-lote').addEventListener('click', function () {
         const g = S.classificarLinhas(U.val('cn-banco'));
         const pares = g.concretos.filter(function (i) { return sel.has(i.linha.id); })
-          .map(function (i) { return { linha: i.linha.id, alvo: i.alvo }; });
+          .map(function (i) { return { linha: i.linha.id, alvo: i.alvo, aplicacao: !!i.porAplicacao }; });
         const r = S.conciliarLote(pares);
         sel.clear();
         render();
@@ -1635,6 +1679,28 @@ ERP.conciliacao = (function () {
     box.querySelectorAll('[data-cn-mutuo]').forEach(function (b) {
       b.addEventListener('click', function (e) { e.stopPropagation(); mutuo(this.dataset.cnMutuo); });
     });
+    box.querySelectorAll('[data-cn-aplic]').forEach(function (b) {
+      b.addEventListener('click', function (e) {
+        e.stopPropagation();
+        const r = S.conciliarAplicacao(this.dataset.cnAplic);
+        if (ERP.app.erroDoRetorno(r)) return;
+        abertaLinha = null; sel.delete(this.dataset.cnAplic); render(); ERP.app.atualizarContadores();
+        ERP.app.aviso(r.tipo === 'resgate' ? 'Conciliada como resgate de aplicação.' : 'Conciliada como aplicação.', 'ok');
+      });
+    });
+    box.querySelectorAll('[data-cn-desfaz-man]').forEach(function (b) {
+      b.addEventListener('click', function () {
+        const id = this.dataset.cnDesfazMan;
+        ERP.app.modal({ titulo: 'Desfazer linha incluída à mão',
+          corpo: '<label for="dm-motivo">Por quê?</label><input id="dm-motivo">',
+          acoes: [{ txt: 'Desfazer', cls: 'btn-cancelar', fn: function () {
+            const r = S.desfazerLinhaManual(id, U.val('dm-motivo'));
+            if (ERP.app.erroDoRetorno(r)) return;
+            ERP.app.fecharModal(); render(); ERP.app.aviso('Inclusão desfeita — a linha deixa de contar.', 'ok');
+          } }] });
+      });
+    });
+    if (U.el('cn-incluir')) U.el('cn-incluir').addEventListener('click', incluirManual);
     box.querySelectorAll('[data-cf-desfaz]').forEach(function (b) {
       b.addEventListener('click', function () {
         const r = S.desconciliar(this.dataset.cfDesfaz, 'mesmo pagamento conciliado com duas linhas do extrato');

@@ -1025,7 +1025,8 @@ ERP.relatorios = (function () {
      não aparecem lá. Este lista o EXTRATO: cada linha que o banco
      mandou, com o saldo correndo e o que foi feito com ela — é o que
      se põe ao lado do extrato do banco para bater. */
-  const TIPOS_MOV = ['Recebimento', 'Pagamento', 'Mútuo', 'Transferência entre contas', 'Ignorada', 'Pendente', 'Conciliada'];
+  const TIPOS_MOV = ['Recebimento', 'Pagamento', 'Aplicação', 'Resgate de aplicação', 'Mútuo', 'Transferência entre contas',
+    'Ignorada', 'Pendente', 'Conciliada'];
   function movBancaria() {
     const contas = S.movimentacaoBancaria({ de: per.de, ate: per.ate, banco: relBanco || null });
     if (!contas.length) {
@@ -1047,18 +1048,20 @@ ERP.relatorios = (function () {
             return '<span>' + t + ' (' + k.n + ')' + (k.entradas ? ' <b>+' + U.num(k.entradas) + '</b>' : '') +
               (k.saidas ? ' <b>−' + U.num(k.saidas) + '</b>' : '') + '</span>';
           }).join('') + '</div>' : '') +
-        (difs.length ? '<div class="aviso-linha erro">' + difs.map(function (a) {
-          return 'O arquivo ' + U.esc(a.arquivo) + ' (' + U.fData(a.periodo_ini) + ' a ' + U.fData(a.periodo_fim) +
-            ') não fecha: saldo do arquivo anterior ' + U.brl(a.saldo_anterior) + ' + entradas ' + U.brl(a.entradas) +
-            ' − saídas ' + U.brl(a.saidas) + ' = ' + U.brl(a.calculado) + ', mas o banco informou ' + U.brl(a.saldo_banco) +
-            ' (diferença de ' + U.brl(a.diferenca) + '). Falta linha nesse arquivo — confira no extrato do banco.';
-        }).join('<br>') + '</div>' : '') +
+        ((c.aplicado || c.resgatado) ? '<div class="pr-confere" style="font-size:12px"><span>Aplicações financeiras no período <b>' +
+          U.num(c.aplicado) + '</b></span><span>Resgates <b>' + U.num(c.resgatado) + '</b></span>' +
+          '<span>Líquido aplicado <b>' + U.num(Math.round((c.aplicado - c.resgatado) * 100) / 100) + '</b></span></div>' : '') +
+        (c.manuais ? '<div class="aviso-linha">' + c.manuais + ' linha(s) incluída(s) à mão porque o arquivo do banco não trouxe — ' +
+          'marcadas na coluna Histórico.</div>' : '') +
+        conferenciaSaldo(c, difs) +
         '<table class="rel mov-banc" data-conta="' + U.esc(c.banco) + '"><thead><tr><th style="width:90px">Data</th><th>Histórico</th>' +
           '<th>Classificação</th><th class="num" ' + NUM + '>Entrada</th><th class="num" ' + NUM + '>Saída</th>' +
           '<th class="num" ' + NUM + '>Saldo</th></tr></thead><tbody>' +
         (c.linhas.length ? c.linhas.map(function (l) {
           return '<tr><td class="mono">' + U.fData(l.data) + '</td>' +
-            '<td class="desc">' + U.esc(l.memo) + (l.documento ? '<div class="sub">doc ' + U.esc(l.documento) + '</div>' : '') + '</td>' +
+            '<td class="desc">' + U.esc(l.memo) + (l.documento ? '<div class="sub">doc ' + U.esc(l.documento) + '</div>' : '') +
+              (l.manual ? '<div class="sub erro">incluída à mão' + (l.manual.confirmada ? ' · confirmada no arquivo ' + U.esc(l.manual.confirmada) : '') +
+                (l.manual.motivo ? ' — ' + U.esc(l.manual.motivo) : '') + '</div>' : '') + '</td>' +
             '<td class="' + (l.situacao === 'pendente' ? 'erro' : '') + '">' + U.esc(l.tipo) +
               (l.vinculo && l.vinculo !== l.tipo ? '<div class="sub">' + U.esc(l.vinculo) + '</div>' : '') + '</td>' +
             '<td class="num">' + (l.entrada ? U.num(l.entrada) : '') + '</td>' +
@@ -1072,6 +1075,36 @@ ERP.relatorios = (function () {
       '(por isso não aparece no Contas pagas e recebidas).</div>';
   }
 
+  /* Conferência entre os saldos que o banco informou em cada arquivo:
+     de um dia de saldo ao seguinte, o movimento de TODAS as linhas da
+     conta no intervalo tem de explicar a mudança. */
+  function conferenciaSaldo(c, difs) {
+    const pts = c.arquivos.filter(function (a) { return a.calculado !== null; });
+    if (!pts.length) return '';
+    const NUM = 'style="width:120px"';
+    return '<details class="mov-conf"' + (difs.length ? ' open' : '') + ' style="margin:6px 0">' +
+      '<summary class="' + (difs.length ? 'erro' : 'sub') + '" style="cursor:pointer">Conferência com o saldo do banco: ' +
+        (difs.length ? difs.length + ' intervalo(s) não fecham' : 'todos os intervalos fecham ✓') + '</summary>' +
+      '<table class="rel"><thead><tr><th>De</th><th>Até</th><th class="num" ' + NUM + '>Saldo do banco antes</th>' +
+        '<th class="num" ' + NUM + '>Entradas</th><th class="num" ' + NUM + '>Saídas</th><th class="num" ' + NUM + '>Calculado</th>' +
+        '<th class="num" ' + NUM + '>Saldo do banco</th><th class="num" ' + NUM + '>Diferença</th></tr></thead><tbody>' +
+      pts.map(function (a) {
+        const ruim = Math.abs(a.diferenca) > 0.01;
+        return '<tr><td class="mono">' + U.fData(a.data_anterior) + '</td><td class="mono">' + U.fData(a.data_saldo) +
+          '<div class="sub">' + U.esc(a.arquivo || '') + '</div></td>' +
+          '<td class="num">' + U.num(a.saldo_anterior) + '</td><td class="num">' + U.num(a.entradas) + '</td>' +
+          '<td class="num">' + U.num(a.saidas) + '</td><td class="num">' + U.num(a.calculado) + '</td>' +
+          '<td class="num">' + U.num(a.saldo_banco) + '</td>' +
+          '<td class="num' + (ruim ? ' erro' : '') + '"><b>' + (ruim ? U.num(a.diferenca) : '✓') + '</b></td></tr>';
+      }).join('') + '</tbody></table>' +
+      (difs.length ? '<div class="ajuda">Diferença num intervalo = há lançamento no extrato do banco entre essas duas datas que ' +
+        'não está no sistema (o arquivo não trouxe — por exemplo, aplicação automática) ou linha a mais. Compare com o extrato ' +
+        'em tela do banco e, se faltar, use "Incluir lançamento que o arquivo não trouxe" na Conciliação. ' +
+        'O saldo é o do momento em que o arquivo foi baixado: lançamento do mesmo dia feito depois do download também ' +
+        'aparece como diferença.</div>' : '') +
+      '</details>';
+  }
+
   function exportarMovBancaria() {
     const contas = S.movimentacaoBancaria({ de: per.de, ate: per.ate, banco: relBanco || null });
     if (!contas.length) return ERP.app.aviso('Nenhum extrato importado para exportar.', 'erro');
@@ -1081,7 +1114,9 @@ ERP.relatorios = (function () {
         documento: '', entrada: null, saida: null, saldo: c.saldo_inicial });
       c.linhas.forEach(function (l) {
         linhas.push({ conta: c.conta, empresa: c.empresa, data: l.data, memo: l.memo, tipo: l.tipo,
-          vinculo: l.vinculo && l.vinculo !== l.tipo ? l.vinculo : '', documento: l.documento,
+          vinculo: (l.vinculo && l.vinculo !== l.tipo ? l.vinculo : '') +
+            (l.manual ? (l.vinculo && l.vinculo !== l.tipo ? ' · ' : '') + 'incluída à mão' + (l.manual.motivo ? ': ' + l.manual.motivo : '') : ''),
+          documento: l.documento,
           entrada: l.entrada || null, saida: l.saida || null, saldo: l.saldo });
       });
     });
