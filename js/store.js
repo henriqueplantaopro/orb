@@ -14439,10 +14439,13 @@ ERP.store = (function () {
     if (!outraConta) return { erro: 'Escolha a conta da outra empresa (de onde veio ou para onde foi o dinheiro).' };
     const outra = outraConta.empresa || null;
     if (!outra || !minha) return { erro: 'As duas contas precisam estar ligadas a uma empresa no cadastro de bancos.' };
-    if (outra === minha) {
-      return { erro: 'As duas contas são da mesma empresa — isso é remanejo de caixa, não mútuo. ' +
-        'Use "Transferir entre contas" no Saldo bancário.' };
-    }
+    if (outraConta.id === l.banco) return { erro: 'Escolha a OUTRA conta — esta é a do próprio extrato.' };
+    /* MESMA EMPRESA = TRANSFERÊNCIA ENTRE CONTAS (v199). HJM matriz
+       do Bradesco para a HJM matriz do Itaú não é mútuo (ninguém
+       passa a dever a ninguém) nem receita/despesa: é o mesmo
+       dinheiro mudando de banco. Antes a conciliação recusava e
+       mandava fazer pelo Saldo bancário — e a linha ficava pendente. */
+    const propria = outra === minha;
     const valor = Math.round(Math.abs(l.valor) * 100) / 100;
     if (!(valor > 0)) return { erro: 'Linha sem valor.' };
     const entrada = l.valor > 0 || l.entrada > 0;
@@ -14454,7 +14457,8 @@ ERP.store = (function () {
     /* O outro lado já registrou? */
     let t = st.transferenciasBanco.find(function (x) {
       return !x.cancelada && x.origem === origem && x.destino === destino &&
-        Math.abs(x.valor - valor) < 0.005 && !x[ladoMeu] && diasEntre(x.data, l.data) <= 5;
+        Math.abs(x.valor - valor) < 0.005 && !x[ladoMeu] && diasEntre(x.data, l.data) <= 5 &&
+        !!x.mutuo === !propria;
     });
     const achou = !!t;
     if (!t) {
@@ -14464,10 +14468,11 @@ ERP.store = (function () {
         origem_nome: (D.banco(origem) || {}).apelido || origem,
         destino_nome: (D.banco(destino) || {}).apelido || destino,
         empresa_origem: empO, empresa_destino: empD,
-        mutuo: { credora: empO, devedora: empD,
+        mutuo: propria ? null : { credora: empO, devedora: empD,
           credora_nome: (D.empresaPor(empO) || {}).apelido || empO,
           devedora_nome: (D.empresaPor(empD) || {}).apelido || empD },
-        documento: l.documento || '', obs: d.obs || ('Mútuo identificado no extrato · ' + (l.memo || '')),
+        documento: l.documento || '',
+        obs: d.obs || ((propria ? 'Transferência entre contas' : 'Mútuo') + ' identificado no extrato · ' + (l.memo || '')),
         origem_registro: 'extrato', usuario: usuario().nome, lancado_em: new Date()
       };
       st.transferenciasBanco.push(t);
@@ -14478,11 +14483,146 @@ ERP.store = (function () {
     l.alvo_id = t.id;
     l.conciliado_em = new Date();
     l.conciliado_por = usuario().nome;
-    l.observacao = 'Mútuo: ' + t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome;
-    logar('extrato', l.id, achou ? 'conciliou o outro lado do mútuo' : 'conciliou como mútuo',
-      U.brl(valor) + ' · ' + t.origem_nome + ' → ' + t.destino_nome + ' · ' +
-      t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome);
-    return { ok: true, transferencia: t, outro_lado: achou };
+    l.observacao = propria
+      ? 'Transferência entre contas: ' + t.origem_nome + ' → ' + t.destino_nome
+      : 'Mútuo: ' + t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome;
+    logar('extrato', l.id, propria
+        ? (achou ? 'conciliou o outro lado da transferência' : 'conciliou como transferência entre contas')
+        : (achou ? 'conciliou o outro lado do mútuo' : 'conciliou como mútuo'),
+      U.brl(valor) + ' · ' + t.origem_nome + ' → ' + t.destino_nome +
+      (propria ? '' : ' · ' + t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome));
+    return { ok: true, transferencia: t, outro_lado: achou, propria: propria };
+  }
+
+  /* ── MOVIMENTAÇÃO BANCÁRIA (v199) ─────────────────────
+
+     O contas pagas e recebidas mostra TÍTULO baixado — por isso não
+     tinha o resgate do Invest Fácil, nem o mútuo de R$ 60 mil, nem
+     tarifa ignorada, nem nada que ainda está pendente. Para bater com
+     o extrato, a pergunta é outra: o que passou pela conta? Aqui é
+     linha a linha do extrato importado, com o saldo correndo, e cada
+     linha dizendo o que foi feito com ela (pagamento, recebimento,
+     mútuo, transferência, ignorada — ou ainda pendente).
+
+     E a conferência de cada arquivo: saldo do arquivo anterior +
+     entradas − saídas tem de dar o saldo que o banco informou no
+     arquivo. Se não dá, falta linha no arquivo (o banco omitiu) ou
+     sobra — e isso aparece com o tamanho da diferença. */
+  /* Linha que está no sistema mas NÃO é movimento: a linha de saldo
+     do Itaú ("SALDO ANTERIOR") e a cópia de linha já importada. Elas
+     não somam no saldo nem na conferência — senão o relatório
+     inventaria dinheiro que nunca passou pela conta. */
+  const linhaDeSaldoGuardada = l => l.situacao === 'ignorado' &&
+    (/linha de saldo/i.test(l.observacao || '') || ehLinhaDeSaldo(l.memo));
+  const copiaGuardada = l => l.situacao === 'ignorado' &&
+    (l.ignorado_tipo === 'copia' || !!l.copia_de || /^cópia de linha/i.test(l.observacao || ''));
+  const naoSoma = l => linhaDeSaldoGuardada(l) || copiaGuardada(l);
+  function tipoDaLinha(l) {
+    if (copiaGuardada(l)) return 'Cópia (não soma)';
+    if (l.situacao === 'pendente') return 'Pendente';
+    if (l.situacao === 'ignorado') return 'Ignorada';
+    if (l.alvo_tipo === 'receber') return 'Recebimento';
+    if (['pagamento', 'parcela', 'parcelas'].indexOf(l.alvo_tipo) > -1) return 'Pagamento';
+    if (l.alvo_tipo === 'transferencia') {
+      const t = (st.transferenciasBanco || []).find(function (x) { return x.id === l.alvo_id; });
+      return t && t.mutuo ? 'Mútuo' : 'Transferência entre contas';
+    }
+    return 'Conciliada';
+  }
+  function movimentacaoBancaria(f) {
+    f = f || {};
+    const quando = x => x instanceof Date ? x.toISOString() : String(x || '');
+    const de = f.de || '0000-00-00', ate = f.ate || '9999-12-31';
+    const r2 = v => Math.round(v * 100) / 100;
+    const contas = D.bancos.filter(function (b) {
+      return (!f.banco || b.id === f.banco) && st.linhas.some(function (l) { return l.banco === b.id; });
+    });
+    return contas.map(function (b) {
+      const exts = st.extratos.filter(function (e) { return e.banco === b.id; })
+        .sort(function (a, c) { return String(a.periodo_fim || '').localeCompare(String(c.periodo_fim || '')) ||
+          quando(a.criado_em).localeCompare(quando(c.criado_em)); });
+      const todas = st.linhas.filter(function (l) { return l.banco === b.id && !linhaDeSaldoGuardada(l); })
+        .sort(function (a, c) { return (a.data + a.id).localeCompare(c.data + c.id); });
+      /* Saldo de partida: o do último arquivo que terminou antes do
+         período, mais o que veio depois dele e antes do período. Sem
+         arquivo anterior, o saldo inicial do cadastro da conta. */
+      const ancora = exts.filter(function (e) { return e.periodo_fim && e.periodo_fim < de && typeof e.saldo === 'number'; }).pop();
+      let inicial = ancora ? ancora.saldo : (b.saldo_inicial || 0);
+      const desde = ancora ? null : (b.saldo_inicial_em || null);
+      todas.forEach(function (l) {
+        if (naoSoma(l) || l.data >= de) return;
+        if (ancora ? l.data > ancora.periodo_fim : (!desde || l.data >= desde)) inicial += (l.entrada || 0) - (l.saida || 0);
+      });
+      inicial = r2(inicial);
+      let corre = inicial;
+      const linhas = todas.filter(function (l) { return l.data >= de && l.data <= ate; }).map(function (l) {
+        if (!naoSoma(l)) corre = r2(corre + (l.entrada || 0) - (l.saida || 0));
+        const e = st.extratos.find(function (x) { return x.id === l.extrato_id; });
+        return { id: l.id, data: l.data, memo: l.memo || '', documento: l.documento || '',
+          entrada: r2(l.entrada || 0), saida: r2(l.saida || 0), saldo: corre,
+          tipo: tipoDaLinha(l), situacao: l.situacao, nao_soma: naoSoma(l), vinculo: descreverVinculo(l), observacao: l.observacao || '',
+          arquivo: e ? e.arquivo : '' };
+      });
+      const porTipo = {};
+      const somam = linhas.filter(function (l) { return !l.nao_soma; });
+      somam.forEach(function (l) {
+        const k = porTipo[l.tipo] = porTipo[l.tipo] || { tipo: l.tipo, n: 0, entradas: 0, saidas: 0 };
+        k.n++; k.entradas = r2(k.entradas + l.entrada); k.saidas = r2(k.saidas + l.saida);
+      });
+      /* Conferência dos arquivos do período, cada um contra o anterior. */
+      const arquivos = exts.map(function (e, i) {
+        const ls = st.linhas.filter(function (l) { return l.extrato_id === e.id && l.banco === b.id && !naoSoma(l); });
+        const ant = i > 0 ? exts[i - 1] : null;
+        const base = ant && typeof ant.saldo === 'number' ? ant.saldo : null;
+        const mov = r2(ls.reduce(function (t, l) { return t + (l.entrada || 0) - (l.saida || 0); }, 0));
+        const calc = base === null ? null : r2(base + mov);
+        return { arquivo: e.arquivo, periodo_ini: e.periodo_ini, periodo_fim: e.periodo_fim,
+          saldo_anterior: base, entradas: r2(ls.reduce(function (t, l) { return t + (l.entrada || 0); }, 0)),
+          saidas: r2(ls.reduce(function (t, l) { return t + (l.saida || 0); }, 0)),
+          calculado: calc, saldo_banco: typeof e.saldo === 'number' ? e.saldo : null,
+          diferenca: calc === null || typeof e.saldo !== 'number' ? null : r2(e.saldo - calc) };
+      }).filter(function (a) { return (a.periodo_fim || '') >= de && (a.periodo_ini || '') <= ate; });
+      const emp = D.empresaPor(b.empresa) || {};
+      return { banco: b.id, conta: b.apelido || b.nome || b.id, empresa: emp.apelido || '',
+        saldo_inicial: inicial,
+        entradas: r2(somam.reduce(function (t, l) { return t + l.entrada; }, 0)),
+        saidas: r2(somam.reduce(function (t, l) { return t + l.saida; }, 0)),
+        saldo_final: corre, linhas: linhas,
+        por_tipo: Object.keys(porTipo).map(function (k) { return porTipo[k]; }),
+        pendentes: linhas.filter(function (l) { return l.situacao === 'pendente'; }).length,
+        arquivos: arquivos,
+        arquivos_com_diferenca: arquivos.filter(function (a) { return a.diferenca !== null && Math.abs(a.diferenca) > 0.01; }).length };
+    });
+  }
+
+  /* ── MÚTUOS E TRANSFERÊNCIAS, OPERAÇÃO A OPERAÇÃO (v199) ──
+     Cada transferência tem dois lados no extrato: a saída de uma
+     conta e a entrada na outra. A operação só está FECHADA quando os
+     dois lados estão conciliados; com um lado só, ou falta importar o
+     extrato da outra conta, ou falta classificar a linha dela. */
+  function painelMutuos(de, ate) {
+    const r2 = v => Math.round(v * 100) / 100;
+    const linhaDe = id => id ? st.linhas.find(function (x) { return x.id === id; }) : null;
+    const ops = transferenciasBanco({ de: de, ate: ate }).map(function (t) {
+      const lo = linhaDe(t.linha_origem), ld = linhaDe(t.linha_destino);
+      const okO = !!(lo && lo.situacao === 'conciliado'), okD = !!(ld && ld.situacao === 'conciliado');
+      const nomeE = e => (D.empresaPor(e) || {}).apelido || e || '';
+      const eO = t.empresa_origem || (D.banco(t.origem) || {}).empresa, eD = t.empresa_destino || (D.banco(t.destino) || {}).empresa;
+      return { id: t.id, data: t.data, valor: r2(t.valor), mutuo: !!t.mutuo,
+        tipo: t.mutuo ? 'Mútuo' : 'Transferência entre contas',
+        origem_conta: t.origem_nome || (D.banco(t.origem) || {}).apelido || t.origem, origem_empresa: nomeE(eO),
+        destino_conta: t.destino_nome || (D.banco(t.destino) || {}).apelido || t.destino, destino_empresa: nomeE(eD),
+        devedora: t.mutuo ? t.mutuo.devedora_nome : '', credora: t.mutuo ? t.mutuo.credora_nome : '',
+        saida_conciliada: okO, entrada_conciliada: okD,
+        saida_data: lo ? lo.data : null, entrada_data: ld ? ld.data : null,
+        situacao: okO && okD ? 'casada' : okO ? 'falta_entrada' : okD ? 'falta_saida' : 'sem_extrato',
+        origem_registro: t.origem_registro || 'manual', obs: t.obs || '' };
+    }).sort(function (a, b) { return b.data.localeCompare(a.data); });
+    const rel = relatorioMutuos(de, ate);
+    return { de: de, ate: ate, operacoes: ops, saldos: rel.saldos,
+      casadas: ops.filter(function (o) { return o.situacao === 'casada'; }).length,
+      abertas: ops.filter(function (o) { return o.situacao !== 'casada'; }).length,
+      cruzados: rel.linhas.filter(function (l) { return l.tipo === 'pagamento'; }) };
   }
 
   /* Mútuo por período: saldo anterior, o que mudou no período e o
@@ -22477,7 +22617,7 @@ ERP.store = (function () {
     dia20MesSeguinte, antecipaSeFimDeSemana,
     apuracaoPorEmpresa, empresaDoCNPJ, despesaPorEmpresa,
     pagamentoCruzado, contaCorrenteEmpresas, EMPRESA_PADRAO, conciliarMutuo, relatorioMutuos,
-    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, moverExtrato, CODIGO_BANCO,
+    medicoSemPagamento, desfazerSemPagamento, semFaturamentoDaProdutividade, salvarContaBancaria, extratosDaConta, conciliacoesPorArquivo, movimentacaoBancaria, painelMutuos, moverExtrato, CODIGO_BANCO,
     conferenciaConciliacao, encargosDaConciliacao, linhasDoPagamento,
     calcularINSS, inssPorFaixa, calcularIRRF, baseIRRFEfetiva, calcularFGTS, calcularHolerite, funcionariosDaFolha, extrasComDiasPadrao,
     folhas, fecharFolha, cancelarFolha, previsaoFolha, datasDaFolha,

@@ -138,7 +138,9 @@ ERP.conciliacao = (function () {
                   sem: g.sem.length, produtividade: prod.length,
                   regras: S.regras().length,
                   /* arquivos no período escolhido, de todas as contas */
-                  feitos: S.conciliacoesPorArquivo(filtroFeitos()).grupos.length }[b.dataset.cn];
+                  feitos: S.conciliacoesPorArquivo(filtroFeitos()).grupos.length,
+                  /* operações com um lado ainda pendente */
+                  mutuos: (function () { const f = filtroMut(); return S.painelMutuos(f.de, f.ate).abertas; })() }[b.dataset.cn];
       const marca = b.querySelector('.contador');
       if (marca) marca.textContent = n;
     });
@@ -155,10 +157,12 @@ ERP.conciliacao = (function () {
        aba === 'possiveis'     ? telaPossiveis(g.possiveis) :
        aba === 'sem'           ? telaSem(g.sem) :
        aba === 'produtividade' ? telaProdutividade(prod) :
-       aba === 'regras'        ? telaRegras() : telaFeitos());
+       aba === 'regras'        ? telaRegras() :
+       aba === 'mutuos'        ? telaMutuos() : telaFeitos());
     ligar();
     ligarDesfazer();
     if (aba === 'feitos') ligarFeitos();
+    if (aba === 'mutuos') ligarMutuos();
   }
 
   /* Os arquivos importados nesta conta, com a saída para o caso do
@@ -242,46 +246,54 @@ ERP.conciliacao = (function () {
       '</div>';
   }
 
-  /* Transferência entre as empresas do grupo: nem receita nem despesa.
-     A conta da outra empresa diz quem mandou e quem recebeu. */
+  /* Transferência: nem receita nem despesa. Para conta da MESMA
+     empresa é transferência entre contas (o dinheiro só mudou de
+     banco); para conta de OUTRA empresa do grupo é mútuo — quem
+     mandou vira credora. A conta escolhida decide qual é (v199). */
   function mutuo(id) {
     const l = S.linhasExtrato({}).find(function (x) { return x.id === id; });
     if (!l) return;
     const minha = S.empresaDaConta(l.banco);
-    const contas = D.bancos.filter(function (b) { return b.ativo !== false && b.empresa && b.empresa !== minha; });
-    if (!contas.length) {
-      return ERP.app.aviso('Não há conta de outra empresa do grupo cadastrada em Bancos.', 'erro');
+    const ativas = D.bancos.filter(function (b) { return b.ativo !== false && b.empresa && b.id !== l.banco; });
+    const mesma = ativas.filter(function (b) { return b.empresa === minha; });
+    const outras = ativas.filter(function (b) { return b.empresa !== minha; });
+    if (!ativas.length) {
+      return ERP.app.aviso('Não há outra conta cadastrada em Administração › Contas bancárias.', 'erro');
     }
     const entrada = l.valor > 0 || l.entrada > 0;
     const nomeEmp = e => (D.empresaPor(e) || {}).apelido || e;
+    const opc = b => '<option value="' + b.id + '">' + U.esc(nomeEmp(b.empresa)) + ' — ' + U.esc(b.apelido || b.nome) + '</option>';
     ERP.app.modal({
-      titulo: 'Mútuo entre empresas · ' + U.brl(Math.abs(l.valor)),
-      corpo: '<div class="ajuda">' + (entrada
-          ? 'Dinheiro que <b>entrou</b> na ' + U.esc(nomeEmp(minha)) + ' vindo de outra empresa do grupo. ' +
-            'Não é receita: a ' + U.esc(nomeEmp(minha)) + ' passa a <b>dever</b> à empresa que mandou.'
-          : 'Dinheiro que <b>saiu</b> da ' + U.esc(nomeEmp(minha)) + ' para outra empresa do grupo. ' +
-            'Não é despesa: a empresa que recebeu passa a <b>dever</b> à ' + U.esc(nomeEmp(minha)) + '.') + '</div>' +
+      titulo: 'Transferência / mútuo · ' + U.brl(Math.abs(l.valor)),
+      corpo: '<div class="ajuda">Dinheiro que ' + (entrada ? '<b>entrou</b> nesta conta vindo de' : '<b>saiu</b> desta conta para') +
+          ' outra conta do grupo. Não é receita nem despesa. Se a outra conta é da ' + U.esc(nomeEmp(minha)) +
+          ', é <b>transferência entre contas</b>; se é de outra empresa, é <b>mútuo</b>.</div>' +
         '<label for="mt-conta">' + (entrada ? 'Veio da conta' : 'Foi para a conta') + '</label>' +
-        '<select id="mt-conta">' + (contas.length > 1 ? '<option value="">escolha…</option>' : '') +
-          contas.map(function (b) {
-            return '<option value="' + b.id + '">' + U.esc(nomeEmp(b.empresa)) + ' — ' + U.esc(b.apelido || b.nome) + '</option>';
-          }).join('') + '</select>' +
+        '<select id="mt-conta"><option value="">escolha…</option>' +
+          (mesma.length ? '<optgroup label="Mesma empresa — transferência entre contas">' + mesma.map(opc).join('') + '</optgroup>' : '') +
+          (outras.length ? '<optgroup label="Outra empresa — mútuo">' + outras.map(opc).join('') + '</optgroup>' : '') +
+        '</select>' +
         '<div class="ajuda" id="mt-efeito"></div>' +
         '<label for="mt-obs">Observação (opcional)</label><input id="mt-obs">',
-      acoes: [{ txt: 'Conciliar como mútuo', cls: 'btn-pagar', fn: function () {
+      acoes: [{ txt: 'Conciliar', cls: 'btn-pagar', fn: function () {
         const r = S.conciliarMutuo(id, { conta: U.val('mt-conta'), obs: U.val('mt-obs') });
         if (ERP.app.erroDoRetorno(r)) return;
         ERP.app.fecharModal(); abertaLinha = null; render();
-        ERP.app.aviso((r.outro_lado ? 'Outro lado do mútuo amarrado' : 'Mútuo registrado') + ': ' +
-          r.transferencia.mutuo.devedora_nome + ' deve ' + U.brl(r.transferencia.valor) + ' à ' +
-          r.transferencia.mutuo.credora_nome + '.', 'ok');
+        const t = r.transferencia;
+        ERP.app.aviso(r.propria
+          ? (r.outro_lado ? 'Outro lado da transferência amarrado' : 'Transferência entre contas registrada') + ': ' +
+            U.brl(t.valor) + ' · ' + t.origem_nome + ' → ' + t.destino_nome + '.'
+          : (r.outro_lado ? 'Outro lado do mútuo amarrado' : 'Mútuo registrado') + ': ' +
+            t.mutuo.devedora_nome + ' deve ' + U.brl(t.valor) + ' à ' + t.mutuo.credora_nome + '.', 'ok');
       } }],
       aoAbrir: function () {
         const efeito = function () {
           const b = D.banco(U.val('mt-conta'));
-          U.el('mt-efeito').textContent = !b ? '' : entrada
-            ? nomeEmp(minha) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(b.empresa) + '.'
-            : nomeEmp(b.empresa) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(minha) + '.';
+          U.el('mt-efeito').textContent = !b ? '' : b.empresa === minha
+            ? 'Transferência entre contas da ' + nomeEmp(minha) + ': não gera dívida entre empresas, só muda o dinheiro de banco.'
+            : entrada
+              ? 'Mútuo: ' + nomeEmp(minha) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(b.empresa) + '.'
+              : 'Mútuo: ' + nomeEmp(b.empresa) + ' passa a dever ' + U.brl(Math.abs(l.valor)) + ' à ' + nomeEmp(minha) + '.';
         };
         U.el('mt-conta').addEventListener('change', efeito);
         efeito();
@@ -473,7 +485,7 @@ ERP.conciliacao = (function () {
             (l.saida > 0
               ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar</button>'
               : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
-            '<button class="btn-sm" data-cn-mutuo="' + l.id + '" title="Transferência entre empresas do grupo">Mútuo</button>' +
+            '<button class="btn-sm" data-cn-mutuo="' + l.id + '" title="Transferência entre contas da mesma empresa ou mútuo entre empresas do grupo">Transferência / mútuo</button>' +
             '<button class="btn-sm" data-cn-buscar="' + l.id + '">Buscar título</button>' +
             '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
           '</td></tr>';
@@ -730,6 +742,87 @@ ERP.conciliacao = (function () {
     U.el('cf-30').addEventListener('click', function () { feitos.de = null; filtroFeitos(); render(); });
   }
 
+  /* ── ABA MÚTUOS (v199) ─────────────────────────────────
+     Toda transferência entre contas do grupo — mútuo entre empresas e
+     transferência entre contas da mesma empresa —, com os dois lados:
+     de qual conta saiu, em qual entrou, e se cada lado já foi
+     conciliado no extrato. Em cima, o saldo de mútuo entre as
+     empresas (acumulado até a data final, não só o período). */
+  const mut = { de: null, ate: null, ver: 'todas' };
+  function filtroMut() {
+    if (!mut.de) { mut.ate = U.hoje(); mut.de = U.hoje().slice(0, 4) + '-01-01'; }
+    return mut;
+  }
+  const SIT_MUT = {
+    casada: ['Casada e conciliada', 'ok-conf'],
+    falta_entrada: ['Falta conciliar a entrada', 'erro'],
+    falta_saida: ['Falta conciliar a saída', 'erro'],
+    sem_extrato: ['Lançada à mão — sem extrato', 'sub']
+  };
+  function telaMutuos() {
+    const f = filtroMut();
+    const r = S.painelMutuos(f.de, f.ate);
+    const ops = r.operacoes.filter(function (o) {
+      return mut.ver === 'todas' || (mut.ver === 'abertas' ? o.situacao !== 'casada' :
+        mut.ver === 'mutuo' ? o.mutuo : !o.mutuo);
+    });
+    const NUM = 'style="width:120px"';
+    return '<div class="filtros" style="margin-top:10px">' +
+        '<div class="f"><label for="mu-de">De</label><input type="date" id="mu-de" value="' + U.esc(f.de) + '"></div>' +
+        '<div class="f"><label for="mu-ate">até</label><input type="date" id="mu-ate" value="' + U.esc(f.ate) + '"></div>' +
+        '<div class="f"><label for="mu-ver">Mostrar</label><select id="mu-ver">' +
+          [['todas', 'tudo'], ['abertas', 'só com lado pendente'], ['mutuo', 'só mútuos entre empresas'],
+           ['propria', 'só transferências da mesma empresa']].map(function (v) {
+            return '<option value="' + v[0] + '"' + (mut.ver === v[0] ? ' selected' : '') + '>' + v[1] + '</option>';
+          }).join('') + '</select></div>' +
+        '<button class="btn-sm" id="mu-30" style="align-self:flex-end">Últimos 30 dias</button>' +
+        '<button class="btn-sm" id="mu-ano" style="align-self:flex-end">Este ano</button>' +
+      '</div>' +
+      '<h3 style="margin:12px 0 4px">Saldo de mútuo entre as empresas em ' + U.fData(f.ate) + '</h3>' +
+      (r.saldos.length ? '<table class="rel" id="mu-saldos"><thead><tr><th>Quem deve</th><th>A quem</th>' +
+          '<th class="num" ' + NUM + '>Antes de ' + U.fData(f.de) + '</th><th class="num" ' + NUM + '>Aumentou</th>' +
+          '<th class="num" ' + NUM + '>Diminuiu</th><th class="num" ' + NUM + '>Saldo</th></tr></thead><tbody>' +
+          r.saldos.map(function (x) {
+            return '<tr><td>' + U.esc(x.devedora_nome) + '</td><td>' + U.esc(x.credora_nome) + '</td>' +
+              '<td class="num">' + U.num(x.anterior) + '</td><td class="num">' + U.num(x.aumentou) + '</td>' +
+              '<td class="num">' + U.num(x.diminuiu) + '</td><td class="num"><b>' + U.num(x.saldo) + '</b></td></tr>';
+          }).join('') + '</tbody></table>'
+        : '<div class="vazio">Nenhum mútuo entre empresas até ' + U.fData(f.ate) + '.</div>') +
+      '<div class="pr-confere" style="margin-top:12px"><span>Operações no período <b>' + r.operacoes.length + '</b></span>' +
+        '<span>Casadas e conciliadas <b>' + r.casadas + '</b></span>' +
+        '<span' + (r.abertas ? ' class="erro"' : '') + '>Com lado pendente <b>' + r.abertas + '</b></span></div>' +
+      '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel" id="mu-tabela"><thead><tr>' +
+        '<th>Data</th><th>Tipo</th><th>Saiu de</th><th>Entrou em</th><th class="num" ' + NUM + '>Valor</th>' +
+        '<th>Saída</th><th>Entrada</th><th>Situação</th></tr></thead><tbody>' +
+      (ops.length ? ops.map(function (o) {
+        const sit = SIT_MUT[o.situacao];
+        const lado = (ok, d) => ok ? '✓ conciliada' + (d ? '<div class="sub">' + U.fData(d) + '</div>' : '') : '<span class="erro">pendente</span>';
+        return '<tr data-mu-op="' + o.id + '"><td class="mono">' + U.fData(o.data) + '</td>' +
+          '<td>' + o.tipo + (o.mutuo ? '<div class="sub">' + U.esc(o.devedora) + ' deve à ' + U.esc(o.credora) + '</div>' : '') + '</td>' +
+          '<td class="desc">' + U.esc(o.origem_empresa) + '<div class="sub">' + U.esc(o.origem_conta) + '</div></td>' +
+          '<td class="desc">' + U.esc(o.destino_empresa) + '<div class="sub">' + U.esc(o.destino_conta) + '</div></td>' +
+          '<td class="num">' + U.num(o.valor) + '</td>' +
+          '<td>' + lado(o.saida_conciliada, o.saida_data) + '</td>' +
+          '<td>' + lado(o.entrada_conciliada, o.entrada_data) + '</td>' +
+          '<td class="' + sit[1] + '">' + sit[0] + '</td></tr>';
+      }).join('') : '<tr><td colspan="8" class="vazio">Nenhuma transferência no período.</td></tr>') +
+      '</tbody></table></div>' +
+      (r.cruzados.length ? '<div class="ajuda" style="margin-top:8px">Também entram no saldo acima ' + r.cruzados.length +
+        ' pagamento(s) de nota de uma empresa feitos pela conta de outra (veja Relatórios › Mútuo entre empresas).</div>' : '') +
+      '<div class="ajuda" style="margin-top:8px">Uma operação fica <b>casada</b> quando a saída (no extrato da conta que mandou) ' +
+        'e a entrada (no extrato da conta que recebeu) estão conciliadas. Com um lado só, falta importar o extrato da outra ' +
+        'conta ou classificar a linha dela em "Transferência / mútuo" — o sistema amarra no mesmo registro.</div>';
+  }
+  function ligarMutuos() {
+    if (!U.el('mu-de')) return;
+    const mudou = function () {
+      mut.de = U.val('mu-de') || mut.de; mut.ate = U.val('mu-ate') || mut.ate; mut.ver = U.val('mu-ver'); render();
+    };
+    ['mu-de', 'mu-ate', 'mu-ver'].forEach(function (id) { U.el(id).addEventListener('change', mudou); });
+    U.el('mu-30').addEventListener('click', function () { mut.ate = U.hoje(); mut.de = U.addDias(U.hoje(), -30); render(); });
+    U.el('mu-ano').addEventListener('click', function () { mut.de = null; filtroMut(); render(); });
+  }
+
   /* Recebimento abaixo do líquido esperado não tem resposta certa
      sozinha: pode ser glosa/multa de verdade, ou só faltou completar.
      Em vez de forçar uma escolha na hora (o antigo confirm() só dava
@@ -878,7 +971,7 @@ ERP.conciliacao = (function () {
         (l.saida > 0
           ? '<button class="btn-sm" data-cn-lanc="' + l.id + '">Lançar como despesa</button>'
           : '<button class="btn-sm" data-cn-rec="' + l.id + '">Lançar como receita</button>') +
-        '<button class="btn-sm" data-cn-mutuo="' + l.id + '">Mútuo entre empresas</button>' +
+        '<button class="btn-sm" data-cn-mutuo="' + l.id + '">Transferência / mútuo</button>' +
         '<button class="btn-sm btn-cancelar" data-cn-ign="' + l.id + '">Ignorar</button>' +
       '</div></td></tr>';
   }
