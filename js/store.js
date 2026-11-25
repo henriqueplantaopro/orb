@@ -14730,6 +14730,78 @@ ERP.store = (function () {
     }
     return 'Conciliada';
   }
+  /* A LINHA DO EXTRATO NAS COLUNAS DO CONTAS PAGAS E RECEBIDAS (v202).
+     Linha que quitou título(s) vira as mesmas linhas daquele
+     relatório (uma por título — um lote de DARF sai desmembrado);
+     linha que não é título (mútuo, transferência, aplicação, crédito
+     por engano e devolução, tarifa ignorada, pendente) vira uma linha
+     com o que se sabe dela. A soma das linhas é sempre o valor do
+     extrato. */
+  function linhasRelDoExtrato(l) {
+    const r2 = v => Math.round(v * 100) / 100;
+    const b = D.banco(l.banco) || {};
+    const emp = (D.empresaPor(b.empresa) || {}).apelido || '';
+    const entrada = (l.entrada || 0) > 0;
+    const valorLinha = r2(Math.abs(l.valor));
+    const base = function (extra) {
+      return Object.assign({
+        tipo: entrada ? 'Entrada' : 'Saída', documento: l.documento || '', forma: '',
+        contraparte: '', descricao: l.memo || '', competencia: U.compDe(l.data), emissao: '', vencimento: '',
+        baixa: l.data, parcela: '', principal: valorLinha, valor: valorLinha, juros: 0, desconto: 0,
+        banco: b.apelido || '', banco_id: l.banco, empresa: emp, cnpj: '', tipo_titulo: '', natureza: '',
+        conta: '', centro: '', projeto: '', aprovacao: '', nf: '', nf_situacao: '', situacao: l.situacao, ret: null
+      }, extra);
+    };
+    if (l.situacao === 'conciliado') {
+      const pgs = st.pagamentos.filter(function (pg) { return linhaExplicaPagamento(l, pg); });
+      if (pgs.length) {
+        return pgs.map(function (pg) { const p = parcela(pg.parcela_id); return p ? linhaRelDePagamento(pg, p) : null; })
+          .filter(Boolean);
+      }
+      if (l.alvo_tipo === 'receber') {
+        const ids = [l.alvo_id].concat(l.alvo_ids || []).filter(Boolean);
+        const out = [];
+        ids.forEach(function (id) {
+          const r = st.receber.find(function (x) { return x.id === id; });
+          if (!r) return;
+          const baixas = (r.baixas || []).filter(function (x) { return !x.estornada; });
+          baixas.forEach(function (bx, i) {
+            if (bx.data === l.data && (!bx.banco || bx.banco === l.banco)) out.push(linhaRelDeBaixa(r, bx, i, baixas.length));
+          });
+          if (!out.length && r) out.push(linhaRelDeBaixa(r, { data: l.data, valor: valorLinha, banco: l.banco }, 0, 1));
+        });
+        if (out.length) return out;
+      }
+      if (l.alvo_tipo === 'transferencia') {
+        const t = (st.transferenciasBanco || []).find(function (x) { return x.id === l.alvo_id; });
+        if (t) {
+          const outraConta = entrada ? t.origem : t.destino;
+          const ob = D.banco(outraConta) || {};
+          const oe = (D.empresaPor(ob.empresa) || {}).apelido || '';
+          return [base({ forma: t.mutuo ? 'Mútuo' : 'Transferência entre contas',
+            contraparte: oe + ' — ' + (ob.apelido || outraConta),
+            descricao: (t.mutuo ? 'Mútuo: ' + t.mutuo.devedora_nome + ' deve à ' + t.mutuo.credora_nome
+              : 'Transferência ' + (entrada ? 'recebida de ' : 'enviada para ') + (ob.apelido || '')) + ' · ' + (l.memo || ''),
+            natureza: t.mutuo ? 'Mútuo entre empresas' : 'Transferência entre contas', cnpj: (D.empresaPor(ob.empresa) || {}).cnpj || '' })];
+        }
+      }
+      if (l.alvo_tipo === 'aplicacao' || l.alvo_tipo === 'resgate') {
+        return [base({ forma: l.alvo_tipo === 'aplicacao' ? 'Aplicação' : 'Resgate de aplicação',
+          contraparte: (b.apelido || '') + ' — aplicação', natureza: l.alvo_tipo === 'aplicacao' ? 'Aplicação financeira' : 'Resgate de aplicação' })];
+      }
+      return [base({ forma: 'Conciliada', natureza: descreverVinculo(l) })];
+    }
+    if (l.situacao === 'ignorado') {
+      const par = l.par_id ? st.linhas.find(function (x) { return x.id === l.par_id; }) : null;
+      const tipoIg = l.ignorado_tipo === 'engano'
+        ? (entrada ? 'Recebido por engano' : 'Devolução de valor recebido por engano') : 'Ignorada';
+      return [base({ forma: tipoIg, natureza: tipoIg,
+        descricao: (l.memo || '') + (l.observacao ? ' · ' + l.observacao : '') +
+          (par ? ' · par: ' + U.fData(par.data) + ' ' + U.brl(Math.abs(par.valor)) : '') })];
+    }
+    return [base({ forma: 'Pendente de conciliar', natureza: 'Pendente de conciliar' })];
+  }
+
   function movimentacaoBancaria(f) {
     f = f || {};
     const quando = x => x instanceof Date ? x.toISOString() : String(x || '');
@@ -14764,7 +14836,8 @@ ERP.store = (function () {
           tipo: manualDesfeita(l) ? 'Inclusão desfeita (não soma)' : tipoDaLinha(l), situacao: l.situacao, nao_soma: naoSoma(l),
           manual: ehLinhaManual(l) ? { motivo: (l.incluida_manual || {}).motivo || '', por: (l.incluida_manual || {}).usuario || '',
             confirmada: l.confirmada_no_arquivo || '' } : null, vinculo: descreverVinculo(l), observacao: l.observacao || '',
-          arquivo: e ? e.arquivo : '' };
+          arquivo: e ? e.arquivo : '',
+          rel: linhasRelDoExtrato(l) };
       });
       const porTipo = {};
       const somam = linhas.filter(function (l) { return !l.nao_soma; });
@@ -22566,17 +22639,13 @@ ERP.store = (function () {
     return '';
   }
 
-  function contasPagasERecebidas(de, ate, f) {
-    f = f || {};
-    const linhas = [];
+  /* A LINHA DO RELATÓRIO DE CAIXA (v202): a mesma para o Contas
+     pagas e recebidas e para a Movimentação bancária, que agora leva
+     as mesmas colunas. */
+  function linhaRelDePagamento(pg, p) {
     const nomeCredor = id => (D.credor(id) || {}).nome || '';
-
-    todosPagamentos().forEach(function (pg) {
-      if (!pg.data || pg.data < de || pg.data > ate) return;
-      const p = parcela(pg.parcela_id);
-      if (!p) return;
-      const f = formaDoCredor(p.credor);
-      linhas.push({
+    const f = formaDoCredor(p.credor);
+    return {
         tipo: 'Saída', documento: p.doc || '',
         forma: pg.forma || (f ? (f.nome || f.codigo) : ''),
         contraparte: nomeCredorVisivel(p, nomeCredor(p.credor)),
@@ -22611,7 +22680,47 @@ ERP.store = (function () {
         nf_situacao: p.arquivo ? 'arquivo anexado' : p.doc ? 'nº informado' : (p.sem_nf ? 'sem NF' : '—'),
         situacao: p.status || '',
         ret: retencoesDoPagamento(p, Math.round((pg.valor + (pg.desconto || 0)) * 100) / 100)
-      });
+      };
+  }
+  function linhaRelDeBaixa(r, b, i, n) {
+    return {
+          tipo: 'Entrada', documento: r.numero || '', forma: 'Recebimento',
+          contraparte: r.cliente_nome || '',
+          descricao: r.discriminacao || ((D.centro(r.centro) || {}).curto || ''),
+          competencia: r.competencia || '', emissao: r.emissao || '', vencimento: r.vencimento || '',
+          baixa: b.data, parcela: (i + 1) + '/' + n,
+          principal: Math.round((b.valor || 0) * 100) / 100,
+          valor: Math.round((b.valor || 0) * 100) / 100,
+          juros: 0, desconto: 0,
+          banco: (D.banco(b.banco) || {}).apelido || '',
+          banco_id: b.banco || null,
+          empresa: (D.empresaPor(b.banco
+            ? empresaDaConta(b.banco) : empresaDoCentro(r.centro)) || {}).apelido || '',
+          receber_id: r.id,
+          cnpj: r.cliente_doc || r.cliente_documento || '',
+          tipo_titulo: r.origem === 'fatura' ? 'fatura' : r.origem === 'nota' ? 'nf' : (r.origem || ''),
+          natureza: (D.conta(r.conta || '1.01') || {}).nome || 'Receita',
+          conta: r.conta || '1.01',
+          centro: (D.centro(r.centro) || {}).curto || '',
+          projeto: r.grupo_faturamento || (D.centro(r.centro) || {}).unidade || '',
+          aprovacao: '',
+          nf: r.numero || '',
+          nf_situacao: r.arquivo ? 'arquivo anexado' : r.numero ? 'nº informado' : '—',
+          situacao: r.status || '',
+          ret: retencoesDoRecebimento(r, Math.round((b.valor || 0) * 100) / 100)
+        };
+  }
+
+  function contasPagasERecebidas(de, ate, f) {
+    f = f || {};
+    const linhas = [];
+    const nomeCredor = id => (D.credor(id) || {}).nome || '';
+
+    todosPagamentos().forEach(function (pg) {
+      if (!pg.data || pg.data < de || pg.data > ate) return;
+      const p = parcela(pg.parcela_id);
+      if (!p) return;
+      linhas.push(linhaRelDePagamento(pg, p));
     });
 
     /* Uma linha por BAIXA, como o lado da saída já fazia com os
@@ -22632,32 +22741,7 @@ ERP.store = (function () {
             : []);
       lista.forEach(function (b, i) {
         if (!b.data || b.data < de || b.data > ate) return;
-        linhas.push({
-          tipo: 'Entrada', documento: r.numero || '', forma: 'Recebimento',
-          contraparte: r.cliente_nome || '',
-          descricao: r.discriminacao || ((D.centro(r.centro) || {}).curto || ''),
-          competencia: r.competencia || '', emissao: r.emissao || '', vencimento: r.vencimento || '',
-          baixa: b.data, parcela: (i + 1) + '/' + lista.length,
-          principal: Math.round((b.valor || 0) * 100) / 100,
-          valor: Math.round((b.valor || 0) * 100) / 100,
-          juros: 0, desconto: 0,
-          banco: (D.banco(b.banco) || {}).apelido || '',
-          banco_id: b.banco || null,
-          empresa: (D.empresaPor(b.banco
-            ? empresaDaConta(b.banco) : empresaDoCentro(r.centro)) || {}).apelido || '',
-          receber_id: r.id,
-          cnpj: r.cliente_doc || r.cliente_documento || '',
-          tipo_titulo: r.origem === 'fatura' ? 'fatura' : r.origem === 'nota' ? 'nf' : (r.origem || ''),
-          natureza: (D.conta(r.conta || '1.01') || {}).nome || 'Receita',
-          conta: r.conta || '1.01',
-          centro: (D.centro(r.centro) || {}).curto || '',
-          projeto: r.grupo_faturamento || (D.centro(r.centro) || {}).unidade || '',
-          aprovacao: '',
-          nf: r.numero || '',
-          nf_situacao: r.arquivo ? 'arquivo anexado' : r.numero ? 'nº informado' : '—',
-          situacao: r.status || '',
-          ret: retencoesDoRecebimento(r, Math.round((b.valor || 0) * 100) / 100)
-        });
+        linhas.push(linhaRelDeBaixa(r, b, i, lista.length));
       });
     });
 

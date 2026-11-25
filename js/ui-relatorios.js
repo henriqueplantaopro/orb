@@ -1079,21 +1079,33 @@ ERP.relatorios = (function () {
         (c.manuais ? '<div class="aviso-linha">' + c.manuais + ' linha(s) incluída(s) à mão porque o arquivo do banco não trouxe — ' +
           'marcadas na coluna Histórico.</div>' : '') +
         conferenciaSaldo(c, difs) +
-        '<table class="rel mov-banc" data-conta="' + U.esc(c.banco) + '"><thead><tr><th style="width:90px">Data</th><th>Histórico</th>' +
-          '<th>Classificação</th><th class="num" ' + NUM + '>Entrada</th><th class="num" ' + NUM + '>Saída</th>' +
+        '<div class="tabela-rolagem" style="margin:0 -14px"><table class="rel mov-banc" data-conta="' + U.esc(c.banco) + '"><thead><tr>' +
+          '<th style="width:90px">Data</th><th>Classificação</th><th>NF / doc.</th><th>Fornecedor / cliente</th><th>Vencimento</th>' +
+          '<th class="num" ' + NUM + '>Bruto</th><th class="num" ' + NUM + '>Retido</th><th class="num" ' + NUM + '>Valor do título</th>' +
+          '<th class="num" ' + NUM + '>Juros/multa</th><th class="num" ' + NUM + '>Entrada</th><th class="num" ' + NUM + '>Saída</th>' +
           '<th class="num" ' + NUM + '>Saldo</th></tr></thead><tbody>' +
         (c.linhas.length ? c.linhas.map(function (l) {
-          return '<tr><td class="mono">' + U.fData(l.data) + '</td>' +
-            '<td class="desc">' + U.esc(l.memo) + (l.documento ? '<div class="sub">doc ' + U.esc(l.documento) + '</div>' : '') +
-              (l.manual ? '<div class="sub erro">incluída à mão' + (l.manual.confirmada ? ' · confirmada no arquivo ' + U.esc(l.manual.confirmada) : '') +
-                (l.manual.motivo ? ' — ' + U.esc(l.manual.motivo) : '') + '</div>' : '') + '</td>' +
-            '<td class="' + (l.situacao === 'pendente' ? 'erro' : '') + '">' + U.esc(l.tipo) +
-              (l.vinculo && l.vinculo !== l.tipo ? '<div class="sub">' + U.esc(l.vinculo) + '</div>' : '') + '</td>' +
-            '<td class="num">' + (l.entrada ? U.num(l.entrada) : '') + '</td>' +
-            '<td class="num">' + (l.saida ? U.num(l.saida) : '') + '</td>' +
-            '<td class="num">' + U.num(l.saldo) + '</td></tr>';
-        }).join('') : '<tr><td colspan="6" class="vazio">Sem movimento no período.</td></tr>') +
-        '</tbody></table>';
+          const rel = l.rel && l.rel.length ? l.rel : [{ tipo: l.entrada ? 'Entrada' : 'Saída', principal: l.entrada || l.saida, valor: l.entrada || l.saida, juros: 0 }];
+          return rel.map(function (r, i) {
+            const ult = i === rel.length - 1;
+            return '<tr' + (l.nao_soma ? ' class="sub"' : '') + '><td class="mono">' + (i ? '' : U.fData(l.data)) + '</td>' +
+              '<td class="' + (l.situacao === 'pendente' ? 'erro' : '') + '">' + (i ? '' : U.esc(l.tipo)) + '</td>' +
+              '<td class="mono">' + U.esc(r.nf || r.documento || '') + '</td>' +
+              '<td class="desc">' + U.esc(r.contraparte || '') + (r.descricao && r.descricao !== l.memo ? '<div class="sub">' + U.esc(r.descricao) + '</div>' : '') +
+                (i ? '' : '<div class="sub">banco: ' + U.esc(l.memo) + '</div>') +
+                (!i && l.manual ? '<div class="sub erro">incluída à mão' + (l.manual.confirmada ? ' · confirmada no arquivo ' + U.esc(l.manual.confirmada) : '') +
+                  (l.manual.motivo ? ' — ' + U.esc(l.manual.motivo) : '') + '</div>' : '') + '</td>' +
+              '<td class="mono">' + (r.vencimento ? U.fData(r.vencimento) : '') + '</td>' +
+              '<td class="num">' + U.num(r.ret ? r.ret.bruto : r.principal) + '</td>' +
+              '<td class="num' + (r.ret ? '' : ' sub') + '">' + (r.ret ? U.num(r.ret.total) : '—') + '</td>' +
+              '<td class="num">' + U.num(r.principal) + '</td>' +
+              '<td class="num' + (r.juros > 0 ? '' : ' sub') + '">' + (r.juros > 0 ? U.num(r.juros) : '—') + '</td>' +
+              '<td class="num">' + (r.tipo === 'Entrada' ? U.num(r.valor) : '') + '</td>' +
+              '<td class="num">' + (r.tipo === 'Saída' ? U.num(r.valor) : '') + '</td>' +
+              '<td class="num">' + (ult ? (l.nao_soma ? 'não soma' : U.num(l.saldo)) : '') + '</td></tr>';
+          }).join('');
+        }).join('') : '<tr><td colspan="12" class="vazio">Sem movimento no período.</td></tr>') +
+        '</tbody></table></div>';
     }).join('') +
     '<div class="ajuda">Saldo de partida: o saldo informado pelo banco no último arquivo que terminou antes do período, ' +
       'mais as linhas entre ele e o início do período. Linha "Pendente" ainda não foi classificada na Conciliação ' +
@@ -1130,43 +1142,70 @@ ERP.relatorios = (function () {
       '</details>';
   }
 
+  /* EXPORTAÇÃO DA MOVIMENTAÇÃO (v202): as MESMAS colunas do Contas
+     pagas e recebidas, mais a classificação, o histórico do banco e
+     entrada/saída/saldo. Uma aba com todos os bancos e uma por banco
+     que teve movimento no período. Cópia ignorada e linha de saldo do
+     banco não são movimento e não saem. */
+  const COLS_MOV = [COLS_REALIZADO[0], { titulo: 'Classificação', largura: 24, valor: l => l.classificacao || '' }]
+    .concat(COLS_REALIZADO.slice(1))
+    .concat([
+      { titulo: 'Histórico do banco', largura: 40, valor: l => l.historico || '' },
+      { titulo: 'Entrada', largura: 15, tipo: 'numero', valor: l => l.entrada },
+      { titulo: 'Saída', largura: 15, tipo: 'numero', valor: l => l.saida },
+      { titulo: 'Saldo da conta', largura: 16, tipo: 'numero', valor: l => l.saldo_conta }
+    ]);
+  function linhasExportMov(c) {
+    const out = [];
+    c.linhas.forEach(function (l) {
+      if (l.nao_soma) return;
+      const rel = l.rel || [];
+      rel.forEach(function (r, i) {
+        out.push(Object.assign({}, r, {
+          classificacao: l.tipo + (l.manual ? ' (incluída à mão)' : ''),
+          historico: l.memo, banco: c.conta, empresa: r.empresa || c.empresa,
+          entrada: r.tipo === 'Entrada' ? r.valor : null, saida: r.tipo === 'Saída' ? r.valor : null,
+          saldo_conta: i === rel.length - 1 ? l.saldo : null, _data: l.data, _id: l.id
+        }));
+      });
+    });
+    return out;
+  }
   function exportarMovBancaria() {
     const contas = S.movimentacaoBancaria({ de: per.de, ate: per.ate, banco: relBanco || null });
     if (!contas.length) return ERP.app.aviso('Nenhum extrato importado para exportar.', 'erro');
-    const linhas = [];
-    contas.forEach(function (c) {
-      linhas.push({ conta: c.conta, empresa: c.empresa, data: '', memo: 'Saldo anterior', tipo: '', vinculo: '',
-        documento: '', entrada: null, saida: null, saldo: c.saldo_inicial });
-      c.linhas.forEach(function (l) {
-        linhas.push({ conta: c.conta, empresa: c.empresa, data: l.data, memo: l.memo, tipo: l.tipo,
-          vinculo: (l.vinculo && l.vinculo !== l.tipo ? l.vinculo : '') +
-            (l.manual ? (l.vinculo && l.vinculo !== l.tipo ? ' · ' : '') + 'incluída à mão' + (l.manual.motivo ? ': ' + l.manual.motivo : '') : ''),
-          documento: l.documento,
-          entrada: l.entrada || null, saida: l.saida || null, saldo: l.saldo });
-      });
-    });
+    const periodo = 'Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate);
+    const saldoAnt = c => ({ tipo: '', classificacao: 'Saldo anterior', historico: '', banco: c.conta, empresa: c.empresa,
+      baixa: U.addDias(per.de, -1), principal: null, valor: null, juros: null, desconto: null, ret: null,
+      entrada: null, saida: null, saldo_conta: c.saldo_inicial, parcela: '' });
+    const rodapeDe = c => [[], ['Saldo anterior', c.saldo_inicial], ['Entradas', c.entradas], ['Saídas', c.saidas],
+      ['Saldo final', c.saldo_final]].concat(c.aplicado || c.resgatado
+        ? [['Aplicações', c.aplicado], ['Resgates', c.resgatado]] : []);
+    const comMov = contas.filter(function (c) { return linhasExportMov(c).length; });
+    const todas = [];
+    contas.forEach(function (c) { linhasExportMov(c).forEach(function (l) { todas.push(l); }); });
+    todas.sort(function (a, b) { return (a._data + a.banco + a._id).localeCompare(b._data + b.banco + b._id); });
+    const abaTodos = {
+      titulo: 'Todos os bancos', colunas: COLS_MOV,
+      linhas: contas.map(saldoAnt).concat(todas),
+      cabecalho: [['Movimentação bancária — todos os bancos'], [periodo]],
+      rodape: [[]].concat(contas.map(function (c) {
+        return [c.conta + (c.empresa ? ' · ' + c.empresa : ''), 'saldo anterior', c.saldo_inicial, 'entradas', c.entradas,
+          'saídas', c.saidas, 'saldo final', c.saldo_final];
+      })).concat([['Total', '', '', 'entradas', Math.round(contas.reduce(function (a, c) { return a + c.entradas; }, 0) * 100) / 100,
+        'saídas', Math.round(contas.reduce(function (a, c) { return a + c.saidas; }, 0) * 100) / 100]])
+    };
+    const abas = [abaTodos].concat(comMov.map(function (c) {
+      return { titulo: c.conta, colunas: COLS_MOV, linhas: [saldoAnt(c)].concat(linhasExportMov(c)),
+        cabecalho: [['Movimentação bancária — ' + c.conta + (c.empresa ? ' · ' + c.empresa : '')], [periodo]],
+        rodape: rodapeDe(c) };
+    }));
     const conta = relBanco ? (D.banco(relBanco) || {}) : null;
     ERP.exportar.abrir({
       nome: 'movimentacao-bancaria-' + (conta ? U.slug(conta.apelido) + '-' : '') + per.de + '-a-' + per.ate,
       titulo: 'Movimentação bancária' + (conta ? ' — ' + conta.apelido : ''),
-      colunas: [
-        { titulo: 'Conta', largura: 24, valor: l => l.conta },
-        { titulo: 'Empresa', largura: 16, valor: l => l.empresa },
-        { titulo: 'Data', largura: 12, tipo: 'data', valor: l => l.data ? U.fData(l.data) : '' },
-        { titulo: 'Histórico', largura: 44, valor: l => l.memo },
-        { titulo: 'Documento', largura: 14, valor: l => l.documento },
-        { titulo: 'Classificação', largura: 22, valor: l => l.tipo },
-        { titulo: 'Detalhe', largura: 40, valor: l => l.vinculo },
-        { titulo: 'Entrada', largura: 15, tipo: 'numero', valor: l => l.entrada },
-        { titulo: 'Saída', largura: 15, tipo: 'numero', valor: l => l.saida },
-        { titulo: 'Saldo', largura: 16, tipo: 'numero', valor: l => l.saldo }
-      ],
-      linhas: linhas,
-      cabecalho: [['Movimentação bancária' + (conta ? ' — ' + conta.apelido : '')],
-        ['Período: ' + U.fData(per.de) + ' a ' + U.fData(per.ate)]],
-      rodape: [[]].concat(contas.map(function (c) {
-        return [c.conta + ' — entradas', c.entradas, 'saídas', c.saidas, 'saldo final', c.saldo_final];
-      }))
+      colunas: COLS_MOV, linhas: abaTodos.linhas, cabecalho: abaTodos.cabecalho, rodape: abaTodos.rodape,
+      abas: abas
     });
   }
 
