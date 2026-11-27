@@ -1308,3 +1308,16 @@ table.tab-apr td.desc{
 .sel-busca-lista li.sel{font-weight:650;}
 .sel-busca-lista li.ativo,.sel-busca-lista li[data-i]:hover{background:var(--brand-soft);}
 .sel-busca-lista li.vazio{color:var(--ink3);cursor:default;}
+
+/* v203 — CNPJ do cliente na esteira e o bloco "cliente que vai ser faturado" */
+/* A coluna nova cabe tirando folga das vizinhas: o projeto (que
+   tinha 260px para nomes de 25 letras) e o cliente, cujo nome
+   inteiro fica no `title`. */
+.col-cnpj { width: 116px; white-space: nowrap; font-size: 11px; letter-spacing: -0.2px; }
+td.col-val input.est-inline, td input.est-inline { width: 100px; }
+table th.col-proj, table td.col-proj { width: 190px; max-width: 190px; white-space: normal; }
+table th.col-cliente, table td.col-cliente { width: 120px; max-width: 120px; }
+.cliente-faturado { border: 1px solid var(--line); border-left: 4px solid var(--brand); background: var(--brand-soft);
+  border-radius: var(--radius); padding: 8px 12px; margin: 0 0 12px; }
+.cliente-faturado .nome { font-weight: 600; font-size: 14px; }
+.cliente-faturado.erro { border-left-color: var(--red); background: var(--red-bg); }
