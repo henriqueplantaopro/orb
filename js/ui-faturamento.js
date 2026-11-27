@@ -2868,7 +2868,7 @@ ERP.faturamento = (function () {
     }
     if (l.etapa === 'autorizado') {
       return rever + doc +
-        (S.pode('autorizar_faturamento')
+        (S.podeDesfazerFaturamento(l.centro, l.competencia)
           ? ' <button class="btn-sm" data-est-des="autorizado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('liberar_faturamento')
           ? ' <button class="btn-sm btn-aprovar" data-est-lib="' + ref + '">Liberar</button>' : '');
@@ -2897,7 +2897,7 @@ ERP.faturamento = (function () {
         (soFatura ? ''
           : ' <button class="btn-sm" data-est-pdf="' + ref + '" ' +
             'title="PDF com os dados para digitar a nota no portal da prefeitura">Emitir à mão</button>') +
-        (S.pode('liberar_faturamento')
+        (S.podeDesfazerFaturamento(l.centro, l.competencia)
           ? ' <button class="btn-sm" data-est-des="liberado|' + ref + '">Desfazer</button>' : '') +
         (S.pode('faturar')
           ? ' <button class="btn-sm btn-aprovar" data-est-nf="' + ref + '" ' +

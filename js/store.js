@@ -17044,6 +17044,7 @@ ERP.store = (function () {
     }
     d = d || {};
     pv.liberado_em = d.data || U.hoje();
+    pv.liberado_na_autorizacao = false;   // liberação à parte: desfaz quem libera (v204)
     pv.liberado_por = usuario().nome;
     pv.liberado_por_id = (usuario() || {}).id || null;
     pv.liberacao_obs = d.observacao || '';
@@ -17091,7 +17092,7 @@ ERP.store = (function () {
        porque o botão agora faz mais coisa de uma vez. */
     const desfeitas = [];
     if (pv.liberado_em) {
-      if (!pode('liberar_faturamento')) return { erro: 'Seu perfil não desfaz a liberação.' };
+      if (!podeDesfazerLiberacao(pv)) return { erro: 'Seu perfil não desfaz a liberação.' };
       desfeitas.push('liberação');
     }
     if (pv.autorizado_em) {
@@ -17106,7 +17107,7 @@ ERP.store = (function () {
     }
     if (!desfeitas.length) return { erro: 'Este faturamento já está em previsto — não há etapa a desfazer.' };
 
-    pv.liberado_em = null; pv.liberado_por = null; pv.liberacao_obs = motivo;
+    pv.liberado_em = null; pv.liberado_por = null; pv.liberacao_obs = motivo; pv.liberado_na_autorizacao = false;
     pv.autorizado_em = null; pv.autorizado_por = null; pv.autorizacao_obs = motivo;
     /* O valor confirmado FICA no registro; o que muda é o status,
        que é o que diz "este número já é firme". Apagar o valor
@@ -17118,6 +17119,28 @@ ERP.store = (function () {
     logar('previsao', pv.id, 'voltou o faturamento para previsto',
       (D.centro(centro) || {}).curto + ' · desfez: ' + desfeitas.join(', ') + ' · ' + motivo);
     return { ok: true, desfeitas: desfeitas };
+  }
+
+  /* QUEM DESFAZ A LIBERAÇÃO (v204). A liberação que nasceu sozinha
+     junto com a autorização ("Confirmar valor e autorizar" já deixa
+     pronto para o RPS) não foi um ato de quem libera: foi de quem
+     autorizou. Exigir `liberar_faturamento` para desfazê-la deixava a
+     Diretoria de produtividade sem volta para o que ela mesma fez — a
+     competência errada só saía pelas mãos de outro perfil. A
+     liberação feita À PARTE continua exigindo quem libera. */
+  function podeDesfazerLiberacao(pv) {
+    if (pode('liberar_faturamento')) return true;
+    return !!(pv && pv.liberado_na_autorizacao && pode('autorizar_faturamento'));
+  }
+  /* A tela mostra o Desfazer a quem o store deixa desfazer — as duas
+     regras no mesmo lugar, para não voltarem a divergir. */
+  function podeDesfazerFaturamento(centro, competencia) {
+    const pv = previsaoDe(centro, competencia);
+    if (!pv) return false;
+    if (pv.liberado_em && !podeDesfazerLiberacao(pv)) return false;
+    if (pv.autorizado_em && !pode('autorizar_faturamento')) return false;
+    if (pv.status === 'confirmada_prod' && !pode('faturar') && !pode('lancar') && !podeMover('produtividade')) return false;
+    return !!(pv.liberado_em || pv.autorizado_em || pv.status === 'confirmada_prod');
   }
 
   /* O que o Desfazer vai tirar, para a tela DIZER antes de o botão
@@ -22935,7 +22958,7 @@ ERP.store = (function () {
     autorizarFaturamento, liberarFaturamento, confirmarEAutorizarFaturamento,
     confirmarFaturamentoEspecialidades,
     statusProdutividade, NOME_STATUS_PROD, situacaoProdutividadeDe, NOME_SITUACAO_PROD, lancarComplementoFaturamento, statusFaturamento, NOME_STATUS_FAT, resultadoFaturamento,
-    editarEstimativaEsteira, desfazerEtapaFaturamento, oQueDesfazer, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
+    editarEstimativaEsteira, desfazerEtapaFaturamento, podeDesfazerFaturamento, oQueDesfazer, esteiraFaturamento, inativosNaEsteira, etapaDaPrevisao, travaDeLiberacao, previsoes, previsaoDe, excluirPrevisao, realizadoDaPrevisao,
     residuoPrevisao, marcarPrevisoes, marcarParcial, salvarPrevisaoDespesa, previsoesDespesa,
     excluirPrevisaoDespesa, replicarSerieDespesa, realizadoDespesa, residuoDespesa,
     parametros, salvarParametros, salvarUsuario, eventos,
