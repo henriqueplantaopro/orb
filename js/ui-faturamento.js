@@ -1170,7 +1170,7 @@ ERP.faturamento = (function () {
            duas colunas de valor eram lidas como se fossem a mesma
            coisa. O acompanhamento da produtividade está na aba
            Previsões e no módulo de Produtividade. */
-        '<th>Projeto</th><th class="col-cliente">Cliente</th>' +
+        '<th class="col-proj">Projeto</th><th class="col-cliente">Cliente</th><th class="col-cnpj">CNPJ do cliente</th>' +
         '<th class="col-comp">Comp.</th>' +
         '<th class="num col-val">Valor</th>' +
         ORDEM_ETAPAS.slice(1).map(function (e) {
@@ -1187,7 +1187,7 @@ ERP.faturamento = (function () {
                texto: a tabela inteira cresceu um terço para dizer,
                em quase todas as linhas, a mesma coisa ("HJM
                Matriz"). Unidade e emitente cabem na mesma linha. */
-            '<td class="desc">' +
+            '<td class="desc col-proj">' +
               (l.eh_grupo
                 ? '<button class="btn-ghost" data-est-exp="' + U.esc(l.grupo + '|' + l.competencia) + '" ' +
                     'title="ver especialidades">' + (expandidos[l.grupo + '|' + l.competencia] ? '▾' : '▸') + '</button> ' +
@@ -1237,6 +1237,10 @@ ERP.faturamento = (function () {
               (l.eh_grupo ? ''
                 : l.cliente_curto ? U.esc(l.cliente_curto)
                 : '<span class="sub">sem cliente</span>') + '</td>' +
+            /* CNPJ DO CLIENTE (v203) — também na linha de grupo: a nota
+               única sai para um CNPJ só, e é ele que precisa ser
+               conferido antes de faturar. */
+            celulaCnpj(l) +
             '<td class="mono">' + U.fComp(l.competencia) + '</td>' +
             /* Em que pé está a produtividade, e o valor que corresponde
                a esse estágio — sem misturar estimativa com o que já é
@@ -1307,7 +1311,7 @@ ERP.faturamento = (function () {
                     /* Vazia de propósito: o cliente é o do grupo, na
                        linha de cima. Repetir em cada setor encheria
                        a coluna de seis vezes o mesmo nome. */
-                    '<td class="col-cliente"></td>' +
+                    '<td class="col-cliente"></td><td class="col-cnpj"></td>' +
                     '<td class="mono sub">' + U.fComp(e.competencia) + '</td>' +
                     '<td class="num">' +
                       (podeEditarEstimativa() && !e.confirmado_em && e.etapa !== 'faturado'
@@ -1340,6 +1344,27 @@ ERP.faturamento = (function () {
   /* Digitar o valor confirmado e autorizar de uma vez. Sem produtividade
      lançada o sistema avisa e pede confirmação, mas deixa seguir: há
      contrato que fatura por disponibilidade. */
+  /* QUEM VAI SER FATURADO (v203). Nome e CNPJ do tomador em destaque
+     nas janelas que levam à nota, para não faturar o cliente errado. */
+  function celulaCnpj(l) {
+    if (!l.cliente) return '<td class="col-cnpj sub">—</td>';
+    return '<td class="col-cnpj mono"' + (l.cliente_nome ? ' title="' + U.esc(l.cliente_nome) + '"' : '') + '>' +
+      (l.cliente_documento ? U.esc(U.cnpj(l.cliente_documento)) : '<span class="erro">sem CNPJ</span>') + '</td>';
+  }
+  function blocoClienteFaturado(cli) {
+    cli = cli || {};
+    return '<div class="cliente-faturado' + (!cli.nome || !cli.documento ? ' erro' : '') + '">' +
+      '<div class="sub">Cliente que vai ser faturado</div>' +
+      (cli.nome
+        ? '<div class="nome">' + U.esc(cli.nome) + '</div>' +
+          '<div class="mono">' + (cli.documento ? 'CNPJ ' + U.esc(U.cnpj(cli.documento))
+            : 'sem CNPJ no cadastro do cliente — complete em Cadastros › Clientes antes de faturar') + '</div>'
+        : '<div class="nome">nenhum cliente amarrado a este projeto</div>' +
+          '<div>Amarre o cliente no cadastro do projeto antes de faturar.</div>') +
+      '</div>';
+  }
+  const clienteDaRef = (centro) => D.clienteDoCentro(centro) || null;
+
   function confirmarEAutorizar(ref) {
     const par = ref.split('|');
     const l = S.esteiraFaturamento({ centro: par[0], competencia: par[1], sem_agrupar: true })[0] || {};
@@ -1386,6 +1411,7 @@ ERP.faturamento = (function () {
       titulo: 'Confirmar valor e autorizar · ' + U.esc(nomeGrupo || (l.projeto || {}).curto || ''),
       fecharTxt: 'Cancelar',
       corpo:
+        blocoClienteFaturado(clienteDaRef(par[0])) +
         '<div class="resumo-linha"><span>Competência</span><span class="v">' + U.fComp(par[1]) + '</span></div>' +
         (grupo ? '<div class="resumo-linha"><span>Faturamento</span><span class="v">nota única · ' +
           U.esc(nomeGrupo) + (nomeGrupo !== grupo ? ' <span class="sub">(' + U.esc(grupo) + ')</span>' : '') +
@@ -1832,6 +1858,7 @@ ERP.faturamento = (function () {
         U.esc(grupo || c.curto || c.nome || ''),
       fecharTxt: 'Cancelar',
       corpo:
+        blocoClienteFaturado(clienteDaRef(par[0])) +
         (soFatura
           ? '<div class="ajuda">Este cliente <b>não recebe nota fiscal</b>: o que fecha o ' +
             'faturamento dele é a fatura. Informe os dados do documento e anexe o arquivo.</div>'
@@ -1981,8 +2008,8 @@ ERP.faturamento = (function () {
         ' · ' + U.fComp(d.competencia),
       fecharTxt: 'Fechar',
       corpo:
+        blocoClienteFaturado(d.cliente) +
         (naoEdita ? '<div class="ajuda">' + naoEdita + '</div>' : '') +
-        linha('Cliente', U.esc(d.cliente ? d.cliente.nome : '— sem cliente amarrado —')) +
         linha('Emite esta nota', '<b>' + U.esc(d.empresa_apelido) + '</b> <span class="sub">(' +
           U.esc(d.empresa_origem) + ')</span>') +
         linha('Etapa', U.esc(ETAPAS_NOME[d.etapa] || d.etapa)) +

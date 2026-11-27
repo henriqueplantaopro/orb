@@ -17403,6 +17403,10 @@ ERP.store = (function () {
         cliente: (D.clienteDoCentro(centro) || {}).id || null,
         cliente_nome: (D.clienteDoCentro(centro) || {}).nome || '',
         cliente_curto: nomeCurtoCliente(D.clienteDoCentro(centro)),
+        /* O CNPJ do tomador ao lado do nome (v203): dois clientes de
+           nome parecido (GHC/HGB, Santa Casa X e Y) se confundem; o
+           CNPJ não. */
+        cliente_documento: (D.clienteDoCentro(centro) || {}).documento || '',
         /* Na linha, e não descoberto pela tela: a linha de grupo não
            tem `centro`, e a tela cairia no cliente errado. */
         so_fatura: clienteSoFatura(centro),
@@ -17542,7 +17546,7 @@ ERP.store = (function () {
           const cliG = D.clienteDoCentro(l.centro) || {};
           grupos[k] = {
             grupo: g, centro: null, competencia: l.competencia,
-            cliente: cliG.id || null, cliente_nome: cliG.nome || '',
+            cliente: cliG.id || null, cliente_nome: cliG.nome || '', cliente_documento: cliG.documento || '',
             cliente_curto: nomeCurtoCliente(cliG), so_fatura: !!cliG.so_fatura,
             /* O NOME CURTO, não a razão social: inteira ("Grupo
                Hospitalar Conceição — Hospital Federal de
